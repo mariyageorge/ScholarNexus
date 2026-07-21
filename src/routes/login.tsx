@@ -1,0 +1,266 @@
+import { useState, type FormEvent } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Mail, Lock, LogIn, Eye, EyeOff } from "lucide-react";
+import { AuthLayout } from "@/components/auth-layout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
+import { signInWithGoogle } from "@/lib/firebase";
+import { getHomePathForRole, setUserSession, type UserSession } from "@/lib/session";
+
+export const Route = createFileRoute("/login")({
+  head: () => ({ meta: [{ title: "Sign In — SCHOLAR NEXUS" }] }),
+  component: LoginPage,
+});
+
+function GoogleIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24">
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+      />
+    </svg>
+  );
+}
+
+function LoginPage() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMessage(null);
+
+    if (!email.trim() || !password.trim()) {
+      setErrorMessage("Please enter your university email and password.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data?.error ?? "Invalid university email or password.");
+        return;
+      }
+
+      const userPayload: UserSession = {
+        email: data.email,
+        role: data.role,
+        name: data.name,
+        profileCompleted: data.profileCompleted,
+        displayName: data.displayName,
+        affiliation: data.affiliation,
+        bio: data.bio,
+        provider: data.provider,
+        providerId: data.providerId,
+        photoURL: data.photoURL,
+      };
+      setUserSession(userPayload);
+      if (remember) {
+        localStorage.setItem("scholarnexusRemember", "true");
+      } else {
+        localStorage.removeItem("scholarnexusRemember");
+      }
+
+      window.location.href = data.profileCompleted
+        ? getHomePathForRole(data.role)
+        : "/profile-setup";
+    } catch (error) {
+      setErrorMessage("Unable to reach the server. Please try again later.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setErrorMessage(null);
+    setIsGoogleLoading(true);
+
+    try {
+      const credential = await signInWithGoogle();
+      const user = credential.user;
+
+      if (!user.email || !user.providerId) {
+        throw new Error("Google sign-in failed to provide required user information.");
+      }
+
+      const response = await fetch("/api/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "google",
+          providerId: user.uid,
+          email: user.email,
+          name: user.displayName ?? user.email,
+          photoURL: user.photoURL ?? undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data?.error ?? "Google login failed.");
+        return;
+      }
+
+      const userPayload: UserSession = {
+        email: data.email,
+        role: data.role,
+        name: data.name,
+        profileCompleted: data.profileCompleted,
+        displayName: data.displayName,
+        affiliation: data.affiliation,
+        bio: data.bio,
+        provider: data.provider,
+        providerId: data.providerId,
+        photoURL: data.photoURL,
+      };
+      setUserSession(userPayload);
+      localStorage.removeItem("scholarnexusRemember");
+      window.location.href = data.profileCompleted
+        ? getHomePathForRole(data.role)
+        : "/profile-setup";
+    } catch (error) {
+      console.error("Google sign-in failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error ?? "Unable to sign in with Google.");
+      setErrorMessage(`Unable to sign in with Google. ${errorMessage}`);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+  return (
+    <AuthLayout
+      title="Welcome Back"
+      subtitle="Sign in to access study notes, virtual rooms & course materials"
+      footer={
+        <div className="text-xs text-muted-foreground">
+          New to SCHOLAR NEXUS?{" "}
+          <Link to="/register" className="font-bold text-emerald-500 hover:underline">
+            Create an Account
+          </Link>
+        </div>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        {errorMessage ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs font-semibold text-destructive">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="text-xs font-semibold text-foreground">
+            University Email Address
+          </Label>
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="email"
+              type="email"
+              placeholder="scholar@university.edu"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="pl-10 rounded-xl focus-visible:ring-emerald-500"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password" className="text-xs font-semibold text-foreground">
+              Password
+            </Label>
+            <Link to="/forgot-password" className="text-xs font-medium text-emerald-500 hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+          <div className="relative">
+            <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              placeholder="••••••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="pl-10 pr-10 rounded-xl focus-visible:ring-emerald-500"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <Checkbox
+            id="remember"
+            checked={remember}
+            onCheckedChange={(checked) => setRemember(Boolean(checked))}
+          />
+          <Label htmlFor="remember" className="text-xs font-normal text-muted-foreground">
+            Keep me signed in on this device
+          </Label>
+        </div>
+
+        <Button
+          type="submit"
+          className="w-full gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 shadow-md shadow-emerald-600/25 transition duration-150"
+          disabled={isSubmitting}
+        >
+          <LogIn className="h-4 w-4" /> {isSubmitting ? "Authenticating..." : "Sign In to Portal"}
+        </Button>
+
+        <div className="relative py-2">
+          <Separator />
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-3 text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground">
+            or continue with
+          </span>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full gap-2.5 rounded-xl py-2.5 font-semibold text-xs border-border hover:bg-muted/30 transition duration-150"
+          onClick={handleGoogleSignIn}
+          disabled={isGoogleLoading}
+        >
+          <GoogleIcon className="h-4 w-4 shrink-0" />
+          {isGoogleLoading ? "Connecting..." : "Sign in with Google Workspace"}
+        </Button>
+      </form>
+    </AuthLayout>
+  );
+}
