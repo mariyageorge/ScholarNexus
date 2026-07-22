@@ -6,9 +6,13 @@ export type UserSession = {
   displayName?: string;
   affiliation?: string;
   bio?: string;
+  phone?: string;
+  researchInterests?: string;
+  profileImage?: string;
   provider?: string;
   providerId?: string;
   photoURL?: string;
+  updatedAt?: string;
 };
 
 const STORAGE_KEY = "scholarnexusUser";
@@ -39,6 +43,7 @@ export function setUserSession(user: UserSession): void {
     return;
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  window.dispatchEvent(new Event("scholarnexus-session-updated"));
 }
 
 export function clearUserSession(): void {

@@ -107,7 +107,7 @@ export function AppSidebar() {
     return false;
   };
 
-  const renderGroup = (label: string, items: SidebarMenuItemType[]) => (
+  const renderGroup = (label: string, items: readonly SidebarMenuItemType[]) => (
     <SidebarGroup>
       {!collapsed && (
         <SidebarGroupLabel className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground/70">

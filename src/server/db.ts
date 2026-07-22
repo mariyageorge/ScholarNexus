@@ -36,9 +36,13 @@ export interface UserRecord {
   displayName?: string;
   affiliation?: string;
   bio?: string;
+  phone?: string;
+  researchInterests?: string;
+  profileImage?: string;
   provider?: string;
   providerId?: string;
   photoURL?: string;
+  updatedAt?: string;
 }
 
 /* ── OTP In-Memory Store ── */
@@ -669,62 +673,213 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
   }
 
   if (url.pathname === "/api/profile") {
-    if (request.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed." }), {
-        status: 405,
-        headers: { "content-type": "application/json", Allow: "POST" },
+    if (request.method === "GET") {
+      const emailParam = url.searchParams.get("email") ?? request.headers.get("x-user-email");
+      if (!emailParam) {
+        return new Response(JSON.stringify({ error: "User email parameter is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const user = await findUserByEmail(emailParam);
+      if (!user) {
+        return new Response(JSON.stringify({ error: "User not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const { password: _, ...profileData } = user;
+      return new Response(JSON.stringify(profileData), {
+        status: 200,
+        headers: { "content-type": "application/json" },
       });
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return new Response(
-        JSON.stringify({ error: "Request body must be valid JSON." }),
-        {
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
           status: 400,
           headers: { "content-type": "application/json" },
-        },
-      );
-    }
+        });
+      }
 
-    if (!body || typeof body !== "object") {
-      return new Response(
-        JSON.stringify({ error: "Request body must be an object." }),
-        {
+      const email = (body.email || request.headers.get("x-user-email"))?.trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify({ error: "Email is required to identify user profile." }), {
           status: 400,
           headers: { "content-type": "application/json" },
-        },
-      );
-    }
+        });
+      }
 
-    const { email: profileEmail, displayName, affiliation, bio } = body as {
-      email?: unknown;
-      displayName?: unknown;
-      affiliation?: unknown;
-      bio?: unknown;
-    };
-
-    if (
-      typeof profileEmail !== "string" ||
-      typeof displayName !== "string" ||
-      typeof affiliation !== "string" ||
-      typeof bio !== "string"
-    ) {
-      return new Response(
-        JSON.stringify({ error: "Invalid profile data." }),
-        {
-          status: 400,
+      const existingUser = await findUserByEmail(email);
+      if (!existingUser) {
+        return new Response(JSON.stringify({ error: "User profile not found." }), {
+          status: 404,
           headers: { "content-type": "application/json" },
+        });
+      }
+
+      const updateData: Record<string, any> = {
+        updatedAt: new Date().toISOString(),
+        profileCompleted: true,
+      };
+
+      if (typeof body.name === "string" || typeof body.displayName === "string") {
+        const inputName = (body.name ?? body.displayName ?? "").trim();
+        if (inputName.length < 3) {
+          return new Response(
+            JSON.stringify({ error: "Full Name must be at least 3 characters long." }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          );
+        }
+        updateData.name = inputName;
+        updateData.displayName = inputName;
+      }
+
+      if (typeof body.phone === "string") {
+        const trimmedPhone = body.phone.trim();
+        if (trimmedPhone.length > 0) {
+          const digitsOnly = trimmedPhone.replace(/[^0-9]/g, "");
+          const phoneRegex = /^\+?[0-9\s\-()]{7,20}$/;
+          if (!phoneRegex.test(trimmedPhone) || digitsOnly.length < 7 || digitsOnly.length > 15) {
+            return new Response(
+              JSON.stringify({ error: "Please enter a valid phone number (7–15 digits)." }),
+              { status: 400, headers: { "content-type": "application/json" } }
+            );
+          }
+          updateData.phone = trimmedPhone;
+        } else {
+          updateData.phone = "";
+        }
+      }
+
+      if (typeof body.affiliation === "string") {
+        const trimmedAffiliation = body.affiliation.trim();
+        if (trimmedAffiliation.length > 200) {
+          return new Response(
+            JSON.stringify({ error: "Institution/Affiliation must not exceed 200 characters." }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          );
+        }
+        updateData.affiliation = trimmedAffiliation;
+      }
+
+      if (typeof body.bio === "string") {
+        const trimmedBio = body.bio.trim();
+        if (trimmedBio.length > 500) {
+          return new Response(
+            JSON.stringify({ error: "Short Bio must not exceed 500 characters." }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          );
+        }
+        updateData.bio = trimmedBio;
+      }
+
+      if (typeof body.researchInterests === "string") {
+        const trimmedInterests = body.researchInterests.trim();
+        if (trimmedInterests.length > 500) {
+          return new Response(
+            JSON.stringify({ error: "Research interests must not exceed 500 characters." }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          );
+        }
+        updateData.researchInterests = trimmedInterests;
+      }
+
+      if (typeof body.profileImage === "string") {
+        updateData.profileImage = body.profileImage;
+        updateData.photoURL = body.profileImage;
+      } else if (typeof body.photoURL === "string") {
+        updateData.photoURL = body.photoURL;
+        updateData.profileImage = body.photoURL;
+      }
+
+      const collection = await getCollection<UserRecord>("users");
+      const normalizedEmail = email.trim().toLowerCase();
+      await collection.updateOne(
+        {
+          $or: [
+            { email: normalizedEmail },
+            { email: { $regex: `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
         },
+        { $set: updateData }
       );
+
+      const updatedUser = await findUserByEmail(normalizedEmail);
+      if (updatedUser) {
+        const { password: _, ...profileData } = updatedUser;
+        return new Response(
+          JSON.stringify({ success: true, message: "Profile updated successfully.", user: profileData }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ success: true, message: "Profile updated successfully." }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    await completeUserProfile(profileEmail, { displayName, affiliation, bio });
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
+    if (request.method === "POST") {
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(
+          JSON.stringify({ error: "Request body must be valid JSON." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!body || typeof body !== "object") {
+        return new Response(
+          JSON.stringify({ error: "Request body must be an object." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      const { email: profileEmail, displayName, affiliation, bio } = body as {
+        email?: unknown;
+        displayName?: unknown;
+        affiliation?: unknown;
+        bio?: unknown;
+      };
+
+      if (
+        typeof profileEmail !== "string" ||
+        typeof displayName !== "string" ||
+        typeof affiliation !== "string" ||
+        typeof bio !== "string"
+      ) {
+        return new Response(
+          JSON.stringify({ error: "Invalid profile data." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      await completeUserProfile(profileEmail, { displayName, affiliation, bio });
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: "Method not allowed." }), {
+      status: 405,
+      headers: { "content-type": "application/json", Allow: "GET, PUT, POST" },
     });
   }
 

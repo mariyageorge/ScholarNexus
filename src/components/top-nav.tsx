@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Bell, Search, Sparkles } from "lucide-react";
-import { useRouterState } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getUserSession, getUserInitials } from "@/lib/session";
@@ -44,8 +44,24 @@ export function TopNav() {
   const [user, setUser] = useState(() => getUserSession());
 
   useEffect(() => {
-    setUser(getUserSession());
+    const handleUpdate = () => {
+      setUser(getUserSession());
+    };
+
+    window.addEventListener("scholarnexus-session-updated", handleUpdate);
+    window.addEventListener("storage", handleUpdate);
+
+    // Initial check
+    handleUpdate();
+
+    return () => {
+      window.removeEventListener("scholarnexus-session-updated", handleUpdate);
+      window.removeEventListener("storage", handleUpdate);
+    };
   }, []);
+
+  const userPhoto = user?.profileImage ?? user?.photoURL;
+  const userName = user?.displayName ?? user?.name ?? "Researcher";
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 md:px-6">
@@ -94,21 +110,28 @@ export function TopNav() {
           <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-destructive ring-2 ring-background" />
         </Button>
 
-        <div className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3">
-          <Avatar className="h-7 w-7">
+        <Link
+          to="/profile"
+          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3 transition-colors hover:bg-accent/40"
+          title="View Profile"
+        >
+          <Avatar className="h-7 w-7 border border-border">
+            {userPhoto ? (
+              <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
+            ) : null}
             <AvatarFallback className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
               {getUserInitials(user)}
             </AvatarFallback>
           </Avatar>
           <div className="hidden flex-col leading-tight sm:flex">
             <span className="text-xs font-semibold text-foreground">
-              {user?.displayName ?? user?.name ?? "Researcher"}
+              {userName}
             </span>
             <span className="text-[0.65rem] text-muted-foreground">
               {user?.email ?? "Guest session"}
             </span>
           </div>
-        </div>
+        </Link>
       </div>
     </header>
   );
