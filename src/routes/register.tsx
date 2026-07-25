@@ -69,13 +69,13 @@ function RegisterPage() {
 
   return (
     <AuthLayout
-      title="Create Student Account"
-      subtitle="Join 15,000+ scholars on the academic resource portal"
+      title="Create Your Research Account"
+      subtitle="Join the academic research ecosystem for students and faculty"
       footer={
         <div className="text-xs text-muted-foreground">
           Already registered?{" "}
           <Link to="/login" className="font-bold text-emerald-500 hover:underline">
-            Sign In to Portal
+            Sign In to Research Hub
           </Link>
         </div>
       }
@@ -203,7 +203,7 @@ function RegisterPage() {
           disabled={isSubmitting}
         >
           <GraduationCap className="h-4 w-4" />
-          {isSubmitting ? "Creating Account..." : "Create Account"}
+          {isSubmitting ? "Creating Account..." : "Create Research Account"}
         </Button>
       </form>
     </AuthLayout>

@@ -58,24 +58,24 @@ function ProfessionalLeftPanel() {
 
         {/* Main Title */}
         <h2 className="text-3xl font-extrabold tracking-tight text-white font-display">
-          SCHOLAR NEXUS
+          SCHOLAR NEXUS AI
         </h2>
         <p className="mt-1 text-xs font-semibold uppercase tracking-widest text-emerald-400">
-          Student Academic Resource Portal
+          AI Academic Research Platform
         </p>
 
         {/* Subtitle Description */}
         <p className="mt-4 text-sm leading-relaxed text-slate-200">
-          The ultimate peer-to-peer university academic portal. Share notes, download course materials, collaborate in live study rooms, and elevate your research.
+          A unified workspace for research planning, paper analysis, citation generation, originality checks, and faculty collaboration.
         </p>
 
         {/* Key Features List */}
         <div className="mt-6 space-y-2.5 text-xs font-medium text-slate-200 text-left w-full max-w-xs mx-auto border-t border-white/10 pt-5">
           {[
-            "50,000+ Verified Course Materials & Solved Papers",
-            "Real-Time Virtual Idea Rooms with Screen Sharing",
-            "Senior Mentor Academic Q&A & Discussions",
-            "Contextual Citation Generator & Research Tools",
+            "AI Research Assistant for uploaded papers and documents",
+            "Structured summaries for objectives, methods, datasets, and results",
+            "APA, IEEE, and MLA citation generation",
+            "Similarity and originality checks for research drafts",
           ].map((item, idx) => (
             <div key={idx} className="flex items-center gap-2.5">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
@@ -87,16 +87,16 @@ function ProfessionalLeftPanel() {
         {/* Clean Statistics Row */}
         <div className="mt-7 grid grid-cols-3 gap-6 border-t border-white/10 pt-5 w-full">
           <div>
-            <div className="text-xl font-extrabold text-white font-display">50,000+</div>
-            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Materials</div>
+            <div className="text-xl font-extrabold text-white font-display">100+</div>
+            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Projects</div>
           </div>
           <div>
-            <div className="text-xl font-extrabold text-white font-display">120+</div>
-            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Courses</div>
+            <div className="text-xl font-extrabold text-white font-display">500+</div>
+            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Papers</div>
           </div>
           <div>
-            <div className="text-xl font-extrabold text-white font-display">15,000+</div>
-            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Scholars</div>
+            <div className="text-xl font-extrabold text-white font-display">50+</div>
+            <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">Faculty</div>
           </div>
         </div>
       </div>
@@ -119,8 +119,8 @@ export function AuthLayout({ title, subtitle, footer, children }: Props) {
               <GraduationCap className="h-5 w-5" />
             </div>
             <div className="flex flex-col leading-none">
-              <span className="text-sm font-extrabold tracking-tight text-foreground font-display">SCHOLAR NEXUS</span>
-              <span className="text-[0.65rem] font-semibold text-emerald-500 uppercase tracking-wider">Student Academic Portal</span>
+              <span className="text-sm font-extrabold tracking-tight text-foreground font-display">SCHOLAR NEXUS AI</span>
+              <span className="text-[0.65rem] font-semibold text-emerald-500 uppercase tracking-wider">Academic Research Hub</span>
             </div>
           </Link>
           <ThemeToggle />

@@ -159,11 +159,11 @@ function LoginPage() {
 
   return (
     <AuthLayout
-      title="Welcome Back"
-      subtitle="Sign in to access study notes, virtual rooms & course materials"
+      title="Welcome Back to ScholarNexus AI"
+      subtitle="Sign in to manage research papers, projects, citations, and collaboration"
       footer={
         <div className="text-xs text-muted-foreground">
-          New to SCHOLAR NEXUS?{" "}
+          New to ScholarNexus AI?{" "}
           <Link to="/register" className="font-bold text-emerald-500 hover:underline">
             Create an Account
           </Link>
@@ -240,7 +240,7 @@ function LoginPage() {
           className="w-full gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 shadow-md shadow-emerald-600/25 transition duration-150"
           disabled={isSubmitting}
         >
-          <LogIn className="h-4 w-4" /> {isSubmitting ? "Authenticating..." : "Sign In to Portal"}
+          <LogIn className="h-4 w-4" /> {isSubmitting ? "Authenticating..." : "Sign In to Research Hub"}
         </Button>
 
         <div className="relative py-2">
