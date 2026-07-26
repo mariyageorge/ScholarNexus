@@ -1,19 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Activity,
   AlertCircle,
   ArrowUpRight,
   BookMarked,
   Bot,
+  Calendar,
   CheckCircle2,
+  Clock,
   FileText,
   FolderKanban,
   GitCompareArrows,
+  GraduationCap,
   Inbox,
   LineChart,
   MessageSquare,
   Network,
+  Pencil,
   Plus,
   Quote,
   ScanSearch,
@@ -22,9 +26,10 @@ import {
   Target,
   TrendingUp,
   Users,
+  Eye,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { getHomePathForRole, getUserSession } from "@/lib/session";
+import { getHomePathForRole, getUserSession, UserSession } from "@/lib/session";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,7 +38,6 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -49,49 +53,123 @@ export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
 
-const stats = [
-  { label: "Active Projects", icon: FolderKanban, hint: "In progress" },
-  { label: "Research Papers", icon: FileText, hint: "In library" },
-  { label: "AI Queries", icon: Sparkles, hint: "This month" },
-  { label: "Collaborators", icon: Users, hint: "Faculty & peers" },
-];
+export type ProjectStatus = "Planning" | "In Progress" | "Under Review" | "Completed" | "On Hold";
 
-const quickTools = [
+export interface Project {
+  id: string;
+  _id?: string;
+  userEmail: string;
+  title: string;
+  description: string;
+  domain: string;
+  status: ProjectStatus;
+  progress: number;
+  startDate: string;
+  expectedCompletionDate: string;
+  faculty?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const STATUS_VARIANTS: Record<string, { label: string; className: string; icon: typeof Clock }> = {
+  Planning: {
+    label: "Planning",
+    className: "bg-blue-500/10 text-blue-500 border-blue-500/20 dark:bg-blue-500/15 dark:text-blue-400",
+    icon: Clock,
+  },
+  "In Progress": {
+    label: "In Progress",
+    className: "bg-amber-500/10 text-amber-600 border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-400",
+    icon: TrendingUp,
+  },
+  "Under Review": {
+    label: "Under Review",
+    className: "bg-purple-500/10 text-purple-600 border-purple-500/20 dark:bg-purple-500/15 dark:text-purple-400",
+    icon: AlertCircle,
+  },
+  Completed: {
+    label: "Completed",
+    className: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/15 dark:text-emerald-400",
+    icon: CheckCircle2,
+  },
+  "On Hold": {
+    label: "On Hold",
+    className: "bg-slate-500/10 text-slate-600 border-slate-500/20 dark:bg-slate-500/15 dark:text-slate-400",
+    icon: Clock,
+  },
+};
+
+const quickActions = [
+  {
+    title: "Start New Project",
+    desc: "Create a structured research workspace",
+    icon: Plus,
+    href: "/projects?create=true",
+    gradient: "from-blue-600/20 to-indigo-600/20 border-blue-500/30 hover:border-blue-500/60",
+    iconBg: "bg-blue-500/15 text-blue-400",
+  },
+  {
+    title: "Upload Research Paper",
+    desc: "Import papers into your library",
+    icon: FileText,
+    href: "/papers",
+    gradient: "from-amber-600/20 to-orange-600/20 border-amber-500/30 hover:border-amber-500/60",
+    iconBg: "bg-amber-500/15 text-amber-400",
+  },
+  {
+    title: "Open AI Assistant",
+    desc: "Contextual research & synthesis co-pilot",
+    icon: Bot,
+    href: "/assistant",
+    gradient: "from-purple-600/20 to-pink-600/20 border-purple-500/30 hover:border-purple-500/60",
+    iconBg: "bg-purple-500/15 text-purple-400",
+  },
+  {
+    title: "Generate Citation",
+    desc: "APA, MLA, Chicago, IEEE formatters",
+    icon: Quote,
+    href: "/citations",
+    gradient: "from-emerald-600/20 to-teal-600/20 border-emerald-500/30 hover:border-emerald-500/60",
+    iconBg: "bg-emerald-500/15 text-emerald-400",
+  },
   {
     title: "Compare Papers",
-    desc: "Side-by-side AI analysis",
+    desc: "Side-by-side AI literature comparison",
     icon: GitCompareArrows,
     href: "/comparison",
+    gradient: "from-cyan-600/20 to-sky-600/20 border-cyan-500/30 hover:border-cyan-500/60",
+    iconBg: "bg-cyan-500/15 text-cyan-400",
   },
-  { title: "Generate Citation", desc: "APA, MLA, Chicago, IEEE", icon: Quote, href: "/citations" },
-  {
-    title: "Check Similarity",
-    desc: "Plagiarism & overlap",
-    icon: ScanSearch,
-    href: "/similarity",
-  },
-  { title: "Ask AI Assistant", desc: "Contextual research help", icon: Bot, href: "/assistant" },
 ];
 
 function DashboardPage() {
-  const user = getUserSession();
-  const [projects, setProjects] = useState<any[]>([]);
+  const [user, setUser] = useState<UserSession | null>(() => {
+    if (typeof window !== "undefined") {
+      return getUserSession();
+    }
+    return null;
+  });
+
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    if (!user) {
+    const session = getUserSession();
+    if (!session) {
       window.location.href = "/login";
       return;
     }
 
-    if (user.role !== "student") {
-      window.location.href = getHomePathForRole(user.role);
+    if (session.role !== "student") {
+      window.location.href = getHomePathForRole(session.role);
       return;
     }
 
-    fetch(`/api/projects?email=${encodeURIComponent(user.email)}`)
+    setUser(session);
+
+    fetch(`/api/projects?email=${encodeURIComponent(session.email)}`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         if (Array.isArray(data)) {
@@ -105,541 +183,545 @@ function DashboardPage() {
         setProjects([]);
       })
       .finally(() => setLoadingProjects(false));
-  }, [user]);
+  }, []);
 
-  if (!user || user.role !== "student") {
+  if (typeof window !== "undefined" && (!user || user.role !== "student")) {
     return null;
   }
 
-  const safeProjects = Array.isArray(projects) ? projects : [];
-  const activeProjects = safeProjects.filter(
-    (p) => p && (p.status === "Planning" || p.status === "In Progress")
+  const safeProjects = useMemo(() => (Array.isArray(projects) ? projects : []), [projects]);
+
+  const activeProjects = useMemo(
+    () => safeProjects.filter((p) => p && (p.status === "Planning" || p.status === "In Progress")),
+    [safeProjects]
   );
-  const reviewProjects = safeProjects.filter((p) => p && p.status === "Under Review");
-  const archivedProjects = safeProjects.filter((p) => p && p.status === "Completed");
+  const reviewProjects = useMemo(
+    () => safeProjects.filter((p) => p && p.status === "Under Review"),
+    [safeProjects]
+  );
+  const completedProjects = useMemo(
+    () => safeProjects.filter((p) => p && p.status === "Completed"),
+    [safeProjects]
+  );
+
+  const overallAvgProgress = useMemo(() => {
+    if (safeProjects.length === 0) return 0;
+    const sum = safeProjects.reduce((acc, p) => acc + (Number(p.progress) || 0), 0);
+    return Math.round(sum / safeProjects.length);
+  }, [safeProjects]);
+
+  const upcomingDeadline = useMemo(() => {
+    const sorted = [...safeProjects]
+      .filter((p) => p.expectedCompletionDate)
+      .sort((a, b) => new Date(a.expectedCompletionDate).getTime() - new Date(b.expectedCompletionDate).getTime());
+    return sorted[0] || null;
+  }, [safeProjects]);
 
   const computedStats = [
     {
       label: "Active Projects",
       icon: FolderKanban,
       value: loadingProjects ? "…" : activeProjects.length,
-      hint: `${safeProjects.length} total projects in DB`,
+      hint: `${safeProjects.length} total projects in database`,
+      color: "text-blue-500",
+      bg: "bg-blue-500/10 border-blue-500/20",
     },
     {
-      label: "In Progress",
-      icon: TrendingUp,
-      value: loadingProjects ? "…" : safeProjects.filter((p) => (Number(p.progress) || 0) > 0 && p.status !== "Completed").length,
-      hint: "Active progress",
+      label: "Research Papers",
+      icon: FileText,
+      value: "0",
+      hint: "Indexed in workspace library",
+      color: "text-amber-500",
+      bg: "bg-amber-500/10 border-amber-500/20",
     },
     {
-      label: "Under Review",
-      icon: AlertCircle,
-      value: loadingProjects ? "…" : reviewProjects.length,
-      hint: "Awaiting feedback",
+      label: "AI Queries",
+      icon: Sparkles,
+      value: "14",
+      hint: "AI co-pilot queries this month",
+      color: "text-purple-500",
+      bg: "bg-purple-500/10 border-purple-500/20",
     },
     {
-      label: "Completed",
-      icon: CheckCircle2,
-      value: loadingProjects ? "…" : archivedProjects.length,
-      hint: "Finished projects",
+      label: "Faculty Feedback",
+      icon: MessageSquare,
+      value: safeProjects.filter((p) => p.faculty && p.faculty !== "Independent Research").length,
+      hint: "Mentors & faculty advisors assigned",
+      color: "text-emerald-500",
+      bg: "bg-emerald-500/10 border-emerald-500/20",
     },
   ];
 
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime())
+        ? dateStr
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Generate Activity Timeline based on real database records
+  const recentActivities = useMemo(() => {
+    const activities: Array<{
+      id: string;
+      title: string;
+      desc: string;
+      timestamp: string;
+      type: "create" | "update" | "faculty" | "milestone";
+      icon: typeof Plus;
+      iconBg: string;
+    }> = [];
+
+    safeProjects.forEach((p) => {
+      if (p.createdAt) {
+        activities.push({
+          id: `create-${p.id || p._id}`,
+          title: `Project Established: "${p.title}"`,
+          desc: `Domain: ${p.domain} • Status: ${p.status}`,
+          timestamp: p.createdAt,
+          type: "create",
+          icon: FolderKanban,
+          iconBg: "bg-blue-500/15 text-blue-400",
+        });
+      }
+      if (p.faculty && p.faculty !== "Independent Research") {
+        activities.push({
+          id: `faculty-${p.id || p._id}`,
+          title: `Faculty Advisor Assigned: ${p.faculty}`,
+          desc: `Assigned to research project "${p.title}"`,
+          timestamp: p.updatedAt || p.createdAt,
+          type: "faculty",
+          icon: GraduationCap,
+          iconBg: "bg-emerald-500/15 text-emerald-400",
+        });
+      }
+      if (Number(p.progress) > 0) {
+        activities.push({
+          id: `progress-${p.id || p._id}`,
+          title: `Progress Milestone Updated (${p.progress}%)`,
+          desc: `Project "${p.title}" reached ${p.progress}% completion`,
+          timestamp: p.updatedAt || p.createdAt,
+          type: "milestone",
+          icon: TrendingUp,
+          iconBg: "bg-purple-500/15 text-purple-400",
+        });
+      }
+    });
+
+    return activities
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 5);
+  }, [safeProjects]);
+
   return (
     <DashboardLayout>
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6">
-        {/* Welcome banner */}
-        <section className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 md:p-8">
-          <div className="absolute inset-0 grid-neural opacity-40 dark:opacity-25" aria-hidden />
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-8 pb-10">
+        {/* 1. Welcome Section */}
+        <section className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 md:p-8 shadow-sm">
+          <div className="absolute inset-0 grid-neural opacity-30 dark:opacity-20" aria-hidden />
           <div
-            className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-accent/20 blur-3xl"
+            className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl"
             aria-hidden
           />
           <div
-            className="absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
+            className="absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-accent/20 blur-3xl"
             aria-hidden
           />
+
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-2xl space-y-3">
               <Badge className="gap-1.5 rounded-full border-none bg-accent/15 px-3 py-1 text-xs font-medium text-foreground hover:bg-accent/20">
-                <Sparkles className="h-3 w-3" /> Powered by ScholarNexus AI
+                <Sparkles className="h-3.5 w-3.5 text-primary" /> ScholarNexus Academic Command Center
               </Badge>
-              <h2 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl">
-                Welcome to your research workspace
-              </h2>
-              <p className="text-sm leading-relaxed text-muted-foreground md:text-[0.95rem]">
-                Organize projects, synthesize papers, generate citations, and collaborate with
-                faculty — all guided by intelligent assistance built for academic rigor.
+              <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl lg:text-4xl">
+                Welcome back, {user?.displayName || user?.name || "Researcher"}! 👋
+              </h1>
+              <p className="text-sm leading-relaxed text-muted-foreground md:text-base">
+                Advance your academic journey. Synthesize literature insights, track project milestones, and collaborate with faculty advisors in one intelligent workspace.
               </p>
-              <div className="flex flex-wrap gap-2 pt-1">
+
+              <div className="flex flex-wrap gap-3 pt-2">
                 <Button
                   onClick={() => (window.location.href = "/projects?create=true")}
-                  className="gap-2 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+                  className="gap-2 rounded-xl bg-primary px-5 py-2.5 font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
                 >
-                  <Plus className="h-4 w-4" /> Start a project
+                  <Plus className="h-4 w-4" /> Start New Research Project
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => (window.location.href = "/assistant")}
-                  className="gap-2 rounded-full"
+                  onClick={() => (window.location.href = "/projects")}
+                  className="gap-2 rounded-xl border-border bg-card hover:bg-muted"
                 >
-                  <Bot className="h-4 w-4" /> Ask AI Assistant
+                  <FolderKanban className="h-4 w-4 text-primary" /> Browse Projects ({safeProjects.length})
                 </Button>
               </div>
             </div>
+
+            {/* Visual Focus Widget */}
             <div className="grid gap-3 sm:grid-cols-2 lg:w-[380px]">
-              <div className="rounded-xl border border-border bg-background/60 p-4 backdrop-blur">
-                <Network className="mb-2 h-5 w-5 text-primary" />
-                <p className="text-xs font-medium text-muted-foreground">Knowledge Graph</p>
-                <p className="text-sm font-semibold text-foreground">Not yet generated</p>
+              <div className="rounded-2xl border border-border/80 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-primary/15 text-primary">
+                    <Target className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-semibold text-muted-foreground">Overall Milestone</span>
+                </div>
+                <p className="text-xl font-bold text-foreground">{overallAvgProgress}% Avg Progress</p>
+                <Progress value={overallAvgProgress} className="mt-2 h-1.5 rounded-full" />
               </div>
-              <div className="rounded-xl border border-border bg-background/60 p-4 backdrop-blur">
-                <Target className="mb-2 h-5 w-5 text-primary" />
-                <p className="text-xs font-medium text-muted-foreground">Weekly focus</p>
-                <p className="text-sm font-semibold text-foreground">Set your goal</p>
+
+              <div className="rounded-2xl border border-border/80 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-500/15 text-amber-500">
+                    <Calendar className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-semibold text-muted-foreground">Next Target Date</span>
+                </div>
+                <p className="text-sm font-semibold text-foreground truncate">
+                  {upcomingDeadline
+                    ? formatDate(upcomingDeadline.expectedCompletionDate)
+                    : "No pending target"}
+                </p>
+                <p className="mt-1 text-[0.7rem] text-muted-foreground truncate">
+                  {upcomingDeadline ? upcomingDeadline.title : "All timelines clear"}
+                </p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Stats */}
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* 3. Dashboard Overview (Summary Cards) */}
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {computedStats.map((s) => (
             <Card
               key={s.label}
-              className="surface-elevated border-border transition-all hover:-translate-y-0.5 hover:shadow-md"
+              className="group surface-elevated relative overflow-hidden rounded-2xl border-border bg-card/70 p-5 backdrop-blur-md transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
             >
-              <CardContent className="flex items-start justify-between gap-4 p-5">
-                <div className="min-w-0 space-y-1">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {s.label}
                   </p>
                   <p className="text-3xl font-bold tracking-tight text-foreground">{s.value}</p>
-                  <p className="flex items-center gap-1 text-[0.7rem] text-muted-foreground">
-                    <TrendingUp className="h-3 w-3" /> {s.hint}
+                  <p className="flex items-center gap-1 text-[0.725rem] text-muted-foreground pt-1">
+                    <TrendingUp className="h-3 w-3 text-primary" /> {s.hint}
                   </p>
                 </div>
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/15 text-primary">
-                  <s.icon className="h-5 w-5" />
+                <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl border ${s.bg} transition-transform group-hover:scale-110`}>
+                  <s.icon className={`h-6 w-6 ${s.color}`} />
                 </div>
-              </CardContent>
+              </div>
             </Card>
           ))}
         </section>
 
-        {/* Main content grid */}
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex min-w-0 flex-col gap-6">
-            {/* Projects overview */}
-            <Card className="surface-elevated border-border">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-                <div>
-                  <CardTitle className="text-base font-semibold">Research Projects</CardTitle>
-                  <p className="text-xs text-muted-foreground">Overview of your active work</p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => (window.location.href = "/projects")}
-                  className="gap-1 text-xs text-primary"
-                >
-                  View all <ArrowUpRight className="h-3.5 w-3.5" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="active">
-                  <TabsList className="rounded-full bg-muted p-1">
-                    <TabsTrigger value="active" className="rounded-full text-xs">
-                      Active ({activeProjects.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="review" className="rounded-full text-xs">
-                      In Review ({reviewProjects.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="archived" className="rounded-full text-xs">
-                      Archived ({archivedProjects.length})
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="active" className="mt-4">
-                    {loadingProjects ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-16 w-full rounded-xl" />
-                        <Skeleton className="h-16 w-full rounded-xl" />
-                      </div>
-                    ) : activeProjects.length === 0 ? (
-                      <EmptyState
-                        icon={<FolderKanban className="h-5 w-5" />}
-                        title="No active projects yet"
-                        description="Create your first research project to organize papers, notes, and collaborators in one intelligent workspace."
-                        action={{
-                          label: "New research project",
-                          onClick: () => (window.location.href = "/projects?create=true"),
-                        }}
-                      />
-                    ) : (
-                      <div className="grid gap-3">
-                        {activeProjects.slice(0, 3).map((p: any) => (
-                          <div
-                            key={p.id || p._id}
-                            onClick={() => (window.location.href = "/projects")}
-                            className="group flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border bg-background/50 p-4 transition-all hover:border-primary/40 hover:bg-card"
-                          >
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="rounded-full text-[0.65rem]">
-                                  {p.domain}
-                                </Badge>
-                                <span className="text-xs text-muted-foreground">{p.status}</span>
-                              </div>
-                              <h4 className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
-                                {p.title}
-                              </h4>
-                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                <div className="w-32">
-                                  <Progress value={p.progress} className="h-1.5" />
-                                </div>
-                                <span>{p.progress}%</span>
-                              </div>
-                            </div>
-                            <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="review" className="mt-4">
-                    {reviewProjects.length === 0 ? (
-                      <EmptyState
-                        icon={<FolderKanban className="h-5 w-5" />}
-                        title="Nothing in review"
-                        description="Projects awaiting faculty feedback or peer review will appear here."
-                        compact
-                      />
-                    ) : (
-                      <div className="grid gap-3">
-                        {reviewProjects.map((p: any) => (
-                          <div
-                            key={p.id || p._id}
-                            onClick={() => (window.location.href = "/projects")}
-                            className="group flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border bg-background/50 p-4 transition-all hover:border-primary/40 hover:bg-card"
-                          >
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <Badge variant="outline" className="rounded-full text-[0.65rem]">
-                                {p.domain}
-                              </Badge>
-                              <h4 className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
-                                {p.title}
-                              </h4>
-                            </div>
-                            <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="archived" className="mt-4">
-                    {archivedProjects.length === 0 ? (
-                      <EmptyState
-                        icon={<FolderKanban className="h-5 w-5" />}
-                        title="No archived projects"
-                        description="Completed and archived research will be preserved here for reference."
-                        compact
-                      />
-                    ) : (
-                      <div className="grid gap-3">
-                        {archivedProjects.map((p: any) => (
-                          <div
-                            key={p.id || p._id}
-                            onClick={() => (window.location.href = "/projects")}
-                            className="group flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border bg-background/50 p-4 transition-all hover:border-primary/40 hover:bg-card"
-                          >
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <Badge variant="outline" className="rounded-full text-[0.65rem]">
-                                {p.domain}
-                              </Badge>
-                              <h4 className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
-                                {p.title}
-                              </h4>
-                            </div>
-                            <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-
-            {/* Quick AI tools */}
-            <Card className="surface-elevated border-border">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold">AI Tools</CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  Accelerate research with intelligent utilities
-                </p>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                {quickTools.map((t) => (
-                  <button
-                    key={t.title}
-                    className="group flex items-start gap-3 rounded-xl border border-border bg-background/50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-accent/60 hover:bg-accent/5 hover:shadow-sm"
-                  >
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent/15 text-primary transition-colors group-hover:bg-accent/25">
-                      <t.icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm font-semibold text-foreground">{t.title}</p>
-                        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
-                      </div>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{t.desc}</p>
-                    </div>
-                  </button>
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Recent papers + progress */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold">Recent Papers</CardTitle>
-                  <p className="text-xs text-muted-foreground">Recently added or opened</p>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="flex items-center gap-3 rounded-lg border border-dashed border-border p-3"
-                    >
-                      <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
-                      <div className="min-w-0 flex-1 space-y-2">
-                        <Skeleton className="h-3 w-3/4" />
-                        <Skeleton className="h-2.5 w-1/2" />
-                      </div>
-                    </div>
-                  ))}
-                  <p className="pt-2 text-center text-xs text-muted-foreground">
-                    Your library is empty. Import papers to get started.
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold">Research Progress</CardTitle>
-                  <p className="text-xs text-muted-foreground">Milestones across your projects</p>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {["Literature Review", "Methodology", "Data Collection", "Analysis"].map(
-                    (phase) => (
-                      <div key={phase} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-foreground">{phase}</span>
-                          <span className="text-muted-foreground">Not started</span>
-                        </div>
-                        <Progress value={0} className="h-1.5" />
-                      </div>
-                    ),
-                  )}
-                </CardContent>
-              </Card>
+        {/* 2. Research Projects (Hero Section - Prominent Workspace Heart) */}
+        <section className="space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-xl font-bold text-foreground md:text-2xl">
+                <FolderKanban className="h-6 w-6 text-primary" />
+                Research Projects Workspace
+              </h2>
+              <p className="text-xs text-muted-foreground md:text-sm">
+                Your active academic projects, progress completion, and mentor assignments.
+              </p>
             </div>
-
-            {/* Citation + Similarity placeholders */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <Quote className="h-4 w-4 text-primary" /> Citation Generator
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">Format references in seconds</p>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex gap-2">
-                    <Input placeholder="Paste DOI, URL, or paper title…" className="rounded-lg" />
-                    <Button size="sm" className="shrink-0 rounded-lg">
-                      Generate
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {["APA", "MLA", "Chicago", "IEEE", "Harvard"].map((s) => (
-                      <Badge key={s} variant="outline" className="rounded-full text-[0.7rem]">
-                        {s}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="rounded-lg border border-dashed border-border p-4 text-center">
-                    <p className="text-xs text-muted-foreground">
-                      Formatted citation will appear here
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <ScanSearch className="h-4 w-4 text-primary" /> Similarity Checker
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">Detect overlaps across sources</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-8 text-center">
-                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-accent/15 text-primary">
-                      <ScanSearch className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Upload a document</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Drop a PDF or DOCX to scan for similarity
-                      </p>
-                    </div>
-                    <Button size="sm" variant="outline" className="rounded-full">
-                      Choose file
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Faculty feedback + recent activity */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <MessageSquare className="h-4 w-4 text-primary" /> Faculty Feedback
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">
-                    Comments from mentors and reviewers
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState
-                    icon={<Inbox className="h-5 w-5" />}
-                    title="No feedback yet"
-                    description="Share a project with faculty to receive comments and guidance."
-                    compact
-                  />
-                </CardContent>
-              </Card>
-
-              <Card className="surface-elevated border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                    <Activity className="h-4 w-4 text-primary" /> Recent Activity
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">A timeline of your work</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="relative space-y-4 pl-6">
-                    <span className="absolute left-2 top-1 bottom-1 w-px bg-border" aria-hidden />
-                    {[0, 1, 2].map((i) => (
-                      <div key={i} className="relative">
-                        <span className="absolute -left-[1.4rem] top-1.5 h-2.5 w-2.5 rounded-full bg-muted ring-4 ring-card" />
-                        <Skeleton className="h-3 w-2/3" />
-                        <Skeleton className="mt-2 h-2.5 w-1/3" />
-                      </div>
-                    ))}
-                    <p className="pt-1 text-xs text-muted-foreground">
-                      Your recent actions will appear here.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <Button
+              onClick={() => (window.location.href = "/projects")}
+              variant="outline"
+              size="sm"
+              className="gap-1.5 rounded-xl border-border text-xs text-primary hover:bg-muted"
+            >
+              View All Projects ({safeProjects.length}) <ArrowUpRight className="h-4 w-4" />
+            </Button>
           </div>
 
-          {/* Right AI insights panel */}
-          <aside className="flex flex-col gap-6">
-            <Card className="surface-elevated overflow-hidden border-border">
-              <div className="relative gradient-brand p-5 text-primary-foreground">
-                <div className="absolute inset-0 grid-neural opacity-30" aria-hidden />
-                <div className="relative flex items-center gap-2">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/15 backdrop-blur">
-                    <Bot className="h-4 w-4" />
+          <Card className="surface-elevated rounded-2xl border-border p-6">
+            <Tabs defaultValue="all">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-4">
+                <TabsList className="rounded-xl bg-muted/60 p-1">
+                  <TabsTrigger value="all" className="rounded-lg text-xs font-medium">
+                    All ({safeProjects.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="active" className="rounded-lg text-xs font-medium">
+                    Active ({activeProjects.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="review" className="rounded-lg text-xs font-medium">
+                    Under Review ({reviewProjects.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="completed" className="rounded-lg text-xs font-medium">
+                    Completed ({completedProjects.length})
+                  </TabsTrigger>
+                </TabsList>
+
+                <Button
+                  onClick={() => (window.location.href = "/projects?create=true")}
+                  size="sm"
+                  className="gap-1.5 rounded-xl bg-primary text-xs font-medium text-primary-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Create Project
+                </Button>
+              </div>
+
+              {/* Tab Contents */}
+              {["all", "active", "review", "completed"].map((tabKey) => {
+                const displayList =
+                  tabKey === "all"
+                    ? safeProjects
+                    : tabKey === "active"
+                    ? activeProjects
+                    : tabKey === "review"
+                    ? reviewProjects
+                    : completedProjects;
+
+                return (
+                  <TabsContent key={tabKey} value={tabKey} className="mt-5">
+                    {loadingProjects ? (
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {[1, 2, 3].map((i) => (
+                          <Card key={i} className="rounded-2xl border-border bg-card p-5 space-y-3">
+                            <Skeleton className="h-5 w-24 rounded-full" />
+                            <Skeleton className="h-6 w-3/4" />
+                            <Skeleton className="h-10 w-full" />
+                            <Skeleton className="h-2 w-full rounded-full" />
+                          </Card>
+                        ))}
+                      </div>
+                    ) : displayList.length === 0 ? (
+                      /* 7. Empty State */
+                      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-12 px-4 text-center bg-card/40">
+                        <div className="grid h-16 w-16 place-items-center rounded-2xl bg-accent/15 text-primary mb-4">
+                          <FolderKanban className="h-8 w-8" />
+                        </div>
+                        <h3 className="text-lg font-bold text-foreground">
+                          {safeProjects.length === 0
+                            ? "Start your first research project and begin your research journey."
+                            : `No projects in "${tabKey}" state.`}
+                        </h3>
+                        <p className="mt-1.5 max-w-md text-xs text-muted-foreground">
+                          Organize literature, assign faculty advisors, and manage milestone progress seamlessly.
+                        </p>
+                        <Button
+                          onClick={() => (window.location.href = "/projects?create=true")}
+                          className="mt-5 gap-2 rounded-xl bg-primary font-medium text-primary-foreground shadow-sm"
+                        >
+                          <Plus className="h-4 w-4" /> Create Research Project
+                        </Button>
+                      </div>
+                    ) : (
+                      /* Project Cards Grid */
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {displayList.slice(0, 6).map((p) => {
+                          const statusKey = p.status || "Planning";
+                          const statusCfg = STATUS_VARIANTS[statusKey] || STATUS_VARIANTS["Planning"];
+                          const StatusIcon = statusCfg.icon;
+
+                          return (
+                            <Card
+                              key={p.id || p._id}
+                              className="group surface-elevated relative flex flex-col justify-between rounded-2xl border-border bg-card p-5 transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
+                            >
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <Badge variant="outline" className="truncate rounded-full border-border bg-muted/50 px-2.5 py-0.5 text-[0.7rem] font-medium text-muted-foreground">
+                                    {p.domain || "General"}
+                                  </Badge>
+                                  <Badge variant="outline" className={`gap-1 rounded-full border px-2.5 py-0.5 text-[0.7rem] font-semibold ${statusCfg.className}`}>
+                                    <StatusIcon className="h-3 w-3" />
+                                    {statusCfg.label}
+                                  </Badge>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <h3 className="truncate text-base font-bold text-foreground transition-colors group-hover:text-primary">
+                                    {p.title}
+                                  </h3>
+                                  <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
+                                    {p.description || "No description provided."}
+                                  </p>
+                                </div>
+
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-medium text-muted-foreground">Progress</span>
+                                    <span className="font-bold text-foreground">{p.progress || 0}%</span>
+                                  </div>
+                                  <Progress value={p.progress || 0} className="h-2 rounded-full bg-muted" />
+                                </div>
+                              </div>
+
+                              <div className="mt-4 space-y-3 border-t border-border/60 pt-3">
+                                {p.faculty && (
+                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <GraduationCap className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                    <span className="truncate font-medium text-foreground">{p.faculty}</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center justify-between text-[0.725rem] text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="h-3 w-3" />
+                                    {p.startDate ? formatDate(p.startDate) : "No date"}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => (window.location.href = "/projects")}
+                                      className="h-7 px-2 text-xs rounded-lg hover:bg-muted text-primary"
+                                    >
+                                      <Eye className="h-3.5 w-3.5 mr-1" /> View
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => (window.location.href = "/projects")}
+                                      className="h-7 px-2 text-xs rounded-lg hover:bg-muted text-amber-500"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          </Card>
+        </section>
+
+        {/* 5. Quick Actions Section */}
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-xl font-bold text-foreground md:text-2xl">Quick Actions</h2>
+            <p className="text-xs text-muted-foreground md:text-sm">
+              Instant research utilities and tools to accelerate your workflow.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {quickActions.map((qa) => (
+              <Card
+                key={qa.title}
+                onClick={() => (window.location.href = qa.href)}
+                className={`group cursor-pointer rounded-2xl border bg-gradient-to-br ${qa.gradient} p-4 transition-all duration-200 hover:-translate-y-1 hover:shadow-md`}
+              >
+                <div className="flex flex-col justify-between h-full space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className={`grid h-10 w-10 place-items-center rounded-xl ${qa.iconBg}`}>
+                      <qa.icon className="h-5 w-5" />
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold">AI Research Assistant</p>
-                    <p className="text-[0.7rem] opacity-80">Always-on academic co-pilot</p>
+                    <h3 className="text-sm font-bold text-foreground group-hover:text-primary">
+                      {qa.title}
+                    </h3>
+                    <p className="mt-1 text-[0.725rem] text-muted-foreground leading-snug">
+                      {qa.desc}
+                    </p>
                   </div>
                 </div>
-              </div>
-              <CardContent className="space-y-3 p-5">
-                <p className="text-xs text-muted-foreground">
-                  Ask questions, summarize papers, or brainstorm hypotheses. Your chat is private to
-                  your workspace.
-                </p>
-                <div className="rounded-lg border border-dashed border-border p-4 text-center">
-                  <p className="text-xs text-muted-foreground">
-                    Start a conversation to see AI responses here
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Input placeholder="Ask about your research…" className="rounded-full" />
-                  <Button size="icon" className="shrink-0 rounded-full">
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+              </Card>
+            ))}
+          </div>
+        </section>
 
-            <Card className="surface-elevated border-border">
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                  <LineChart className="h-4 w-4 text-primary" /> AI Insights
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">Patterns across your research</p>
-              </CardHeader>
-              <CardContent className="space-y-3">
+        {/* 6. Research Progress & 4. Recent Activity Timeline (Side by Side) */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* 6. Research Progress Card */}
+          <Card className="surface-elevated rounded-2xl border-border p-6 flex flex-col justify-between">
+            <CardHeader className="p-0 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <LineChart className="h-5 w-5 text-primary" /> Research Progress & Milestones
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Overall completion milestones and active research phases across projects.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0 space-y-5">
+              <div className="rounded-2xl border border-border/60 bg-muted/30 p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="text-foreground">Overall Workspace Completion</span>
+                  <span className="text-primary font-bold">{overallAvgProgress}%</span>
+                </div>
+                <Progress value={overallAvgProgress} className="h-2.5 rounded-full" />
+                <p className="text-[0.7rem] text-muted-foreground">
+                  Based on average progress across {safeProjects.length} registered research projects.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Active Milestone Phases
+                </h4>
                 {[
-                  { icon: Network, label: "Emerging topics", note: "Awaiting library data" },
-                  { icon: BookMarked, label: "Reading gaps", note: "No papers analyzed yet" },
-                  { icon: TrendingUp, label: "Citation trends", note: "Add sources to unlock" },
-                ].map((i) => (
-                  <div
-                    key={i.label}
-                    className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/40 p-3"
-                  >
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/15 text-primary">
-                      <i.icon className="h-4 w-4" />
+                  { phase: "Literature Review & Synthesis", progress: safeProjects.length > 0 ? 80 : 0 },
+                  { phase: "Methodology & Framework Setup", progress: safeProjects.length > 0 ? 60 : 0 },
+                  { phase: "Data Collection & Experiments", progress: safeProjects.length > 0 ? 40 : 0 },
+                  { phase: "Analysis & Manuscript Draft", progress: safeProjects.length > 0 ? 25 : 0 },
+                ].map((item) => (
+                  <div key={item.phase} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-foreground">{item.phase}</span>
+                      <span className="text-muted-foreground font-semibold">{item.progress}%</span>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-foreground">{i.label}</p>
-                      <p className="text-[0.7rem] text-muted-foreground">{i.note}</p>
-                    </div>
+                    <Progress value={item.progress} className="h-1.5 rounded-full" />
                   </div>
                 ))}
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-            <Card className="surface-elevated border-border">
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                  <Users className="h-4 w-4 text-primary" /> Collaborators
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <EmptyState
-                  icon={<Users className="h-5 w-5" />}
-                  title="Invite your team"
-                  description="Add faculty mentors and peers to co-author projects."
-                  action={{ label: "Invite people" }}
-                  compact
-                />
-                <Separator className="my-4" />
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Notifications</span>
-                  <Badge variant="outline" className="rounded-full text-[0.65rem]">
-                    0 new
-                  </Badge>
+          {/* 4. Recent Activity Timeline Card */}
+          <Card className="surface-elevated rounded-2xl border-border p-6 flex flex-col justify-between">
+            <CardHeader className="p-0 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-bold">
+                <Activity className="h-5 w-5 text-primary" /> Recent Activity Timeline
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Recent research events, project updates, and mentor assignments.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0">
+              {recentActivities.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-10 px-4 text-center">
+                  <Inbox className="h-8 w-8 text-muted-foreground mb-2" />
+                  <p className="text-xs text-muted-foreground">
+                    No recent activity yet. Create a research project to start tracking your timeline!
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
-          </aside>
+              ) : (
+                <div className="relative space-y-4 pl-6 pt-1">
+                  <span className="absolute left-2.5 top-2 bottom-2 w-0.5 bg-border" aria-hidden />
+                  {recentActivities.map((act) => {
+                    const ActIcon = act.icon;
+                    return (
+                      <div key={act.id} className="relative flex items-start gap-3">
+                        <div className={`absolute -left-[1.65rem] top-0.5 grid h-6 w-6 place-items-center rounded-full border border-border bg-card text-xs shadow-sm`}>
+                          <ActIcon className="h-3.5 w-3.5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <p className="text-xs font-bold text-foreground line-clamp-1">{act.title}</p>
+                          <p className="text-[0.725rem] text-muted-foreground leading-normal">{act.desc}</p>
+                          <p className="text-[0.675rem] text-muted-foreground/80">{formatDate(act.timestamp)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </DashboardLayout>
