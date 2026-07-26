@@ -77,16 +77,7 @@ export const Route = createFileRoute("/papers")({
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button onClick={() => refetch()} variant="outline" size="sm">
-                <RefreshCcw /> Refresh
-              </Button>
-              <Button
-                onClick={async () => {
-                  await seedExamplePaper();
-                  await refetch();
-                }}
-                size="sm"
-              >
-                <Plus /> Add sample paper
+                <RefreshCcw className="h-4 w-4 mr-1.5" /> Refresh
               </Button>
             </div>
           </div>

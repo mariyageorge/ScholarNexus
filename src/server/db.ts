@@ -1,4 +1,4 @@
-import { MongoClient, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
+import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
 import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
 
@@ -43,6 +43,22 @@ export interface UserRecord {
   providerId?: string;
   photoURL?: string;
   updatedAt?: string;
+}
+
+export interface ProjectRecord {
+  _id?: string | ObjectId;
+  id?: string;
+  userEmail: string;
+  title: string;
+  description: string;
+  domain: string;
+  status: "Planning" | "In Progress" | "Under Review" | "Completed" | "On Hold";
+  progress: number;
+  startDate: string;
+  expectedCompletionDate: string;
+  faculty?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /* ── OTP In-Memory Store ── */
@@ -278,7 +294,383 @@ export async function insertDocument<T extends Document = Document>(
   return collection.insertOne(document);
 }
 
+export async function findProjectsByUser(userEmail: string, search?: string, status?: string) {
+  try {
+    const collection = await getCollection<Document>("projects");
+    const normalizedEmail = userEmail.trim().toLowerCase();
+
+    const query: Record<string, any> = {
+      $or: [
+        { userEmail: normalizedEmail },
+        { userEmail: { $regex: `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+      ],
+    };
+
+    if (status && status !== "All") {
+      query.status = status;
+    }
+
+    if (search && search.trim()) {
+      const s = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      query.$and = [
+        {
+          $or: [
+            { title: { $regex: s, $options: "i" } },
+            { description: { $regex: s, $options: "i" } },
+            { domain: { $regex: s, $options: "i" } },
+            { faculty: { $regex: s, $options: "i" } },
+          ],
+        },
+      ];
+    }
+
+    const docs = await collection.find(query).sort({ updatedAt: -1, createdAt: -1 }).toArray();
+    return docs.map((doc) => ({
+      ...doc,
+      id: doc._id.toString(),
+      _id: doc._id.toString(),
+    }));
+  } catch (err) {
+    console.error("Error in findProjectsByUser:", err);
+    return [];
+  }
+}
+
+export async function createProject(project: Omit<ProjectRecord, "_id">) {
+  const collection = await getCollection<Document>("projects");
+  const result = await collection.insertOne(project as any);
+  return {
+    ...project,
+    id: result.insertedId.toString(),
+    _id: result.insertedId.toString(),
+  };
+}
+
+export async function updateProject(id: string, userEmail: string, updates: Partial<ProjectRecord>) {
+  const collection = await getCollection<Document>("projects");
+  const normalizedEmail = userEmail.trim().toLowerCase();
+
+  let filterId: any = id;
+  try {
+    if (ObjectId.isValid(id)) {
+      filterId = new ObjectId(id);
+    }
+  } catch {
+    // fallback
+  }
+
+  const existing = await collection.findOne({
+    $or: [{ _id: filterId }, { _id: id }, { id: id }],
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.userEmail?.toLowerCase() !== normalizedEmail) {
+    throw new Error("Unauthorized to modify this project.");
+  }
+
+  const { _id, id: _ignoreId, ...cleanUpdates } = updates as any;
+  cleanUpdates.updatedAt = new Date().toISOString();
+
+  await collection.updateOne(
+    { _id: existing._id },
+    { $set: cleanUpdates }
+  );
+
+  const updatedDoc = await collection.findOne({ _id: existing._id });
+  return updatedDoc
+    ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+    : null;
+}
+
+export async function deleteProject(id: string, userEmail: string) {
+  const collection = await getCollection<Document>("projects");
+  const normalizedEmail = userEmail.trim().toLowerCase();
+
+  let filterId: any = id;
+  try {
+    if (ObjectId.isValid(id)) {
+      filterId = new ObjectId(id);
+    }
+  } catch {
+    // fallback
+  }
+
+  const existing = await collection.findOne({
+    $or: [{ _id: filterId }, { _id: id }, { id: id }],
+  });
+
+  if (!existing) {
+    return false;
+  }
+
+  if (existing.userEmail?.toLowerCase() !== normalizedEmail) {
+    throw new Error("Unauthorized to delete this project.");
+  }
+
+  const res = await collection.deleteOne({ _id: existing._id });
+  return res.deletedCount > 0;
+}
+
+function validateProjectPayload(body: any) {
+  const title = (body.title || "").trim();
+  if (!title) {
+    return "Project Title is required.";
+  }
+  if (title.length < 3) {
+    return "Project Title must be at least 3 characters long.";
+  }
+  if (title.length > 150) {
+    return "Project Title cannot exceed 150 characters.";
+  }
+
+  const description = (body.description || "").trim();
+  if (description.length > 1000) {
+    return "Description cannot exceed 1000 characters.";
+  }
+
+  const domain = (body.domain || "").trim();
+  if (!domain) {
+    return "Research Domain is required.";
+  }
+
+  const status = body.status;
+  const validStatuses = ["Planning", "In Progress", "Under Review", "Completed", "On Hold"];
+  if (!status || !validStatuses.includes(status)) {
+    return "Please select a valid Project Status.";
+  }
+
+  const progress = Number(body.progress);
+  if (isNaN(progress) || progress < 0 || progress > 100) {
+    return "Progress completion must be between 0% and 100%.";
+  }
+
+  const startDateStr = body.startDate;
+  if (!startDateStr) {
+    return "Start Date is required.";
+  }
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  if (startDateStr < todayStr) {
+    return "Start Date cannot be a prior date (before today).";
+  }
+
+  const expectedCompletionDateStr = body.expectedCompletionDate;
+  if (!expectedCompletionDateStr) {
+    return "Expected Completion Date is required.";
+  }
+
+  const startMs = new Date(startDateStr).getTime();
+  const completionMs = new Date(expectedCompletionDateStr).getTime();
+
+  if (isNaN(startMs) || isNaN(completionMs)) {
+    return "Invalid date format.";
+  }
+
+  const diffDays = (completionMs - startMs) / (1000 * 60 * 60 * 24);
+  if (diffDays < 7) {
+    return "Expected Completion Date must be at least 1 week (7 days) after the Start Date.";
+  }
+
+  return null;
+}
+
 export async function handleApiRequest(request: Request, url: URL): Promise<Response> {
+  if (url.pathname === "/api/projects") {
+    const userEmail =
+      url.searchParams.get("email") ||
+      url.searchParams.get("userEmail") ||
+      request.headers.get("x-user-email");
+
+    if (request.method === "GET") {
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const search = url.searchParams.get("search") || undefined;
+      const status = url.searchParams.get("status") || undefined;
+      const projects = await findProjectsByUser(userEmail, search, status);
+      return new Response(JSON.stringify(projects), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "POST") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const email = (body.userEmail || body.email || userEmail)?.trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify({ error: "User email is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const validationError = validateProjectPayload(body);
+      if (validationError) {
+        return new Response(JSON.stringify({ error: validationError }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const now = new Date().toISOString();
+      const newProject = {
+        userEmail: email,
+        title: body.title.trim(),
+        description: (body.description || "").trim(),
+        domain: body.domain.trim(),
+        status: body.status,
+        progress: Math.min(100, Math.max(0, Number(body.progress) || 0)),
+        startDate: body.startDate,
+        expectedCompletionDate: body.expectedCompletionDate,
+        faculty: (body.faculty || "").trim(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const created = await createProject(newProject);
+      return new Response(JSON.stringify(created), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const projectId = body.id || body._id || url.searchParams.get("id");
+      const email = (body.userEmail || body.email || userEmail)?.trim().toLowerCase();
+
+      if (!projectId || !email) {
+        return new Response(JSON.stringify({ error: "Project ID and User Email are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const validationError = validateProjectPayload(body);
+      if (validationError) {
+        return new Response(JSON.stringify({ error: validationError }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      try {
+        const updated = await updateProject(projectId, email, body);
+        if (!updated) {
+          return new Response(JSON.stringify({ error: "Project not found." }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify(updated), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message || "Failed to update project." }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+
+    if (request.method === "DELETE") {
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        // empty body ok
+      }
+
+      const projectId = url.searchParams.get("id") || body.id || body._id;
+      const email = (userEmail || body.userEmail || body.email)?.trim().toLowerCase();
+
+      if (!projectId || !email) {
+        return new Response(JSON.stringify({ error: "Project ID and User Email are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      try {
+        const success = await deleteProject(projectId, email);
+        if (!success) {
+          return new Response(JSON.stringify({ error: "Project not found or already deleted." }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ success: true, message: "Project deleted successfully." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message || "Failed to delete project." }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({ error: "Method not allowed." }), {
+      status: 405,
+      headers: { "content-type": "application/json", Allow: "GET, POST, PUT, DELETE" },
+    });
+  }
+
+  if (url.pathname === "/api/faculty-list") {
+    if (request.method === "GET") {
+      try {
+        const usersCollection = await getCollection<UserRecord>("users");
+        const facultyUsers = await usersCollection
+          .find({ role: "faculty" })
+          .project({ name: 1, email: 1, displayName: 1, affiliation: 1, photoURL: 1 })
+          .toArray();
+
+        const dbFacultyList = facultyUsers.map((f) => ({
+          name: f.displayName || f.name,
+          email: f.email,
+          title: f.affiliation || "Faculty Advisor",
+          department: "Academic Department",
+        }));
+
+        return new Response(JSON.stringify(dbFacultyList), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+  }
+
   if (url.pathname === "/api/send-otp") {
     if (request.method !== "POST") {
       return new Response(JSON.stringify({ error: "Method not allowed." }), {
