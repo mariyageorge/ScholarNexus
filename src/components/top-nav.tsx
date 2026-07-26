@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Bell, Search, Sparkles } from "lucide-react";
+import { Bell, Sparkles } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -73,19 +72,7 @@ export function TopNav() {
         <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
       </div>
 
-      <div className="relative ml-auto hidden max-w-md flex-1 md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Search papers, projects, authors…"
-          className="h-10 rounded-xl border-border bg-card pl-9 pr-16 focus-visible:ring-accent/40"
-        />
-        <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground sm:inline-flex">
-          ⌘K
-        </kbd>
-      </div>
-
-      <div className="ml-auto flex items-center gap-1.5 md:ml-2">
+      <div className="ml-auto flex items-center gap-1.5">
         <Badge
           variant="outline"
           className="hidden gap-1.5 rounded-full border-accent/40 bg-accent/10 px-2.5 py-1 text-[0.7rem] font-medium text-foreground lg:inline-flex"

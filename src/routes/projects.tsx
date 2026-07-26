@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useMatches } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import {
   AlertCircle,
@@ -71,8 +71,19 @@ export const Route = createFileRoute("/projects")({
       },
     ],
   }),
-  component: ResearchProjectsPage,
+  component: ProjectsRouteLayout,
 });
+
+function ProjectsRouteLayout() {
+  const matches = useMatches();
+  const isWorkspaceRoute = matches.some((m) => m.routeId.includes("$projectId"));
+
+  if (isWorkspaceRoute) {
+    return <Outlet />;
+  }
+
+  return <ResearchProjectsPage />;
+}
 
 export type ProjectStatus = "Planning" | "In Progress" | "Under Review" | "Completed" | "On Hold";
 
@@ -632,11 +643,10 @@ function ResearchProjectsPage() {
                 <button
                   key={st}
                   onClick={() => setSelectedStatusFilter(st)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                    selectedStatusFilter === st
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${selectedStatusFilter === st
                       ? "bg-primary text-primary-foreground shadow-sm"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
+                    }`}
                 >
                   {st}
                 </button>
@@ -748,8 +758,8 @@ function ResearchProjectsPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="rounded-xl">
-                            <DropdownMenuItem onClick={() => setDetailProject(p)} className="gap-2 text-xs">
-                              <Eye className="h-3.5 w-3.5 text-primary" /> View Details
+                            <DropdownMenuItem onClick={() => (window.location.href = `/projects/${p._id || p.id}`)} className="gap-2 text-xs">
+                              <Eye className="h-3.5 w-3.5 text-primary" /> View Workspace
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openEditModal(p)} className="gap-2 text-xs">
                               <Pencil className="h-3.5 w-3.5 text-amber-500" /> Edit Project
@@ -765,7 +775,7 @@ function ResearchProjectsPage() {
                     {/* Title & Description */}
                     <div className="space-y-1">
                       <h3
-                        onClick={() => setDetailProject(p)}
+                        onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
                         className="cursor-pointer text-base font-bold text-foreground transition-colors group-hover:text-primary line-clamp-1"
                       >
                         {p.title}
@@ -836,11 +846,10 @@ function ResearchProjectsPage() {
                 value={formData.title}
                 onChange={(e) => handleFieldChange("title", e.target.value)}
                 onBlur={() => handleBlur("title")}
-                className={`rounded-xl text-sm transition-colors ${
-                  touched.title && fieldErrors.title
+                className={`rounded-xl text-sm transition-colors ${touched.title && fieldErrors.title
                     ? "border-destructive focus-visible:ring-destructive"
                     : ""
-                }`}
+                  }`}
               />
               {touched.title && fieldErrors.title && (
                 <p className="text-[0.75rem] text-destructive font-medium mt-1">
@@ -860,9 +869,8 @@ function ResearchProjectsPage() {
                   onValueChange={(val) => handleFieldChange("domain", val)}
                 >
                   <SelectTrigger
-                    className={`rounded-xl text-xs ${
-                      touched.domain && fieldErrors.domain ? "border-destructive" : ""
-                    }`}
+                    className={`rounded-xl text-xs ${touched.domain && fieldErrors.domain ? "border-destructive" : ""
+                      }`}
                   >
                     <SelectValue placeholder="Select domain" />
                   </SelectTrigger>
@@ -890,9 +898,8 @@ function ResearchProjectsPage() {
                   onValueChange={(val: ProjectStatus) => handleFieldChange("status", val)}
                 >
                   <SelectTrigger
-                    className={`rounded-xl text-xs ${
-                      touched.status && fieldErrors.status ? "border-destructive" : ""
-                    }`}
+                    className={`rounded-xl text-xs ${touched.status && fieldErrors.status ? "border-destructive" : ""
+                      }`}
                   >
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
@@ -932,11 +939,10 @@ function ResearchProjectsPage() {
                   )
                 }
                 onBlur={() => handleBlur("progress")}
-                className={`rounded-xl text-sm ${
-                  touched.progress && fieldErrors.progress
+                className={`rounded-xl text-sm ${touched.progress && fieldErrors.progress
                     ? "border-destructive focus-visible:ring-destructive"
                     : ""
-                }`}
+                  }`}
               />
               {touched.progress && fieldErrors.progress && (
                 <p className="text-[0.75rem] text-destructive font-medium mt-1">
@@ -962,11 +968,10 @@ function ResearchProjectsPage() {
                 value={formData.description}
                 onChange={(e) => handleFieldChange("description", e.target.value)}
                 onBlur={() => handleBlur("description")}
-                className={`rounded-xl text-xs ${
-                  touched.description && fieldErrors.description
+                className={`rounded-xl text-xs ${touched.description && fieldErrors.description
                     ? "border-destructive focus-visible:ring-destructive"
                     : ""
-                }`}
+                  }`}
               />
               {touched.description && fieldErrors.description && (
                 <p className="text-[0.75rem] text-destructive font-medium mt-1">
@@ -1000,11 +1005,10 @@ function ResearchProjectsPage() {
                     setTouched((prev) => ({ ...prev, startDate: true, expectedCompletionDate: true }));
                   }}
                   onBlur={() => handleBlur("startDate")}
-                  className={`rounded-xl text-xs ${
-                    touched.startDate && fieldErrors.startDate
+                  className={`rounded-xl text-xs ${touched.startDate && fieldErrors.startDate
                       ? "border-destructive focus-visible:ring-destructive"
                       : ""
-                  }`}
+                    }`}
                 />
                 {touched.startDate && fieldErrors.startDate && (
                   <p className="text-[0.75rem] text-destructive font-medium mt-1">
@@ -1023,11 +1027,10 @@ function ResearchProjectsPage() {
                   value={formData.expectedCompletionDate}
                   onChange={(e) => handleFieldChange("expectedCompletionDate", e.target.value)}
                   onBlur={() => handleBlur("expectedCompletionDate")}
-                  className={`rounded-xl text-xs ${
-                    touched.expectedCompletionDate && fieldErrors.expectedCompletionDate
+                  className={`rounded-xl text-xs ${touched.expectedCompletionDate && fieldErrors.expectedCompletionDate
                       ? "border-destructive focus-visible:ring-destructive"
                       : ""
-                  }`}
+                    }`}
                 />
                 {touched.expectedCompletionDate && fieldErrors.expectedCompletionDate && (
                   <p className="text-[0.75rem] text-destructive font-medium mt-1">
@@ -1040,7 +1043,7 @@ function ResearchProjectsPage() {
             {/* Faculty Mentor Selector (Strictly from DB) */}
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-foreground">
-                Faculty Mentor / Advisor <span className="text-muted-foreground">(Optional — Fetched from DB)</span>
+                Faculty Mentor / Advisor <span className="text-muted-foreground">(Optional)</span>
               </Label>
               <Select
                 value={formData.faculty}

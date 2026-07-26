@@ -538,7 +538,10 @@ function DashboardPage() {
                                 </div>
 
                                 <div className="space-y-1">
-                                  <h3 className="truncate text-base font-bold text-foreground transition-colors group-hover:text-primary">
+                                  <h3
+                                    onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
+                                    className="cursor-pointer truncate text-base font-bold text-foreground transition-colors group-hover:text-primary"
+                                  >
                                     {p.title}
                                   </h3>
                                   <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
@@ -571,7 +574,7 @@ function DashboardPage() {
                                     <Button
                                       size="sm"
                                       variant="ghost"
-                                      onClick={() => (window.location.href = "/projects")}
+                                      onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
                                       className="h-7 px-2 text-xs rounded-lg hover:bg-muted text-primary"
                                     >
                                       <Eye className="h-3.5 w-3.5 mr-1" /> View
