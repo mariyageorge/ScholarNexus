@@ -7,6 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Separator } from "@/components/ui/separator";
+import { GoogleIcon } from "@/components/google-icon";
+import { signInWithGoogle } from "@/lib/firebase";
+import { getHomePathForRole, setUserSession, type UserSession } from "@/lib/session";
 
 export const Route = createFileRoute("/register")({
   head: () => ({ meta: [{ title: "Create Account — SCHOLAR NEXUS" }] }),
@@ -23,6 +27,7 @@ function RegisterPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -53,17 +58,75 @@ function RegisterPage() {
       if (!response.ok) {
         setErrorMessage(data?.error ?? "Unable to create account.");
       } else {
-        setSuccessMessage("Your SCHOLAR NEXUS account was created! Please sign in.");
-        setName("");
-        setEmail("");
-        setPassword("");
-        setRole("student");
-        setAcceptedTerms(false);
+        window.location.href = "/login?registered=true";
       }
     } catch (error) {
       setErrorMessage("Unable to reach the server. Please try again later.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!acceptedTerms) {
+      setErrorMessage("You must agree to the Terms of Service and Privacy Policy before signing up with Google.");
+      return;
+    }
+
+    setIsGoogleLoading(true);
+
+    try {
+      const credential = await signInWithGoogle();
+      const user = credential.user;
+
+      if (!user.email || !user.providerId) {
+        throw new Error("Google sign-up failed to provide required user information.");
+      }
+
+      const response = await fetch("/api/oauth-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "google",
+          providerId: user.uid,
+          email: user.email,
+          name: user.displayName ?? user.email,
+          photoURL: user.photoURL ?? undefined,
+          role,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data?.error ?? "Google sign-up failed.");
+        return;
+      }
+
+      const userPayload: UserSession = {
+        email: data.email,
+        role: data.role ?? role,
+        name: data.name,
+        profileCompleted: data.profileCompleted,
+        displayName: data.displayName,
+        affiliation: data.affiliation,
+        bio: data.bio,
+        provider: data.provider,
+        providerId: data.providerId,
+        photoURL: data.photoURL,
+      };
+      setUserSession(userPayload);
+      localStorage.removeItem("scholarnexusRemember");
+      window.location.href = getHomePathForRole(data.role ?? role);
+    } catch (error) {
+      console.error("Google sign-up failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error ?? "Unable to sign up with Google.");
+      setErrorMessage(`Unable to sign up with Google. ${errorMessage}`);
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -205,7 +268,26 @@ function RegisterPage() {
           <GraduationCap className="h-4 w-4" />
           {isSubmitting ? "Creating Account..." : "Create Research Account"}
         </Button>
+
+        <div className="relative py-2">
+          <Separator />
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-3 text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground">
+            or continue with
+          </span>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full gap-2.5 rounded-xl py-2.5 font-semibold text-xs border-border hover:bg-muted/30 transition duration-150"
+          onClick={handleGoogleSignUp}
+          disabled={isGoogleLoading || isSubmitting}
+        >
+          <GoogleIcon className="h-4 w-4 shrink-0" />
+          {isGoogleLoading ? "Connecting to Google..." : "Sign up with Google Workspace"}
+        </Button>
       </form>
     </AuthLayout>
   );
 }
+

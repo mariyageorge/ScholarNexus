@@ -120,6 +120,7 @@ export async function findOrCreateOAuthUser(
   email: string,
   name: string,
   photoURL?: string,
+  role?: string,
   dbName = "scholarnexus"
 ) {
   const collection = await getCollection<UserRecord>("users", dbName);
@@ -128,24 +129,28 @@ export async function findOrCreateOAuthUser(
 
   const emailUser = await findUserByEmail(email, dbName);
   if (emailUser) {
+    const updatePayload: Record<string, any> = {
+      provider,
+      providerId,
+      photoURL,
+    };
+    if (role && (role === "student" || role === "faculty")) {
+      updatePayload.role = role;
+    }
     await collection.updateOne(
       { email: email.trim().toLowerCase() },
       {
-        $set: {
-          provider,
-          providerId,
-          photoURL,
-        },
+        $set: updatePayload,
       },
     );
-    return { ...emailUser, provider, providerId, photoURL };
+    return { ...emailUser, ...updatePayload };
   }
 
   const record: UserRecord = {
     name,
     email: email.trim().toLowerCase(),
     password: "",
-    role: "student",
+    role: role && (role === "student" || role === "faculty") ? role : "student",
     createdAt: new Date().toISOString(),
     profileCompleted: false,
     provider,
@@ -905,7 +910,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     const existingUser = await findUserByEmail(email);
     if (existingUser) {
       return new Response(
-        JSON.stringify({ error: "A user with that email already exists." }),
+        JSON.stringify({
+          error: "An account with this email address already exists. Each email can only be registered once. Please sign in instead.",
+        }),
         {
           status: 409,
           headers: { "content-type": "application/json" },
@@ -1019,12 +1026,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
-    const { provider, providerId, email: oauthEmail, name, photoURL } = body as {
+    const { provider, providerId, email: oauthEmail, name, photoURL, role } = body as {
       provider?: unknown;
       providerId?: unknown;
       email?: unknown;
       name?: unknown;
       photoURL?: unknown;
+      role?: unknown;
     };
 
     if (
@@ -1048,6 +1056,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       oauthEmail,
       name,
       typeof photoURL === "string" ? photoURL : undefined,
+      typeof role === "string" ? role : undefined,
     );
 
     return new Response(
