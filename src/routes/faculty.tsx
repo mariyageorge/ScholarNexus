@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
-import { Bell, Bookmark, FolderKanban, MessageSquare, Quote, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, Bookmark, FolderKanban, MessageSquare, Quote, ShieldCheck, Sparkles, Users, Megaphone } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { getHomePathForRole, getUserSession } from "@/lib/session";
 
 export const Route = createFileRoute("/faculty")({
@@ -14,6 +15,7 @@ export const Route = createFileRoute("/faculty")({
 
 function FacultyPage() {
   const user = getUserSession();
+  const [announcements, setAnnouncements] = useState<any[]>([]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -25,7 +27,17 @@ function FacultyPage() {
 
     if (user.role !== "faculty") {
       window.location.href = getHomePathForRole(user.role);
+      return;
     }
+
+    fetch("/api/announcements")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAnnouncements(data.filter((a) => a.targetAudience === "All" || a.targetAudience === "Faculty"));
+        }
+      })
+      .catch(() => {});
   }, [user]);
 
   if (!user || user.role !== "faculty") {
@@ -212,6 +224,29 @@ function FacultyPage() {
             </CardContent>
           </Card>
         </section>
+
+        {announcements.length > 0 && (
+          <section className="rounded-3xl border border-primary/30 bg-primary/5 p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Megaphone className="h-5 w-5 text-primary animate-pulse" />
+                <h2 className="text-lg font-bold text-foreground">Platform Announcements</h2>
+              </div>
+              <Badge variant="outline" className="text-[0.65rem] border-primary/40 text-primary">Faculty Updates</Badge>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {announcements.slice(0, 4).map((ann) => (
+                <div key={ann.id || ann._id} className="rounded-2xl border border-border bg-card p-4 space-y-1.5 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-semibold text-xs text-foreground truncate">{ann.title}</h3>
+                    {ann.pinned && <Badge variant="outline" className="text-[0.6rem] border-amber-500/40 text-amber-500 bg-amber-500/10">Pinned</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{ann.content}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="rounded-3xl border border-border bg-card p-6 shadow-sm">
           <CardHeader>

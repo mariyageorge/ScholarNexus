@@ -27,6 +27,7 @@ import {
   TrendingUp,
   Users,
   Eye,
+  Megaphone,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { getHomePathForRole, getUserSession, UserSession } from "@/lib/session";
@@ -151,6 +152,7 @@ function DashboardPage() {
   });
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
 
   useEffect(() => {
@@ -183,6 +185,15 @@ function DashboardPage() {
         setProjects([]);
       })
       .finally(() => setLoadingProjects(false));
+
+    fetch("/api/announcements")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAnnouncements(data.filter((a) => a.targetAudience === "All" || a.targetAudience === "Students"));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   if (typeof window !== "undefined" && (!user || user.role !== "student")) {
@@ -684,6 +695,30 @@ function DashboardPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Platform Announcements Card */}
+          {announcements.length > 0 && (
+            <Card className="surface-elevated rounded-2xl border-primary/30 bg-primary/5 p-6 shadow-sm">
+              <CardHeader className="p-0 pb-3 flex flex-row items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Megaphone className="h-5 w-5 text-primary animate-pulse" />
+                  <CardTitle className="text-base font-bold text-foreground">Platform Announcements</CardTitle>
+                </div>
+                <Badge variant="outline" className="text-[0.65rem] border-primary/40 text-primary">Live Updates</Badge>
+              </CardHeader>
+              <CardContent className="p-0 space-y-3">
+                {announcements.slice(0, 3).map((ann) => (
+                  <div key={ann.id || ann._id} className="rounded-xl border border-border/80 bg-card p-3 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-xs text-foreground truncate">{ann.title}</span>
+                      {ann.pinned && <Badge variant="outline" className="text-[0.6rem] border-amber-500/40 text-amber-500 bg-amber-500/10">Pinned</Badge>}
+                    </div>
+                    <p className="text-[0.725rem] text-muted-foreground leading-relaxed line-clamp-2">{ann.content}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {/* 4. Recent Activity Timeline Card */}
           <Card className="surface-elevated rounded-2xl border-border p-6 flex flex-col justify-between">

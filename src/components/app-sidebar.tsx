@@ -20,6 +20,9 @@ import {
   Shield,
   CheckSquare,
   StickyNote,
+  UserCheck,
+  Megaphone,
+  BarChart3,
 } from "lucide-react";
 import {
   Sidebar,
@@ -92,6 +95,24 @@ const facultyAccount: SidebarMenuItemType[] = [
   { title: "Logout", url: "/login", icon: LogOut },
 ];
 
+const adminMenu: SidebarMenuItemType[] = [
+  { title: "Dashboard", url: "/admin", hash: "#dashboard", icon: LayoutDashboard },
+  { title: "User Management", url: "/admin", hash: "#users", icon: Users },
+  { title: "Faculty Approvals", url: "/admin", hash: "#approvals", icon: UserCheck },
+  { title: "Research Projects", url: "/admin", hash: "#projects", icon: FolderKanban },
+  { title: "Research Papers", url: "/admin", hash: "#papers", icon: FileText },
+  { title: "Announcements", url: "/admin", hash: "#announcements", icon: Megaphone },
+  { title: "Reports & Analytics", url: "/admin", hash: "#reports", icon: BarChart3 },
+  { title: "Activity Logs", url: "/admin", hash: "#activity", icon: History },
+  { title: "Settings", url: "/admin", hash: "#settings", icon: Settings },
+];
+
+const adminAccount: SidebarMenuItemType[] = [
+  { title: "Admin Settings", url: "/admin", hash: "#settings", icon: Settings },
+  { title: "Student View", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Logout", url: "/login", icon: LogOut },
+];
+
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
@@ -99,8 +120,15 @@ export function AppSidebar() {
   const hash = useRouterState({ select: (s) => s.location.hash });
 
   const isCurrentFacultyRoute = pathname === "/faculty";
+  const isCurrentAdminRoute = pathname === "/admin" || pathname.startsWith("/admin");
 
   const isActive = (item: SidebarMenuItemType) => {
+    if (isCurrentAdminRoute && item.url === "/admin") {
+      if (!hash || hash === "" || hash === "#dashboard") {
+        return item.hash === "#dashboard" || !item.hash;
+      }
+      return item.hash === hash;
+    }
     if (item.url === pathname && !item.hash) return true;
     if (isCurrentFacultyRoute && item.url === "/faculty" && item.hash && hash === item.hash)
       return true;
@@ -150,10 +178,16 @@ export function AppSidebar() {
     </SidebarGroup>
   );
 
-  const menu = isCurrentFacultyRoute
+  const menu = isCurrentAdminRoute
+    ? adminMenu
+    : isCurrentFacultyRoute
     ? facultyMenu
     : workspace;
-  const accountMenu = isCurrentFacultyRoute ? facultyAccount : account;
+  const accountMenu = isCurrentAdminRoute
+    ? adminAccount
+    : isCurrentFacultyRoute
+    ? facultyAccount
+    : account;
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -169,7 +203,7 @@ export function AppSidebar() {
                 ScholarNexus
               </span>
               <span className="truncate text-[0.7rem] font-medium text-muted-foreground">
-                AI Research Suite
+                {isCurrentAdminRoute ? "Admin Management Portal" : "AI Research Suite"}
               </span>
             </div>
           )}
@@ -177,10 +211,10 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="gap-0 px-1">
-        {renderGroup("Workspace", menu)}
-        {!isCurrentFacultyRoute && renderGroup("AI Tools", aiTools)}
-        {!isCurrentFacultyRoute && renderGroup("Library", library)}
-        {!isCurrentFacultyRoute && renderGroup("Community", community)}
+        {renderGroup(isCurrentAdminRoute ? "Admin Portal" : "Workspace", menu)}
+        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("AI Tools", aiTools)}
+        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("Library", library)}
+        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("Community", community)}
         {renderGroup("Account", accountMenu)}
       </SidebarContent>
 
