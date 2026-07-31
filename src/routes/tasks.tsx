@@ -106,7 +106,7 @@ function TasksAndNotesPage() {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
+  const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
@@ -489,6 +489,29 @@ function TasksAndNotesPage() {
     }
   };
 
+  const getStatusBadge = (status: TaskItem["status"]) => {
+    switch (status) {
+      case "Completed":
+        return (
+          <Badge className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold text-[0.65rem] gap-1">
+            <CheckCircle2 className="h-3 w-3 text-emerald-400" /> Completed
+          </Badge>
+        );
+      case "In Progress":
+        return (
+          <Badge className="bg-blue-500/15 text-blue-400 border border-blue-500/30 font-semibold text-[0.65rem] gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" /> In Progress
+          </Badge>
+        );
+      default:
+        return (
+          <Badge className="bg-slate-500/15 text-slate-400 border border-slate-500/30 font-semibold text-[0.65rem]">
+            To Do
+          </Badge>
+        );
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     try {
       const d = new Date(dateStr);
@@ -532,7 +555,7 @@ function TasksAndNotesPage() {
 
         {/* Section Tabs */}
         <Tabs value={activeSection} onValueChange={(val: any) => setActiveSection(val)} className="space-y-6">
-          <TabsList className="grid grid-cols-2 max-w-md bg-card border border-border p-1.5 rounded-2xl shadow-sm h-auto">
+          <TabsList className="grid grid-cols-2 w-full bg-card border border-border p-1.5 rounded-2xl shadow-sm h-auto">
             <TabsTrigger value="tasks" className="rounded-xl py-2.5 text-xs font-bold gap-2">
               <CheckSquare className="h-4 w-4" /> Tasks & To-Dos ({tasks.length})
             </TabsTrigger>
@@ -682,7 +705,123 @@ function TasksAndNotesPage() {
                   <Plus className="h-4 w-4" /> Create First Task
                 </Button>
               </Card>
-            ) : viewMode === "kanban" ? (
+            ) : viewMode === "list" ? (
+              <Card className="surface-elevated rounded-2xl border-border bg-card overflow-hidden">
+                <div className="p-4 border-b border-border/60 bg-muted/20 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <List className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-bold text-foreground">Unified Action Items Stream</span>
+                  </div>
+                  <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary font-semibold">
+                    {filteredTasks.length} {filteredTasks.length === 1 ? "Task" : "Tasks"}
+                  </Badge>
+                </div>
+
+                <div className="divide-y divide-border/60">
+                  {filteredTasks.map((task) => {
+                    const isOverdue = task.dueDate && task.dueDate < todayStr && task.status !== "Completed";
+                    return (
+                      <div
+                        key={task.id || task._id}
+                        className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:bg-muted/20 transition-colors"
+                      >
+                        <div className="flex items-start gap-3 min-w-0">
+                          <button
+                            onClick={() =>
+                              handleTaskStatusChange(
+                                task,
+                                task.status === "Completed"
+                                  ? "To Do"
+                                  : task.status === "To Do"
+                                  ? "In Progress"
+                                  : "Completed"
+                              )
+                            }
+                            className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-lg border transition-all ${
+                              task.status === "Completed"
+                                ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
+                                : task.status === "In Progress"
+                                ? "bg-blue-500/10 border-blue-500 text-blue-400"
+                                : "border-border hover:border-primary"
+                            }`}
+                            title={`Current: ${task.status}. Click to cycle status.`}
+                          >
+                            {task.status === "Completed" && <CheckCircle2 className="h-4 w-4" />}
+                            {task.status === "In Progress" && <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />}
+                          </button>
+
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-xs font-bold text-foreground ${
+                                  task.status === "Completed" ? "line-through text-muted-foreground" : ""
+                                }`}
+                              >
+                                {task.title}
+                              </span>
+                              {getStatusBadge(task.status)}
+                              {getPriorityBadge(task.priority)}
+                              {isOverdue && (
+                                <Badge className="bg-destructive/15 text-destructive border-none font-semibold text-[0.65rem] gap-1">
+                                  <AlertCircle className="h-3 w-3" /> Overdue ({task.dueDate})
+                                </Badge>
+                              )}
+                            </div>
+
+                            {task.description && (
+                              <p className="text-[0.725rem] text-muted-foreground leading-relaxed line-clamp-2">
+                                {task.description}
+                              </p>
+                            )}
+
+                            {task.projectTitle && (
+                              <span className="inline-flex items-center gap-1 text-[0.65rem] text-primary font-medium bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                                <FolderKanban className="h-3 w-3" /> {task.projectTitle}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground justify-between sm:justify-end shrink-0">
+                          <div className="flex items-center gap-1.5 text-[0.7rem] bg-muted/40 px-2.5 py-1 rounded-xl border border-border/60">
+                            <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+                            <span>{task.dueDate}</span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <Select
+                              value={task.status}
+                              onValueChange={(newStatus: any) => handleTaskStatusChange(task, newStatus)}
+                            >
+                              <SelectTrigger className="h-7 w-[105px] rounded-lg text-[0.7rem] border-border bg-background">
+                                <SelectValue placeholder="Status" />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-xl">
+                                <SelectItem value="To Do" className="text-xs">To Do</SelectItem>
+                                <SelectItem value="In Progress" className="text-xs">In Progress</SelectItem>
+                                <SelectItem value="Completed" className="text-xs">Completed</SelectItem>
+                              </SelectContent>
+                            </Select>
+
+                            <Button variant="ghost" size="icon" onClick={() => handleOpenEditTask(task)} className="h-7 w-7 rounded-lg">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeletingTaskId(task.id || task._id || null)}
+                              className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            ) : (
               <div className="grid gap-6 md:grid-cols-3">
                 {(["To Do", "In Progress", "Completed"] as const).map((columnStatus) => {
                   const columnTasks = filteredTasks.filter((t) => t.status === columnStatus);
@@ -755,39 +894,6 @@ function TasksAndNotesPage() {
                                 </button>
                               </div>
                             </div>
-
-                            <div className="flex items-center gap-1 pt-1">
-                              {columnStatus !== "To Do" && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleTaskStatusChange(task, "To Do")}
-                                  className="h-6 text-[0.6rem] px-2 rounded-lg"
-                                >
-                                  ← To Do
-                                </Button>
-                              )}
-                              {columnStatus !== "In Progress" && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleTaskStatusChange(task, "In Progress")}
-                                  className="h-6 text-[0.6rem] px-2 rounded-lg"
-                                >
-                                  In Progress
-                                </Button>
-                              )}
-                              {columnStatus !== "Completed" && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleTaskStatusChange(task, "Completed")}
-                                  className="h-6 text-[0.6rem] px-2 rounded-lg text-emerald-400 border-emerald-500/30"
-                                >
-                                  Complete ✓
-                                </Button>
-                              )}
-                            </div>
                           </Card>
                         ))}
                       </div>
@@ -795,57 +901,6 @@ function TasksAndNotesPage() {
                   );
                 })}
               </div>
-            ) : (
-              <Card className="surface-elevated rounded-2xl border-border bg-card overflow-hidden">
-                <div className="divide-y divide-border/60">
-                  {filteredTasks.map((task) => (
-                    <div key={task.id || task._id} className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:bg-muted/20 transition-colors">
-                      <div className="flex items-start gap-3">
-                        <button
-                          onClick={() => handleTaskStatusChange(task, task.status === "Completed" ? "To Do" : "Completed")}
-                          className={`mt-0.5 grid h-5 w-5 place-items-center rounded-lg border transition-colors ${
-                            task.status === "Completed" ? "bg-emerald-500 border-emerald-500 text-white" : "border-border hover:border-primary"
-                          }`}
-                        >
-                          {task.status === "Completed" && <CheckCircle2 className="h-4 w-4" />}
-                        </button>
-
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-bold text-foreground ${task.status === "Completed" ? "line-through text-muted-foreground" : ""}`}>
-                              {task.title}
-                            </span>
-                            {getPriorityBadge(task.priority)}
-                          </div>
-                          {task.description && (
-                            <p className="text-[0.725rem] text-muted-foreground line-clamp-1">{task.description}</p>
-                          )}
-                          {task.projectTitle && (
-                            <span className="inline-flex items-center gap-1 text-[0.65rem] text-primary font-medium">
-                              <FolderKanban className="h-3 w-3" /> {task.projectTitle}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground justify-between sm:justify-end">
-                        <div className="flex items-center gap-1 text-[0.7rem]">
-                          <CalendarIcon className="h-3.5 w-3.5 text-primary" /> {task.dueDate}
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => handleOpenEditTask(task)} className="h-7 w-7 rounded-lg">
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => setDeletingTaskId(task.id || task._id || null)} className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
             )}
           </TabsContent>
 

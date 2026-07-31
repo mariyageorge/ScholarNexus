@@ -309,6 +309,21 @@ function NotesPage() {
     }
   };
 
+  const getCategoryBadge = (category: NoteItem["category"]) => {
+    switch (category) {
+      case "Literature Synthesis":
+        return <Badge variant="outline" className="rounded-full text-[0.65rem] border-purple-500/40 text-purple-400 font-semibold bg-purple-500/10">Literature Synthesis</Badge>;
+      case "Methodology":
+        return <Badge variant="outline" className="rounded-full text-[0.65rem] border-blue-500/40 text-blue-400 font-semibold bg-blue-500/10">Methodology</Badge>;
+      case "Ideas":
+        return <Badge variant="outline" className="rounded-full text-[0.65rem] border-amber-500/40 text-amber-400 font-semibold bg-amber-500/10">Ideas</Badge>;
+      case "Meeting":
+        return <Badge variant="outline" className="rounded-full text-[0.65rem] border-emerald-500/40 text-emerald-400 font-semibold bg-emerald-500/10">Meeting</Badge>;
+      default:
+        return <Badge variant="outline" className="rounded-full text-[0.65rem] border-slate-500/40 text-slate-400 font-semibold bg-slate-500/10">General</Badge>;
+    }
+  };
+
   if (typeof window !== "undefined" && !user) return null;
 
   return (
@@ -425,9 +440,7 @@ function NotesPage() {
               >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-2">
-                    <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary font-semibold">
-                      {note.category}
-                    </Badge>
+                    {getCategoryBadge(note.category)}
 
                     <div className="flex items-center gap-1">
                       <button

@@ -207,11 +207,11 @@ export function TopNav() {
             {userPhoto ? (
               <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
             ) : null}
-            <AvatarFallback className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
+            <AvatarFallback suppressHydrationWarning className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
               {getUserInitials(user)}
             </AvatarFallback>
           </Avatar>
-          <span className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
+          <span suppressHydrationWarning className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
             {userName}
           </span>
         </Link>

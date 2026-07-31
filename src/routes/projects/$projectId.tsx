@@ -117,6 +117,7 @@ export interface Project {
 
 export interface ProjectPaper {
   id: string;
+  _id?: string;
   projectId: string;
   title: string;
   authors: string;
@@ -275,6 +276,10 @@ function ProjectWorkspacePage() {
     year: p.year || "",
   });
 
+  const stripFileDataForStorage = (paperList: ProjectPaper[]) => {
+    return paperList.map(({ fileData: _, ...rest }) => rest);
+  };
+
   const loadProjectPapers = async (pId: string) => {
     try {
       const stored = localStorage.getItem(`scholarnexus_papers_${pId}`);
@@ -292,7 +297,14 @@ function ProjectWorkspacePage() {
         if (Array.isArray(mongoPapers) && mongoPapers.length > 0) {
           const cleaned = mongoPapers.map(sanitizePaper);
           setPapers(cleaned);
-          localStorage.setItem(`scholarnexus_papers_${pId}`, JSON.stringify(cleaned));
+          try {
+            localStorage.setItem(
+              `scholarnexus_papers_${pId}`,
+              JSON.stringify(stripFileDataForStorage(cleaned))
+            );
+          } catch (e) {
+            console.warn("LocalStorage quota reached, metadata safely stored in MongoDB:", e);
+          }
         }
       }
     } catch (e) {
@@ -303,9 +315,12 @@ function ProjectWorkspacePage() {
   const saveProjectPapers = (pId: string, updated: ProjectPaper[]) => {
     setPapers(updated);
     try {
-      localStorage.setItem(`scholarnexus_papers_${pId}`, JSON.stringify(updated));
+      localStorage.setItem(
+        `scholarnexus_papers_${pId}`,
+        JSON.stringify(stripFileDataForStorage(updated))
+      );
     } catch (e) {
-      console.error(e);
+      console.warn("LocalStorage quota reached, metadata safely stored in MongoDB:", e);
     }
   };
 
@@ -632,11 +647,12 @@ function ProjectWorkspacePage() {
 
   const handleDeletePaper = async () => {
     if (!deletingPaper) return;
-    const updated = papers.filter((p) => p.id !== deletingPaper.id);
+    const targetId = deletingPaper._id || deletingPaper.id;
+    const updated = papers.filter((p) => p.id !== deletingPaper.id && p._id !== deletingPaper._id);
     saveProjectPapers(projectId, updated);
 
-    if (deletingPaper.id || deletingPaper._id) {
-      await fetch(`/api/papers?id=${encodeURIComponent(deletingPaper._id || deletingPaper.id)}`, {
+    if (targetId) {
+      await fetch(`/api/papers?id=${encodeURIComponent(targetId)}`, {
         method: "DELETE",
       }).catch(() => {});
     }
