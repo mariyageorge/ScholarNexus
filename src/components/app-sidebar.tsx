@@ -52,7 +52,7 @@ const workspace: SidebarMenuItemType[] = [
   { title: "Tasks & Notes", url: "/tasks", icon: CheckSquare },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Activity", url: "/activity", icon: History },
-  { title: "Faculty", url: "/faculty", icon: GraduationCap },
+  { title: "My Faculty", url: "/faculty", icon: GraduationCap },
   { title: "Notifications", url: "/notifications", icon: Bell },
   { title: "Profile", url: "/profile", icon: UserCircle },
   { title: "Settings", url: "/settings", icon: Settings },
