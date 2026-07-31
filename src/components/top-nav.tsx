@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Bell, Sparkles } from "lucide-react";
+import { Bell, Sparkles, Megaphone, ArrowRight, Pin } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getUserSession, getUserInitials } from "@/lib/session";
 
@@ -37,10 +38,24 @@ const titles: Record<string, string> = {
   "/terms": "Terms & Conditions",
 };
 
+interface Announcement {
+  id?: string;
+  _id?: string;
+  title: string;
+  content: string;
+  targetAudience: string;
+  priority: string;
+  pinned: boolean;
+  published: boolean;
+  authorName: string;
+  createdAt: string;
+}
+
 export function TopNav() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const title = titles[pathname] ?? "Dashboard";
   const [user, setUser] = useState(() => getUserSession());
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -50,8 +65,17 @@ export function TopNav() {
     window.addEventListener("scholarnexus-session-updated", handleUpdate);
     window.addEventListener("storage", handleUpdate);
 
-    // Initial check
     handleUpdate();
+
+    // Fetch Platform Announcements for Bell Popover
+    fetch("/api/announcements")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAnnouncements(data.filter((a) => a.published && (a.targetAudience === "All" || a.targetAudience === "Students")));
+        }
+      })
+      .catch(() => {});
 
     return () => {
       window.removeEventListener("scholarnexus-session-updated", handleUpdate);
@@ -61,6 +85,18 @@ export function TopNav() {
 
   const userPhoto = user?.profileImage ?? user?.photoURL;
   const userName = user?.displayName ?? user?.name ?? "Researcher";
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime())
+        ? dateStr
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch {
+      return dateStr;
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 md:px-6">
@@ -87,19 +123,84 @@ export function TopNav() {
 
         <ThemeToggle />
 
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Notifications"
-          className="relative rounded-full"
-        >
-          <Bell className="h-[1.15rem] w-[1.15rem]" />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-destructive ring-2 ring-background" />
-        </Button>
+        {/* Bell Button with Platform Announcements Popover */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Platform Announcements"
+              className="relative rounded-full"
+            >
+              <Bell className="h-[1.15rem] w-[1.15rem]" />
+              {announcements.length > 0 && (
+                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary ring-2 ring-background animate-pulse" />
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 sm:w-96 rounded-2xl border-border bg-card p-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/15 text-primary">
+                  <Megaphone className="h-4 w-4" />
+                </div>
+                <h3 className="text-sm font-bold text-foreground">Platform Announcements</h3>
+              </div>
+              {announcements.length > 0 && (
+                <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary">
+                  {announcements.length} Live
+                </Badge>
+              )}
+            </div>
 
+            {announcements.length === 0 ? (
+              <div className="py-8 text-center space-y-1">
+                <Bell className="h-7 w-7 text-muted-foreground mx-auto mb-2 opacity-50" />
+                <p className="text-xs font-semibold text-foreground">No New Announcements</p>
+                <p className="text-[0.7rem] text-muted-foreground">You're all caught up with platform updates.</p>
+              </div>
+            ) : (
+              <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
+                {announcements.map((ann) => (
+                  <div
+                    key={ann.id || ann._id || ann.title}
+                    className="rounded-xl border border-border/70 bg-muted/30 p-3 space-y-1 hover:border-primary/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-xs text-foreground truncate">{ann.title}</span>
+                      {ann.pinned && (
+                        <Badge variant="outline" className="gap-1 text-[0.6rem] border-amber-500/40 text-amber-500 bg-amber-500/10">
+                          <Pin className="h-2.5 w-2.5" /> Pinned
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-[0.725rem] text-muted-foreground leading-relaxed line-clamp-3">
+                      {ann.content}
+                    </p>
+                    <div className="flex items-center justify-between text-[0.65rem] text-muted-foreground/80 pt-1">
+                      <span>By {ann.authorName || "Academic Admin"}</span>
+                      <span>{formatDate(ann.createdAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="border-t border-border/60 pt-2.5 mt-3 text-center">
+              <Link
+                to="/notifications"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+              >
+                View Notifications & Activity <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* Top Right Profile Display (NAME ONLY) */}
         <Link
           to="/profile"
-          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3 transition-colors hover:bg-accent/40"
+          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 transition-colors hover:bg-accent/40"
           title="View Profile"
         >
           <Avatar className="h-7 w-7 border border-border">
@@ -110,14 +211,9 @@ export function TopNav() {
               {getUserInitials(user)}
             </AvatarFallback>
           </Avatar>
-          <div className="hidden flex-col leading-tight sm:flex">
-            <span className="text-xs font-semibold text-foreground">
-              {userName}
-            </span>
-            <span className="text-[0.65rem] text-muted-foreground">
-              {user?.email ?? "Guest session"}
-            </span>
-          </div>
+          <span className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
+            {userName}
+          </span>
         </Link>
       </div>
     </header>

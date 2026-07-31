@@ -4,17 +4,20 @@ import {
   Activity,
   AlertCircle,
   ArrowUpRight,
+  Bell,
   BookMarked,
   Bot,
   Calendar,
   CheckCircle2,
   Clock,
+  Eye,
   FileText,
   FolderKanban,
   GitCompareArrows,
   GraduationCap,
   Inbox,
   LineChart,
+  Megaphone,
   MessageSquare,
   Network,
   Pencil,
@@ -22,12 +25,11 @@ import {
   Quote,
   ScanSearch,
   Send,
+  Settings,
   Sparkles,
   Target,
   TrendingUp,
   Users,
-  Eye,
-  Megaphone,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { getHomePathForRole, getUserSession, UserSession } from "@/lib/session";
@@ -103,41 +105,41 @@ const STATUS_VARIANTS: Record<string, { label: string; className: string; icon: 
 const quickActions = [
   {
     title: "Start New Project",
-    desc: "Create a structured research workspace",
+    desc: "Initialize a dedicated research workspace",
     icon: Plus,
     href: "/projects?create=true",
     gradient: "from-blue-600/20 to-indigo-600/20 border-blue-500/30 hover:border-blue-500/60",
     iconBg: "bg-blue-500/15 text-blue-400",
   },
   {
-    title: "Upload Research Paper",
-    desc: "Import papers into your library",
-    icon: FileText,
-    href: "/papers",
-    gradient: "from-amber-600/20 to-orange-600/20 border-amber-500/30 hover:border-amber-500/60",
-    iconBg: "bg-amber-500/15 text-amber-400",
-  },
-  {
-    title: "Open AI Assistant",
-    desc: "Contextual research & synthesis co-pilot",
-    icon: Bot,
-    href: "/assistant",
+    title: "Research Projects",
+    desc: "Browse and open active research workspaces",
+    icon: FolderKanban,
+    href: "/projects",
     gradient: "from-purple-600/20 to-pink-600/20 border-purple-500/30 hover:border-purple-500/60",
     iconBg: "bg-purple-500/15 text-purple-400",
   },
   {
-    title: "Generate Citation",
-    desc: "APA, MLA, Chicago, IEEE formatters",
-    icon: Quote,
-    href: "/citations",
+    title: "Faculty Directory",
+    desc: "Explore mentors and academic advisors",
+    icon: GraduationCap,
+    href: "/faculty",
     gradient: "from-emerald-600/20 to-teal-600/20 border-emerald-500/30 hover:border-emerald-500/60",
     iconBg: "bg-emerald-500/15 text-emerald-400",
   },
   {
-    title: "Compare Papers",
-    desc: "Side-by-side AI literature comparison",
-    icon: GitCompareArrows,
-    href: "/comparison",
+    title: "Notifications",
+    desc: "Stay updated on reviews & announcements",
+    icon: Bell,
+    href: "/notifications",
+    gradient: "from-amber-600/20 to-orange-600/20 border-amber-500/30 hover:border-amber-500/60",
+    iconBg: "bg-amber-500/15 text-amber-400",
+  },
+  {
+    title: "Account Settings",
+    desc: "Manage your profile & preferences",
+    icon: Settings,
+    href: "/settings",
     gradient: "from-cyan-600/20 to-sky-600/20 border-cyan-500/30 hover:border-cyan-500/60",
     iconBg: "bg-cyan-500/15 text-cyan-400",
   },
@@ -164,8 +166,13 @@ function DashboardPage() {
       return;
     }
 
-    if (session.role !== "student") {
-      window.location.href = getHomePathForRole(session.role);
+    if (session.role === "faculty") {
+      window.location.href = "/faculty";
+      return;
+    }
+
+    if (session.role === "admin") {
+      window.location.href = "/admin";
       return;
     }
 
@@ -196,7 +203,7 @@ function DashboardPage() {
       .catch(() => {});
   }, []);
 
-  if (typeof window !== "undefined" && (!user || user.role !== "student")) {
+  if (typeof window !== "undefined" && !user) {
     return null;
   }
 
@@ -228,12 +235,22 @@ function DashboardPage() {
     return sorted[0] || null;
   }, [safeProjects]);
 
+  const mostRecentProject = useMemo(() => {
+    if (safeProjects.length === 0) return null;
+    const sorted = [...safeProjects].sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+    return sorted[0] || null;
+  }, [safeProjects]);
+
   const computedStats = [
     {
       label: "Active Projects",
       icon: FolderKanban,
       value: loadingProjects ? "…" : activeProjects.length,
-      hint: `${safeProjects.length} total projects in database`,
+      hint: `${safeProjects.length} total projects active`,
       color: "text-blue-500",
       bg: "bg-blue-500/10 border-blue-500/20",
     },
@@ -405,6 +422,37 @@ function DashboardPage() {
           </div>
         </section>
 
+        {/* 2. Continue Working Section */}
+        {mostRecentProject && (
+          <section className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-6 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-2">
+                <Badge variant="outline" className="rounded-full border-primary/30 bg-primary/15 text-primary text-xs font-semibold">
+                  ⚡ Continue Working
+                </Badge>
+                <h3 className="text-xl font-bold text-foreground">{mostRecentProject.title}</h3>
+                <p className="text-xs text-muted-foreground line-clamp-1 max-w-2xl">
+                  {mostRecentProject.description || "No description provided."}
+                </p>
+                <div className="flex flex-wrap items-center gap-4 text-xs pt-1">
+                  <span className="text-muted-foreground">Domain: <strong className="text-foreground font-medium">{mostRecentProject.domain || "General"}</strong></span>
+                  <span className="text-muted-foreground">Status: <strong className="text-foreground font-medium">{mostRecentProject.status}</strong></span>
+                  <span className="text-muted-foreground">Progress: <strong className="text-primary font-bold">{mostRecentProject.progress || 0}%</strong></span>
+                  {mostRecentProject.faculty && (
+                    <span className="text-muted-foreground">Mentor: <strong className="text-foreground font-medium">{mostRecentProject.faculty}</strong></span>
+                  )}
+                </div>
+              </div>
+              <Button
+                onClick={() => (window.location.href = `/projects/${mostRecentProject._id || mostRecentProject.id}`)}
+                className="shrink-0 gap-2 rounded-xl bg-primary text-primary-foreground font-semibold shadow-md hover:bg-primary/90"
+              >
+                <FolderKanban className="h-4 w-4" /> Open Workspace <ArrowUpRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </section>
+        )}
+
         {/* 3. Dashboard Overview (Summary Cards) */}
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {computedStats.map((s) => (
@@ -532,77 +580,66 @@ function DashboardPage() {
                           const statusCfg = STATUS_VARIANTS[statusKey] || STATUS_VARIANTS["Planning"];
                           const StatusIcon = statusCfg.icon;
 
-                          return (
-                            <Card
-                              key={p.id || p._id}
-                              className="group surface-elevated relative flex flex-col justify-between rounded-2xl border-border bg-card p-5 transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
-                            >
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <Badge variant="outline" className="truncate rounded-full border-border bg-muted/50 px-2.5 py-0.5 text-[0.7rem] font-medium text-muted-foreground">
-                                    {p.domain || "General"}
-                                  </Badge>
-                                  <Badge variant="outline" className={`gap-1 rounded-full border px-2.5 py-0.5 text-[0.7rem] font-semibold ${statusCfg.className}`}>
-                                    <StatusIcon className="h-3 w-3" />
-                                    {statusCfg.label}
-                                  </Badge>
-                                </div>
+                              return (
+                                <Card
+                                  key={p.id || p._id}
+                                  onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
+                                  className="group surface-elevated relative flex flex-col justify-between rounded-2xl border-border bg-card p-5 cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
+                                >
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Badge variant="outline" className="truncate rounded-full border-border bg-muted/50 px-2.5 py-0.5 text-[0.7rem] font-medium text-muted-foreground">
+                                        {p.domain || "General"}
+                                      </Badge>
+                                      <Badge variant="outline" className={`gap-1 rounded-full border px-2.5 py-0.5 text-[0.7rem] font-semibold ${statusCfg.className}`}>
+                                        <StatusIcon className="h-3 w-3" />
+                                        {statusCfg.label}
+                                      </Badge>
+                                    </div>
 
-                                <div className="space-y-1">
-                                  <h3
-                                    onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
-                                    className="cursor-pointer truncate text-base font-bold text-foreground transition-colors group-hover:text-primary"
-                                  >
-                                    {p.title}
-                                  </h3>
-                                  <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
-                                    {p.description || "No description provided."}
-                                  </p>
-                                </div>
+                                    <div className="space-y-1">
+                                      <h3 className="truncate text-base font-bold text-foreground transition-colors group-hover:text-primary">
+                                        {p.title}
+                                      </h3>
+                                      <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
+                                        {p.description || "No description provided."}
+                                      </p>
+                                    </div>
 
-                                <div className="space-y-1.5 pt-1">
-                                  <div className="flex items-center justify-between text-xs">
-                                    <span className="font-medium text-muted-foreground">Progress</span>
-                                    <span className="font-bold text-foreground">{p.progress || 0}%</span>
+                                    <div className="space-y-1.5 pt-1">
+                                      <div className="flex items-center justify-between text-xs">
+                                        <span className="font-medium text-muted-foreground">Progress</span>
+                                        <span className="font-bold text-foreground">{p.progress || 0}%</span>
+                                      </div>
+                                      <Progress value={p.progress || 0} className="h-2 rounded-full bg-muted" />
+                                    </div>
                                   </div>
-                                  <Progress value={p.progress || 0} className="h-2 rounded-full bg-muted" />
-                                </div>
-                              </div>
 
-                              <div className="mt-4 space-y-3 border-t border-border/60 pt-3">
-                                {p.faculty && (
-                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                    <GraduationCap className="h-3.5 w-3.5 shrink-0 text-primary" />
-                                    <span className="truncate font-medium text-foreground">{p.faculty}</span>
-                                  </div>
-                                )}
-                                <div className="flex items-center justify-between text-[0.725rem] text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="h-3 w-3" />
-                                    {p.startDate ? formatDate(p.startDate) : "No date"}
-                                  </span>
-                                  <div className="flex items-center gap-1">
+                                  <div className="mt-4 space-y-3 border-t border-border/60 pt-3">
+                                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                      <span className="flex items-center gap-1">
+                                        <GraduationCap className="h-3.5 w-3.5 text-primary" />
+                                        {p.faculty || "Independent"}
+                                      </span>
+                                      <span className="flex items-center gap-1 text-[0.7rem]">
+                                        <Clock className="h-3 w-3" />
+                                        {p.updatedAt ? formatDate(p.updatedAt) : formatDate(p.createdAt)}
+                                      </span>
+                                    </div>
+
                                     <Button
                                       size="sm"
-                                      variant="ghost"
-                                      onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
-                                      className="h-7 px-2 text-xs rounded-lg hover:bg-muted text-primary"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.location.href = `/projects/${p._id || p.id}`;
+                                      }}
+                                      className="w-full gap-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground font-semibold text-xs transition-colors"
                                     >
-                                      <Eye className="h-3.5 w-3.5 mr-1" /> View
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => (window.location.href = "/projects")}
-                                      className="h-7 px-2 text-xs rounded-lg hover:bg-muted text-amber-500"
-                                    >
-                                      <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                                      <FolderKanban className="h-3.5 w-3.5" /> Open Workspace
                                     </Button>
                                   </div>
-                                </div>
-                              </div>
-                            </Card>
-                          );
+                                </Card>
+                              );
                         })}
                       </div>
                     )}
@@ -695,30 +732,6 @@ function DashboardPage() {
               </div>
             </CardContent>
           </Card>
-
-          {/* Platform Announcements Card */}
-          {announcements.length > 0 && (
-            <Card className="surface-elevated rounded-2xl border-primary/30 bg-primary/5 p-6 shadow-sm">
-              <CardHeader className="p-0 pb-3 flex flex-row items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Megaphone className="h-5 w-5 text-primary animate-pulse" />
-                  <CardTitle className="text-base font-bold text-foreground">Platform Announcements</CardTitle>
-                </div>
-                <Badge variant="outline" className="text-[0.65rem] border-primary/40 text-primary">Live Updates</Badge>
-              </CardHeader>
-              <CardContent className="p-0 space-y-3">
-                {announcements.slice(0, 3).map((ann) => (
-                  <div key={ann.id || ann._id} className="rounded-xl border border-border/80 bg-card p-3 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-xs text-foreground truncate">{ann.title}</span>
-                      {ann.pinned && <Badge variant="outline" className="text-[0.6rem] border-amber-500/40 text-amber-500 bg-amber-500/10">Pinned</Badge>}
-                    </div>
-                    <p className="text-[0.725rem] text-muted-foreground leading-relaxed line-clamp-2">{ann.content}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
 
           {/* 4. Recent Activity Timeline Card */}
           <Card className="surface-elevated rounded-2xl border-border p-6 flex flex-col justify-between">

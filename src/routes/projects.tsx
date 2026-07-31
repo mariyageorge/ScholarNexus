@@ -1,7 +1,9 @@
 import { createFileRoute, Outlet, useMatches } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import {
+  Activity,
   AlertCircle,
+  Archive,
   Calendar,
   CheckCircle2,
   Clock,
@@ -543,6 +545,50 @@ function ResearchProjectsPage() {
     }
   };
 
+  const handleArchiveProject = async (p: Project, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!user) return;
+    try {
+      const projId = p._id || p.id;
+      const newStatus: ProjectStatus = p.status === "Completed" ? "In Progress" : "Completed";
+      const newProgress = newStatus === "Completed" ? 100 : p.progress;
+
+      const res = await fetch("/api/projects", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": user.email,
+        },
+        body: JSON.stringify({
+          id: projId,
+          userEmail: user.email,
+          title: p.title,
+          description: p.description,
+          domain: p.domain,
+          status: newStatus,
+          progress: newProgress,
+          startDate: p.startDate,
+          expectedCompletionDate: p.expectedCompletionDate,
+          faculty: p.faculty,
+        }),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        setProjects((prev) =>
+          prev.map((item) => ((item.id || item._id) === projId ? updated : item))
+        );
+        toast.success(`Project "${p.title}" marked as ${newStatus}.`);
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Failed to update project status.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error updating project status.");
+    }
+  };
+
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "";
     try {
@@ -737,7 +783,8 @@ function ResearchProjectsPage() {
               return (
                 <Card
                   key={p.id || p._id}
-                  className="group surface-elevated relative flex flex-col justify-between rounded-2xl border-border bg-card p-5 transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
+                  onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
+                  className="group surface-elevated relative flex flex-col justify-between rounded-2xl border-border bg-card p-5 cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
                 >
                   <div className="space-y-3">
                     {/* Top Badges & Actions */}
@@ -752,19 +799,22 @@ function ResearchProjectsPage() {
                         </Badge>
 
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground">
                               <MoreVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="rounded-xl">
-                            <DropdownMenuItem onClick={() => (window.location.href = `/projects/${p._id || p.id}`)} className="gap-2 text-xs">
-                              <Eye className="h-3.5 w-3.5 text-primary" /> View Workspace
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); (window.location.href = `/projects/${p._id || p.id}`); }} className="gap-2 text-xs">
+                              <FolderKanban className="h-3.5 w-3.5 text-primary" /> Open Workspace
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openEditModal(p)} className="gap-2 text-xs">
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditModal(p); }} className="gap-2 text-xs">
                               <Pencil className="h-3.5 w-3.5 text-amber-500" /> Edit Project
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setDeletingProject(p)} className="gap-2 text-xs text-destructive focus:text-destructive">
+                            <DropdownMenuItem onClick={(e) => handleArchiveProject(p, e)} className="gap-2 text-xs">
+                              <Archive className="h-3.5 w-3.5 text-blue-500" /> {p.status === "Completed" ? "Reopen Project" : "Archive / Complete"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setDeletingProject(p); }} className="gap-2 text-xs text-destructive focus:text-destructive">
                               <Trash2 className="h-3.5 w-3.5" /> Delete Project
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -774,10 +824,7 @@ function ResearchProjectsPage() {
 
                     {/* Title & Description */}
                     <div className="space-y-1">
-                      <h3
-                        onClick={() => (window.location.href = `/projects/${p._id || p.id}`)}
-                        className="cursor-pointer text-base font-bold text-foreground transition-colors group-hover:text-primary line-clamp-1"
-                      >
+                      <h3 className="text-base font-bold text-foreground transition-colors group-hover:text-primary line-clamp-1">
                         {p.title}
                       </h3>
                       <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
@@ -795,23 +842,29 @@ function ResearchProjectsPage() {
                     </div>
                   </div>
 
-                  {/* Card Footer Info */}
-                  <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
-                    {p.faculty && (
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <GraduationCap className="h-3.5 w-3.5 shrink-0 text-primary" />
-                        <span className="truncate font-medium text-foreground">{p.faculty}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between text-[0.725rem] text-muted-foreground">
+                  {/* Card Footer Info & Primary Action */}
+                  <div className="mt-4 space-y-3 border-t border-border/60 pt-3">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {p.startDate ? formatDate(p.startDate) : "No start date"}
+                        <GraduationCap className="h-3.5 w-3.5 text-primary" />
+                        <span className="truncate font-medium text-foreground">{p.faculty || "Independent Research"}</span>
                       </span>
-                      {p.expectedCompletionDate && (
-                        <span>Target: {formatDate(p.expectedCompletionDate)}</span>
-                      )}
+                      <span className="flex items-center gap-1 text-[0.7rem]">
+                        <Clock className="h-3 w-3" />
+                        {formatDate(p.updatedAt || p.createdAt)}
+                      </span>
                     </div>
+
+                    <Button
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.href = `/projects/${p._id || p.id}`;
+                      }}
+                      className="w-full gap-1.5 rounded-xl bg-primary text-primary-foreground font-semibold text-xs shadow-sm hover:bg-primary/90 transition-all"
+                    >
+                      <FolderKanban className="h-3.5 w-3.5" /> Open Workspace
+                    </Button>
                   </div>
                 </Card>
               );

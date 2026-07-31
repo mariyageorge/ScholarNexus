@@ -37,6 +37,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { getUserSession } from "@/lib/session";
 
 type SidebarMenuItemType = {
   title: string;
@@ -45,38 +46,17 @@ type SidebarMenuItemType = {
   hash?: string;
 };
 
-const workspace = [
+const workspace: SidebarMenuItemType[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Research Projects", url: "/projects", icon: FolderKanban },
-  { title: "Research Papers", url: "/papers", icon: FileText },
-  { title: "Tasks", url: "/tasks", icon: CheckSquare },
+  { title: "Tasks & Notes", url: "/tasks", icon: CheckSquare },
   { title: "Calendar", url: "/calendar", icon: Calendar },
-] as const;
-
-const aiTools = [
-  { title: "AI Research Assistant", url: "/assistant", icon: Sparkles },
-  { title: "Paper Comparison", url: "/comparison", icon: Quote },
-  { title: "Citation Generator", url: "/citations", icon: Quote },
-  { title: "Similarity Checker", url: "/similarity", icon: ScanSearch },
-] as const;
-
-const library = [
-  { title: "Notes", url: "/notes", icon: StickyNote },
-  { title: "Bookmarks", url: "/bookmarks", icon: Bookmark },
   { title: "Activity", url: "/activity", icon: History },
-] as const;
-
-const community = [
-  { title: "Faculty Collaboration", url: "/collaboration", icon: Users },
-  { title: "Faculty Workspace", url: "/faculty", icon: ShieldCheck },
-  { title: "Admin Console", url: "/admin", icon: Shield },
+  { title: "Faculty", url: "/faculty", icon: GraduationCap },
   { title: "Notifications", url: "/notifications", icon: Bell },
-] as const;
-
-const account = [
+  { title: "Profile", url: "/profile", icon: UserCircle },
   { title: "Settings", url: "/settings", icon: Settings },
-  { title: "User Profile", url: "/profile", icon: UserCircle },
-] as const;
+];
 
 const facultyMenu: SidebarMenuItemType[] = [
   { title: "Dashboard", url: "/faculty", icon: LayoutDashboard },
@@ -119,8 +99,9 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hash = useRouterState({ select: (s) => s.location.hash });
 
-  const isCurrentFacultyRoute = pathname === "/faculty";
+  const user = typeof window !== "undefined" ? getUserSession() : null;
   const isCurrentAdminRoute = pathname === "/admin" || pathname.startsWith("/admin");
+  const isFacultyUser = user?.role === "faculty";
 
   const isActive = (item: SidebarMenuItemType) => {
     if (isCurrentAdminRoute && item.url === "/admin") {
@@ -130,8 +111,6 @@ export function AppSidebar() {
       return item.hash === hash;
     }
     if (item.url === pathname && !item.hash) return true;
-    if (isCurrentFacultyRoute && item.url === "/faculty" && item.hash && hash === item.hash)
-      return true;
     return false;
   };
 
@@ -180,14 +159,9 @@ export function AppSidebar() {
 
   const menu = isCurrentAdminRoute
     ? adminMenu
-    : isCurrentFacultyRoute
+    : isFacultyUser
     ? facultyMenu
     : workspace;
-  const accountMenu = isCurrentAdminRoute
-    ? adminAccount
-    : isCurrentFacultyRoute
-    ? facultyAccount
-    : account;
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -203,7 +177,7 @@ export function AppSidebar() {
                 ScholarNexus
               </span>
               <span className="truncate text-[0.7rem] font-medium text-muted-foreground">
-                {isCurrentAdminRoute ? "Admin Management Portal" : "AI Research Suite"}
+                {isCurrentAdminRoute ? "Admin Management Portal" : "Academic Research Hub"}
               </span>
             </div>
           )}
@@ -211,11 +185,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="gap-0 px-1">
-        {renderGroup(isCurrentAdminRoute ? "Admin Portal" : "Workspace", menu)}
-        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("AI Tools", aiTools)}
-        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("Library", library)}
-        {!isCurrentFacultyRoute && !isCurrentAdminRoute && renderGroup("Community", community)}
-        {renderGroup("Account", accountMenu)}
+        {renderGroup(isCurrentAdminRoute ? "Admin Portal" : "Global Navigation", menu)}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">

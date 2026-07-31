@@ -540,6 +540,18 @@ function AdminPage() {
     }
   };
 
+  const handlePurgeMockData = async () => {
+    try {
+      const res = await fetch("/api/admin/purge-mock-data", { method: "POST" });
+      if (res.ok) {
+        toast.success("All mock data successfully purged from database.");
+        fetchAdminData();
+      }
+    } catch {
+      toast.error("Failed to purge mock data.");
+    }
+  };
+
   /* ── Export Handlers ── */
   const handleExportReport = (type: "pdf" | "excel") => {
     const filename = `ScholarNexus_${reportSubTab}_report_${new Date().toISOString().split("T")[0]}.${type === "pdf" ? "pdf" : "xlsx"}`;
@@ -638,6 +650,10 @@ function AdminPage() {
                 <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin text-primary" : ""}`} />
                 Sync System
               </Button>
+              <Button onClick={handlePurgeMockData} variant="outline" size="sm" className="gap-2 rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10">
+                <Trash2 className="h-4 w-4" />
+                Purge Mock Data
+              </Button>
               <Button onClick={() => setAnnouncementModalOpen(true)} size="sm" className="gap-2 rounded-xl gradient-brand text-primary-foreground shadow-md">
                 <Megaphone className="h-4 w-4" />
                 New Announcement
@@ -662,7 +678,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalStudents ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">
                     <TrendingUp className="h-3 w-3" />
-                    <span>+14.2% this month</span>
+                    <span>Registered in DB</span>
                   </div>
                 </div>
               </Card>
@@ -678,7 +694,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalFaculty ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">
                     <TrendingUp className="h-3 w-3" />
-                    <span>+8.5% verified</span>
+                    <span>Verified accounts</span>
                   </div>
                 </div>
               </Card>
@@ -694,7 +710,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalProjects ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-muted-foreground">
                     <Activity className="h-3 w-3 text-primary" />
-                    <span>Active in ecosystem</span>
+                    <span>Active in DB</span>
                   </div>
                 </div>
               </Card>
@@ -710,7 +726,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalPapers ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">
                     <TrendingUp className="h-3 w-3" />
-                    <span>+22% uploads</span>
+                    <span>Saved manuscripts</span>
                   </div>
                 </div>
               </Card>
@@ -1303,7 +1319,7 @@ function AdminPage() {
                   <TableBody>
                     {filteredPapers.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">No paper manuscripts found.</TableCell>
+                        <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">No research papers uploaded yet.</TableCell>
                       </TableRow>
                     ) : (
                       filteredPapers.map((p) => (
@@ -1431,11 +1447,15 @@ function AdminPage() {
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Project Participation Rate</span>
-                      <p className="text-2xl font-bold text-emerald-500 mt-1">84.2%</p>
+                      <p className="text-2xl font-bold text-emerald-500 mt-1">
+                        {stats?.totalStudents ? `${Math.round((projects.length / stats.totalStudents) * 100)}%` : "0%"}
+                      </p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Avg Papers Per Student</span>
-                      <p className="text-2xl font-bold text-purple-500 mt-1">1.8</p>
+                      <p className="text-2xl font-bold text-purple-500 mt-1">
+                        {stats?.totalStudents ? (stats.totalPapers / stats.totalStudents).toFixed(1) : "0.0"}
+                      </p>
                     </Card>
                   </div>
                 </TabsContent>
@@ -1448,11 +1468,15 @@ function AdminPage() {
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Faculty Approval Rate</span>
-                      <p className="text-2xl font-bold text-emerald-500 mt-1">91.0%</p>
+                      <p className="text-2xl font-bold text-emerald-500 mt-1">
+                        {stats?.totalFaculty ? `${Math.round(((stats.totalFaculty - stats.pendingFacultyApprovals) / stats.totalFaculty) * 100)}%` : "0%"}
+                      </p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Avg Projects Supervised</span>
-                      <p className="text-2xl font-bold text-blue-500 mt-1">3.4</p>
+                      <p className="text-2xl font-bold text-blue-500 mt-1">
+                        {stats?.totalFaculty ? (stats.totalProjects / stats.totalFaculty).toFixed(1) : "0.0"}
+                      </p>
                     </Card>
                   </div>
                 </TabsContent>
@@ -1464,12 +1488,16 @@ function AdminPage() {
                       <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalProjects ?? 0}</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Completion Milestone</span>
-                      <p className="text-2xl font-bold text-emerald-500 mt-1">68.5%</p>
+                      <span className="text-xs text-muted-foreground">Average Progress</span>
+                      <p className="text-2xl font-bold text-emerald-500 mt-1">
+                        {projects.length ? `${Math.round(projects.reduce((acc, p) => acc + (p.progress || 0), 0) / projects.length)}%` : "0%"}
+                      </p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Avg Completion Time</span>
-                      <p className="text-2xl font-bold text-amber-500 mt-1">4.2 Months</p>
+                      <span className="text-xs text-muted-foreground">Active Pipeline</span>
+                      <p className="text-2xl font-bold text-amber-500 mt-1">
+                        {projects.filter((p) => p.status === "In Progress" || p.status === "Under Review").length}
+                      </p>
                     </Card>
                   </div>
                 </TabsContent>
@@ -1481,12 +1509,12 @@ function AdminPage() {
                       <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalPapers ?? 0}</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Monthly Growth</span>
-                      <p className="text-2xl font-bold text-emerald-500 mt-1">+22%</p>
+                      <span className="text-xs text-muted-foreground">Active Papers</span>
+                      <p className="text-2xl font-bold text-emerald-500 mt-1">{papers.length}</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Citations Index</span>
-                      <p className="text-2xl font-bold text-indigo-500 mt-1">142</p>
+                      <span className="text-xs text-muted-foreground">Research Domains</span>
+                      <p className="text-2xl font-bold text-indigo-500 mt-1">{stats?.researchDomains?.length ?? 0}</p>
                     </Card>
                   </div>
                 </TabsContent>

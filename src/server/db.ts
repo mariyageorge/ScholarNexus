@@ -104,6 +104,30 @@ function hashPassword(password: string) {
   return createHash("sha256").update(password).digest("hex");
 }
 
+export async function recordUserActivity(
+  email: string,
+  userName: string,
+  action: string,
+  title: string,
+  description: string,
+  category: "Project" | "Paper" | "Task" | "Note" | "Profile" | "System" = "System"
+) {
+  try {
+    const col = await getCollection<Document>("activity_logs");
+    await col.insertOne({
+      userEmail: email.trim().toLowerCase(),
+      userName: userName || email.split("@")[0],
+      action,
+      title,
+      description,
+      category,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("Failed to record activity:", err);
+  }
+}
+
 export async function findUserByEmail(email: string, dbName = "scholarnexus") {
   const collection = await getCollection<UserRecord>("users", dbName);
   const normalized = email.trim().toLowerCase();
@@ -548,14 +572,69 @@ export async function logActivity(
   }
 }
 
+export async function purgeMockDataFromDb() {
+  try {
+    const mockEmails = [
+      "athorne@university.edu",
+      "erostova@stanford.edu",
+      "mvance@oxford.ac.uk",
+      "sophia.chen@student.edu",
+      "liam.oc@student.edu",
+      "mpatel@student.edu",
+    ];
+
+    // 1. Clear sample mock users
+    const usersCol = await getCollection<UserRecord>("users");
+    await usersCol.deleteMany({ email: { $in: mockEmails } });
+
+    // 2. Clear sample mock papers (user has not uploaded any papers yet)
+    const papersCol = await getCollection<Document>("papers");
+    await papersCol.deleteMany({
+      $or: [
+        { uploaderEmail: { $in: mockEmails } },
+        { title: { $regex: /Example|High-Throughput|Robustness Bounds/i } },
+      ],
+    });
+
+    // 3. Clear sample mock projects
+    const projectsCol = await getCollection<Document>("projects");
+    await projectsCol.deleteMany({
+      $or: [
+        { userEmail: { $in: mockEmails } },
+        { title: { $regex: /Neural Radiance Fields|Scalable Graph Transformers|Quantum Key Distribution/i } },
+      ],
+    });
+
+    // 4. Clear sample mock announcements
+    const announcementsCol = await getCollection<Document>("announcements");
+    await announcementsCol.deleteMany({
+      title: { $regex: /Fall 2026 Research Grant|Faculty Mentorship Portal Maintenance/i },
+    });
+
+    // 5. Clear sample mock activity logs
+    const activityCol = await getCollection<Document>("activity_logs");
+    await activityCol.deleteMany({
+      $or: [
+        { userEmail: { $in: mockEmails } },
+        {
+          description: {
+            $regex:
+              /Updated System Security & Session Policies|Reviewed Faculty Application for Prof. Elena Rostova|Created Research Project: Neural Radiance Fields/i,
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    console.error("Error purging mock data:", err);
+  }
+}
+
 export async function ensureAdminSeedData() {
   try {
     const usersCol = await getCollection<UserRecord>("users");
-    const userCount = await usersCol.countDocuments();
-
-    // 1. Ensure Admin User exists
+    // Ensure Admin User exists if no admin account is found
     const adminEmail = "admin@scholarnexus.ai";
-    const existingAdmin = await usersCol.findOne({ email: adminEmail });
+    const existingAdmin = await usersCol.findOne({ role: "admin" });
     if (!existingAdmin) {
       await usersCol.insertOne({
         name: "Enterprise Admin",
@@ -572,252 +651,10 @@ export async function ensureAdminSeedData() {
       });
     }
 
-    // 2. Seed default users if count is low (< 5)
-    if (userCount < 5) {
-      const sampleUsers: Partial<UserRecord>[] = [
-        {
-          name: "Dr. Aris Thorne",
-          email: "athorne@university.edu",
-          password: hashPassword("password123"),
-          role: "faculty",
-          status: "Active",
-          createdAt: new Date(Date.now() - 60 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Dr. Aris Thorne",
-          affiliation: "Department of Artificial Intelligence",
-          department: "Computer Science & AI",
-          degree: "Ph.D. in Computer Science (MIT)",
-          researchInterests: "Deep Learning, Multi-agent Systems, NLP",
-        },
-        {
-          name: "Prof. Elena Rostova",
-          email: "erostova@stanford.edu",
-          password: hashPassword("password123"),
-          role: "faculty",
-          status: "Pending",
-          createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Prof. Elena Rostova",
-          affiliation: "Stanford Quantum Institute",
-          department: "Physics & Quantum Computing",
-          degree: "Ph.D. in Quantum Physics (Stanford)",
-          credentials: "https://credentials.example.edu/rostova-cv.pdf",
-          researchInterests: "Quantum Information Theory, Entanglement",
-        },
-        {
-          name: "Dr. Marcus Vance",
-          email: "mvance@oxford.ac.uk",
-          password: hashPassword("password123"),
-          role: "faculty",
-          status: "Pending",
-          createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Dr. Marcus Vance",
-          affiliation: "Oxford Department of Oncology",
-          department: "Biomedical Sciences",
-          degree: "M.D., Ph.D. (Oxford)",
-          credentials: "https://credentials.example.edu/vance-verification.pdf",
-          researchInterests: "Genomic Oncology, Target Discovery",
-        },
-        {
-          name: "Sophia Chen",
-          email: "sophia.chen@student.edu",
-          password: hashPassword("password123"),
-          role: "student",
-          status: "Active",
-          createdAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Sophia Chen",
-          affiliation: "School of Engineering",
-          department: "Computer Science",
-          researchInterests: "Computer Vision, Neural Rendering",
-        },
-        {
-          name: "Liam O'Connor",
-          email: "liam.oc@student.edu",
-          password: hashPassword("password123"),
-          role: "student",
-          status: "Active",
-          createdAt: new Date(Date.now() - 20 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Liam O'Connor",
-          affiliation: "School of Data Science",
-          department: "Data Science",
-          researchInterests: "Predictive Analytics, Graph Neural Networks",
-        },
-        {
-          name: "Maya Patel",
-          email: "mpatel@student.edu",
-          password: hashPassword("password123"),
-          role: "student",
-          status: "Suspended",
-          createdAt: new Date(Date.now() - 45 * 86400000).toISOString(),
-          profileCompleted: true,
-          displayName: "Maya Patel",
-          affiliation: "Department of Bioengineering",
-          department: "Bioinformatics",
-          researchInterests: "Protein Folding, CRISPR",
-        },
-      ];
-
-      for (const u of sampleUsers) {
-        const found = await usersCol.findOne({ email: u.email });
-        if (!found) {
-          await usersCol.insertOne(u as any);
-        }
-      }
-    }
-
-    // 3. Ensure Projects exist
-    const projectsCol = await getCollection<Document>("projects");
-    const projCount = await projectsCol.countDocuments();
-    if (projCount === 0) {
-      const sampleProjects = [
-        {
-          userEmail: "sophia.chen@student.edu",
-          title: "Neural Radiance Fields for Academic 3D Rendering",
-          description: "Exploring NeRF optimizations for real-time spatial visualization in medical imaging.",
-          domain: "Artificial Intelligence",
-          status: "In Progress",
-          progress: 68,
-          startDate: new Date(Date.now() - 40 * 86400000).toISOString().split("T")[0],
-          expectedCompletionDate: new Date(Date.now() + 60 * 86400000).toISOString().split("T")[0],
-          faculty: "Dr. Aris Thorne",
-          createdAt: new Date(Date.now() - 40 * 86400000).toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          userEmail: "liam.oc@student.edu",
-          title: "Scalable Graph Transformers in Molecular Discovery",
-          description: "Applying spatial-aware graph neural networks to predict binding affinities of small molecules.",
-          domain: "Bioinformatics & AI",
-          status: "Under Review",
-          progress: 90,
-          startDate: new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0],
-          expectedCompletionDate: new Date(Date.now() + 10 * 86400000).toISOString().split("T")[0],
-          faculty: "Dr. Aris Thorne",
-          createdAt: new Date(Date.now() - 90 * 86400000).toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          userEmail: "sophia.chen@student.edu",
-          title: "Quantum Key Distribution Protocols in Mesh Networks",
-          description: "Evaluating QKD fault tolerance in low-latency wireless topologies.",
-          domain: "Quantum Computing",
-          status: "Planning",
-          progress: 25,
-          startDate: new Date().toISOString().split("T")[0],
-          expectedCompletionDate: new Date(Date.now() + 180 * 86400000).toISOString().split("T")[0],
-          faculty: "Prof. Elena Rostova",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ];
-      await projectsCol.insertMany(sampleProjects);
-    }
-
-    // 4. Ensure Papers exist
-    const papersCol = await getCollection<Document>("papers");
-    const paperCount = await papersCol.countDocuments();
-    if (paperCount === 0) {
-      const samplePapers = [
-        {
-          title: "High-Throughput Genome Assembly via Hybrid Transformer Architectures",
-          authors: "Liam O'Connor, Dr. Aris Thorne",
-          domain: "Bioinformatics",
-          summary: "Presents a novel hybrid model accelerating long-read sequencing analysis by 4.2x.",
-          uploaderEmail: "liam.oc@student.edu",
-          fileSize: "4.8 MB",
-          downloadUrl: "#",
-          createdAt: new Date(Date.now() - 15 * 86400000).toISOString(),
-        },
-        {
-          title: "Robustness Bounds of Deep Neural Networks under Adversarial Perturbations",
-          authors: "Sophia Chen, Dr. Aris Thorne",
-          domain: "Computer Vision & Security",
-          summary: "Establishes tight theoretical lower bounds for norm-bounded adversarial attacks.",
-          uploaderEmail: "sophia.chen@student.edu",
-          fileSize: "2.3 MB",
-          downloadUrl: "#",
-          createdAt: new Date(Date.now() - 25 * 86400000).toISOString(),
-        },
-      ];
-      await papersCol.insertMany(samplePapers);
-    }
-
-    // 5. Ensure Announcements exist
-    const announcementsCol = await getCollection<Document>("announcements");
-    const annCount = await announcementsCol.countDocuments();
-    if (annCount === 0) {
-      const sampleAnnouncements = [
-        {
-          title: "Fall 2026 Research Grant Applications Now Open",
-          content: "Grants up to $25,000 are available for multidisciplinary AI & Quantum research proposals. Submissions close Oct 15.",
-          targetAudience: "All",
-          priority: "High",
-          pinned: true,
-          published: true,
-          authorName: "Enterprise Admin",
-          authorEmail: adminEmail,
-          createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-          updatedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-        },
-        {
-          title: "Faculty Mentorship Portal Maintenance Notice",
-          content: "Scheduled maintenance will occur this Saturday between 02:00 UTC and 04:00 UTC. System services will remain uninterrupted.",
-          targetAudience: "Faculty",
-          priority: "Normal",
-          pinned: false,
-          published: true,
-          authorName: "Enterprise Admin",
-          authorEmail: adminEmail,
-          createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-          updatedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-        },
-      ];
-      await announcementsCol.insertMany(sampleAnnouncements);
-    }
-
-    // 6. Ensure Activity Logs exist
-    const activityCol = await getCollection<Document>("activity_logs");
-    const actCount = await activityCol.countDocuments();
-    if (actCount === 0) {
-      const sampleLogs = [
-        {
-          timestamp: new Date(Date.now() - 2 * 3600000).toISOString(),
-          userName: "Enterprise Admin",
-          userEmail: adminEmail,
-          userRole: "admin",
-          actionType: "SYSTEM_SETTING",
-          description: "Updated System Security & Session Policies",
-          details: "Enforced 2FA requirements for all faculty level accounts.",
-          ipAddress: "192.168.1.100",
-        },
-        {
-          timestamp: new Date(Date.now() - 5 * 3600000).toISOString(),
-          userName: "Enterprise Admin",
-          userEmail: adminEmail,
-          userRole: "admin",
-          actionType: "FACULTY_APPROVAL",
-          description: "Reviewed Faculty Application for Prof. Elena Rostova",
-          details: "Application marked as pending document verification.",
-          ipAddress: "192.168.1.100",
-        },
-        {
-          timestamp: new Date(Date.now() - 24 * 3600000).toISOString(),
-          userName: "Sophia Chen",
-          userEmail: "sophia.chen@student.edu",
-          userRole: "student",
-          actionType: "PROJECT_ACTION",
-          description: "Created Research Project: Neural Radiance Fields",
-          details: "Assigned advisor: Dr. Aris Thorne",
-          ipAddress: "10.0.4.12",
-        },
-      ];
-      await activityCol.insertMany(sampleLogs);
-    }
+    // Automatically purge old mock data to ensure clean database state
+    await purgeMockDataFromDb();
   } catch (err) {
-    console.error("Error ensuring admin seed data:", err);
+    console.error("Error ensuring admin user exists:", err);
   }
 }
 
@@ -854,39 +691,65 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       });
       const activeUsers = await usersCol.countDocuments({ status: { $ne: "Suspended" } });
 
-      const userGrowth = [
-        { month: "Feb", students: Math.max(12, totalStudents - 18), faculty: Math.max(2, totalFaculty - 5) },
-        { month: "Mar", students: Math.max(18, totalStudents - 12), faculty: Math.max(3, totalFaculty - 4) },
-        { month: "Apr", students: Math.max(24, totalStudents - 8), faculty: Math.max(4, totalFaculty - 3) },
-        { month: "May", students: Math.max(32, totalStudents - 5), faculty: Math.max(5, totalFaculty - 2) },
-        { month: "Jun", students: Math.max(40, totalStudents - 2), faculty: Math.max(6, totalFaculty - 1) },
-        { month: "Jul", students: totalStudents, faculty: totalFaculty },
-      ];
+      // Real 6-Month Date Windows
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const now = new Date();
+      const last6Months: { month: string; year: number; monthIdx: number }[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        last6Months.push({
+          month: monthNames[d.getMonth()],
+          year: d.getFullYear(),
+          monthIdx: d.getMonth(),
+        });
+      }
 
-      const projectStatus = [
-        { name: "Planning", value: await projectsCol.countDocuments({ status: "Planning" }) || 4 },
-        { name: "In Progress", value: await projectsCol.countDocuments({ status: "In Progress" }) || 8 },
-        { name: "Under Review", value: await projectsCol.countDocuments({ status: "Under Review" }) || 5 },
-        { name: "Completed", value: await projectsCol.countDocuments({ status: "Completed" }) || 6 },
-        { name: "On Hold", value: await projectsCol.countDocuments({ status: "On Hold" }) || 2 },
-      ];
+      const allUsers = await usersCol.find({}).toArray();
+      const userGrowth = last6Months.map(({ month, year, monthIdx }) => {
+        const students = allUsers.filter((u) => {
+          if (u.role !== "student") return false;
+          const cd = new Date(u.createdAt);
+          return !isNaN(cd.getTime()) && cd.getFullYear() === year && cd.getMonth() === monthIdx;
+        }).length;
+        const faculty = allUsers.filter((u) => {
+          if (u.role !== "faculty") return false;
+          const cd = new Date(u.createdAt);
+          return !isNaN(cd.getTime()) && cd.getFullYear() === year && cd.getMonth() === monthIdx;
+        }).length;
+        return { month, students, faculty };
+      });
 
-      const researchDomains = [
-        { domain: "AI / ML", count: 18 },
-        { domain: "Quantum Computing", count: 12 },
-        { domain: "Bioinformatics", count: 14 },
-        { domain: "Cybersecurity", count: 9 },
-        { domain: "Data Science", count: 16 },
-      ];
+      // Real Project Status Counts
+      const statusList = ["Planning", "In Progress", "Under Review", "Completed", "On Hold"];
+      const projectStatus = await Promise.all(
+        statusList.map(async (status) => ({
+          name: status,
+          value: await projectsCol.countDocuments({ status }),
+        }))
+      );
 
-      const monthlyPapers = [
-        { month: "Feb", papers: 4 },
-        { month: "Mar", papers: 8 },
-        { month: "Apr", papers: 12 },
-        { month: "May", papers: 15 },
-        { month: "Jun", papers: 19 },
-        { month: "Jul", papers: totalPapers },
-      ];
+      // Real Research Domains Aggregation
+      const domainAgg = await projectsCol
+        .aggregate([
+          { $group: { _id: "$domain", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 6 },
+        ])
+        .toArray();
+      const researchDomains = domainAgg.map((d) => ({
+        domain: d._id || "General",
+        count: d.count,
+      }));
+
+      // Real Monthly Papers Uploads
+      const allPapers = await papersCol.find({}).toArray();
+      const monthlyPapers = last6Months.map(({ month, year, monthIdx }) => {
+        const count = allPapers.filter((p) => {
+          const cd = new Date(p.createdAt);
+          return !isNaN(cd.getTime()) && cd.getFullYear() === year && cd.getMonth() === monthIdx;
+        }).length;
+        return { month, papers: count };
+      });
 
       return new Response(
         JSON.stringify({
@@ -1445,11 +1308,12 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     }
   }
 
-  // ── Admin Seed Trigger API ──
-  if (url.pathname === "/api/admin/seed") {
+  // ── Admin Purge Mock Data API ──
+  if (url.pathname === "/api/admin/purge-mock-data" || url.pathname === "/api/admin/seed") {
+    await purgeMockDataFromDb();
     await ensureAdminSeedData();
     return new Response(
-      JSON.stringify({ success: true, message: "Admin seed data initialized successfully." }),
+      JSON.stringify({ success: true, message: "Mock data purged and database cleaned successfully." }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
   }
@@ -1618,20 +1482,647 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     });
   }
 
+  // ── User Settings API ──
+  if (url.pathname === "/api/user/settings") {
+    const email = url.searchParams.get("email") || request.headers.get("x-user-email");
+
+    if (request.method === "GET") {
+      if (!email) {
+        return new Response(JSON.stringify({ error: "Email parameter is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      const user = await findUserByEmail(email);
+      if (!user) {
+        return new Response(JSON.stringify({ error: "User not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+      const { password, ...safeUser } = user as any;
+      return new Response(JSON.stringify(safeUser), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const targetEmail = (body.email || email)?.trim().toLowerCase();
+      if (!targetEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const col = await getCollection<UserRecord>("users");
+      const existing = await findUserByEmail(targetEmail);
+      if (!existing) {
+        return new Response(JSON.stringify({ error: "User not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+
+      const updateFields: Record<string, any> = {
+        updatedAt: new Date().toISOString(),
+      };
+      if (body.displayName !== undefined) updateFields.displayName = body.displayName.trim();
+      if (body.name !== undefined && body.name.trim()) updateFields.name = body.name.trim();
+      if (body.affiliation !== undefined) updateFields.affiliation = body.affiliation.trim();
+      if (body.bio !== undefined) updateFields.bio = body.bio.trim();
+      if (body.phone !== undefined) updateFields.phone = body.phone.trim();
+      if (body.researchInterests !== undefined) updateFields.researchInterests = body.researchInterests.trim();
+      if (body.profileImage !== undefined) updateFields.profileImage = body.profileImage;
+
+      await col.updateOne({ email: targetEmail }, { $set: updateFields });
+      const updatedUser = await findUserByEmail(targetEmail);
+
+      await recordUserActivity(targetEmail, updatedUser?.displayName || updatedUser?.name || "User", "PROFILE_UPDATED", "Profile Information Updated", "Updated personal bio and research information", "Profile");
+
+      const { password, ...safeUpdated } = updatedUser as any;
+      return new Response(JSON.stringify(safeUpdated), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Change Password API ──
+  if (url.pathname === "/api/user/password") {
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const { email, currentPassword, newPassword } = body;
+      if (!email || !currentPassword || !newPassword) {
+        return new Response(JSON.stringify({ error: "Email, current password, and new password are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      if (newPassword.length < 8) {
+        return new Response(JSON.stringify({ error: "New password must be at least 8 characters long." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const user = await findUserByEmail(email);
+      if (!user) {
+        return new Response(JSON.stringify({ error: "User not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+
+      const hashedCurrent = hashPassword(currentPassword);
+      if (user.password !== hashedCurrent) {
+        return new Response(JSON.stringify({ error: "Incorrect current password. Please try again." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const hashedNew = hashPassword(newPassword);
+      const col = await getCollection<UserRecord>("users");
+      await col.updateOne({ email: user.email }, { $set: { password: hashedNew, updatedAt: new Date().toISOString() } });
+
+      await recordUserActivity(user.email, user.displayName || user.name, "SECURITY_UPDATED", "Password Changed", "Updated account password successfully", "System");
+
+      return new Response(JSON.stringify({ success: true, message: "Password updated successfully." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Preferences & Privacy API ──
+  if (url.pathname === "/api/user/preferences") {
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const { email, preferences } = body;
+      if (!email) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const col = await getCollection<UserRecord>("users");
+      await col.updateOne({ email: email.trim().toLowerCase() }, { $set: { preferences, updatedAt: new Date().toISOString() } });
+
+      return new Response(JSON.stringify({ success: true, message: "Preferences updated." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Tasks API ──
+  if (url.pathname === "/api/tasks") {
+    const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+    const tasksCol = await getCollection<Document>("tasks");
+
+    if (request.method === "GET") {
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const query: Record<string, any> = { userEmail: userEmail.trim().toLowerCase() };
+      const statusFilter = url.searchParams.get("status");
+      const priorityFilter = url.searchParams.get("priority");
+      const projectIdFilter = url.searchParams.get("projectId");
+
+      if (statusFilter && statusFilter !== "All") query.status = statusFilter;
+      if (priorityFilter && priorityFilter !== "All") query.priority = priorityFilter;
+      if (projectIdFilter && projectIdFilter !== "All") query.projectId = projectIdFilter;
+
+      const tasks = await tasksCol.find(query).sort({ dueDate: 1, createdAt: -1 }).toArray();
+      const formatted = tasks.map((t) => ({ ...t, id: t._id.toString(), _id: t._id.toString() }));
+
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "POST") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const email = (body.userEmail || userEmail)?.trim().toLowerCase();
+      if (!email || !body.title?.trim()) {
+        return new Response(JSON.stringify({ error: "User email and Task Title are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const now = new Date().toISOString();
+      const newTask = {
+        userEmail: email,
+        title: body.title.trim(),
+        description: (body.description || "").trim(),
+        priority: body.priority || "Medium",
+        status: body.status || "To Do",
+        dueDate: body.dueDate || new Date().toISOString().split("T")[0],
+        projectId: body.projectId || "",
+        projectTitle: body.projectTitle || "",
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await tasksCol.insertOne(newTask);
+      const createdTask = { ...newTask, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+
+      await recordUserActivity(email, "Researcher", "TASK_CREATED", `Task Created: "${body.title.trim()}"`, `Priority: ${body.priority || "Medium"} • Due: ${body.dueDate}`, "Task");
+
+      return new Response(JSON.stringify(createdTask), { status: 201, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const taskId = body.id || body._id;
+      const email = (body.userEmail || userEmail)?.trim().toLowerCase();
+
+      if (!taskId || !email) {
+        return new Response(JSON.stringify({ error: "Task ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = taskId;
+      if (ObjectId.isValid(taskId)) {
+        objId = new ObjectId(taskId);
+      }
+
+      const now = new Date().toISOString();
+      const updateData: Record<string, any> = { updatedAt: now };
+      if (body.title) updateData.title = body.title.trim();
+      if (body.description !== undefined) updateData.description = body.description.trim();
+      if (body.priority) updateData.priority = body.priority;
+      if (body.status) updateData.status = body.status;
+      if (body.dueDate) updateData.dueDate = body.dueDate;
+      if (body.projectId !== undefined) updateData.projectId = body.projectId;
+      if (body.projectTitle !== undefined) updateData.projectTitle = body.projectTitle;
+
+      await tasksCol.updateOne({ $or: [{ _id: objId }, { id: taskId }], userEmail: email }, { $set: updateData });
+      const updated = await tasksCol.findOne({ $or: [{ _id: objId }, { id: taskId }] });
+
+      if (body.status === "Completed") {
+        await recordUserActivity(email, "Researcher", "TASK_COMPLETED", `Task Completed: "${updated?.title || body.title}"`, `Marked as completed`, "Task");
+      }
+
+      const formatted = updated ? { ...updated, id: updated._id.toString(), _id: updated._id.toString() } : null;
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "DELETE") {
+      const taskId = url.searchParams.get("id");
+      const email = (userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
+
+      if (!taskId || !email) {
+        return new Response(JSON.stringify({ error: "Task ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = taskId;
+      if (ObjectId.isValid(taskId)) {
+        objId = new ObjectId(taskId);
+      }
+
+      await tasksCol.deleteOne({ $or: [{ _id: objId }, { id: taskId }], userEmail: email });
+      return new Response(JSON.stringify({ success: true, message: "Task deleted." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Notes API ──
+  if (url.pathname === "/api/notes") {
+    const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+    const notesCol = await getCollection<Document>("notes");
+
+    if (request.method === "GET") {
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const query: Record<string, any> = { userEmail: userEmail.trim().toLowerCase() };
+      const categoryFilter = url.searchParams.get("category");
+      const projectIdFilter = url.searchParams.get("projectId");
+      const archivedFilter = url.searchParams.get("archived");
+
+      if (categoryFilter && categoryFilter !== "All") query.category = categoryFilter;
+      if (projectIdFilter && projectIdFilter !== "All") query.projectId = projectIdFilter;
+      if (archivedFilter !== null && archivedFilter !== undefined) query.archived = archivedFilter === "true";
+
+      const notes = await notesCol.find(query).sort({ pinned: -1, updatedAt: -1 }).toArray();
+      const formatted = notes.map((n) => ({ ...n, id: n._id.toString(), _id: n._id.toString() }));
+
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "POST") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const email = (body.userEmail || userEmail)?.trim().toLowerCase();
+      if (!email || !body.title?.trim()) {
+        return new Response(JSON.stringify({ error: "User email and Note Title are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const now = new Date().toISOString();
+      const newNote = {
+        userEmail: email,
+        title: body.title.trim(),
+        content: (body.content || "").trim(),
+        category: body.category || "General",
+        pinned: Boolean(body.pinned),
+        archived: Boolean(body.archived),
+        tags: Array.isArray(body.tags) ? body.tags : [],
+        projectId: body.projectId || "",
+        projectTitle: body.projectTitle || "",
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await notesCol.insertOne(newNote);
+      const createdNote = { ...newNote, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+
+      await recordUserActivity(email, "Researcher", "NOTE_CREATED", `Note Authored: "${body.title.trim()}"`, `Category: ${body.category || "General"}`, "Note");
+
+      return new Response(JSON.stringify(createdNote), { status: 201, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const noteId = body.id || body._id;
+      const email = (body.userEmail || userEmail)?.trim().toLowerCase();
+
+      if (!noteId || !email) {
+        return new Response(JSON.stringify({ error: "Note ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = noteId;
+      if (ObjectId.isValid(noteId)) {
+        objId = new ObjectId(noteId);
+      }
+
+      const now = new Date().toISOString();
+      const updateData: Record<string, any> = { updatedAt: now };
+      if (body.title) updateData.title = body.title.trim();
+      if (body.content !== undefined) updateData.content = body.content.trim();
+      if (body.category) updateData.category = body.category;
+      if (body.pinned !== undefined) updateData.pinned = Boolean(body.pinned);
+      if (body.archived !== undefined) updateData.archived = Boolean(body.archived);
+      if (body.tags !== undefined) updateData.tags = body.tags;
+      if (body.projectId !== undefined) updateData.projectId = body.projectId;
+      if (body.projectTitle !== undefined) updateData.projectTitle = body.projectTitle;
+
+      await notesCol.updateOne({ $or: [{ _id: objId }, { id: noteId }], userEmail: email }, { $set: updateData });
+      const updated = await notesCol.findOne({ $or: [{ _id: objId }, { id: noteId }] });
+
+      const formatted = updated ? { ...updated, id: updated._id.toString(), _id: updated._id.toString() } : null;
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "DELETE") {
+      const noteId = url.searchParams.get("id");
+      const email = (userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
+
+      if (!noteId || !email) {
+        return new Response(JSON.stringify({ error: "Note ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = noteId;
+      if (ObjectId.isValid(noteId)) {
+        objId = new ObjectId(noteId);
+      }
+
+      await notesCol.deleteOne({ $or: [{ _id: objId }, { id: noteId }], userEmail: email });
+      return new Response(JSON.stringify({ success: true, message: "Note deleted." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Activity Timeline API ──
+  if (url.pathname === "/api/activity") {
+    const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+    const activityCol = await getCollection<Document>("activity_logs");
+
+    if (request.method === "GET") {
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const query: Record<string, any> = { userEmail: userEmail.trim().toLowerCase() };
+      const categoryFilter = url.searchParams.get("category");
+      if (categoryFilter && categoryFilter !== "All") query.category = categoryFilter;
+
+      const logs = await activityCol.find(query).sort({ timestamp: -1 }).limit(50).toArray();
+      const formatted = logs.map((l) => ({ ...l, id: l._id.toString(), _id: l._id.toString() }));
+
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── Calendar Events API ──
+  if (url.pathname === "/api/calendar/events") {
+    const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+    const calendarCol = await getCollection<Document>("calendar_events");
+    const projectsCol = await getCollection<Document>("projects");
+    const tasksCol = await getCollection<Document>("tasks");
+
+    if (request.method === "GET") {
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const normalizedEmail = userEmail.trim().toLowerCase();
+
+      // Gather Custom Reminders
+      const customEvents = await calendarCol.find({ userEmail: normalizedEmail }).toArray();
+      const formattedCustom = customEvents.map((e) => ({
+        id: e._id.toString(),
+        _id: e._id.toString(),
+        title: e.title,
+        description: e.description || "",
+        date: e.date,
+        time: e.time || "",
+        type: e.type || "Reminder",
+        source: "custom",
+      }));
+
+      // Gather Projects Start & Target Completion Dates
+      const userProjects = await projectsCol.find({ userEmail: normalizedEmail }).toArray();
+      const projectEvents: any[] = [];
+      userProjects.forEach((p) => {
+        if (p.startDate) {
+          projectEvents.push({
+            id: `proj-start-${p._id}`,
+            title: `Project Start: ${p.title}`,
+            description: `Domain: ${p.domain} • Status: ${p.status}`,
+            date: p.startDate,
+            time: "09:00",
+            type: "Milestone",
+            source: "project",
+            projectId: p._id.toString(),
+          });
+        }
+        if (p.expectedCompletionDate) {
+          projectEvents.push({
+            id: `proj-due-${p._id}`,
+            title: `Target Deadline: ${p.title}`,
+            description: `Expected project completion deadline. Progress: ${p.progress}%`,
+            date: p.expectedCompletionDate,
+            time: "17:00",
+            type: "Deadline",
+            source: "project",
+            projectId: p._id.toString(),
+          });
+        }
+      });
+
+      // Gather Tasks Due Dates
+      const userTasks = await tasksCol.find({ userEmail: normalizedEmail }).toArray();
+      const taskEvents: any[] = userTasks
+        .filter((t) => t.dueDate)
+        .map((t) => ({
+          id: `task-due-${t._id}`,
+          title: `Task Due: ${t.title}`,
+          description: `Priority: ${t.priority} • Status: ${t.status}`,
+          date: t.dueDate,
+          time: "12:00",
+          type: "Deadline",
+          source: "task",
+          priority: t.priority,
+          status: t.status,
+        }));
+
+      const allEvents = [...formattedCustom, ...projectEvents, ...taskEvents].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      );
+
+      return new Response(JSON.stringify(allEvents), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "POST") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const email = (body.userEmail || userEmail)?.trim().toLowerCase();
+      if (!email || !body.title?.trim() || !body.date) {
+        return new Response(JSON.stringify({ error: "User email, Title, and Date are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const newEvent = {
+        userEmail: email,
+        title: body.title.trim(),
+        description: (body.description || "").trim(),
+        date: body.date,
+        time: body.time || "10:00",
+        type: body.type || "Reminder",
+        createdAt: new Date().toISOString(),
+      };
+
+      const result = await calendarCol.insertOne(newEvent);
+      const created = { ...newEvent, id: result.insertedId.toString(), _id: result.insertedId.toString(), source: "custom" };
+
+      await recordUserActivity(email, "Researcher", "CALENDAR_REMINDER_ADDED", `Reminder Set: "${body.title.trim()}"`, `Date: ${body.date}`, "System");
+
+      return new Response(JSON.stringify(created), { status: 201, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "DELETE") {
+      const eventId = url.searchParams.get("id");
+      const email = (userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
+
+      if (!eventId || !email) {
+        return new Response(JSON.stringify({ error: "Event ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = eventId;
+      if (ObjectId.isValid(eventId)) {
+        objId = new ObjectId(eventId);
+      }
+
+      await calendarCol.deleteOne({ $or: [{ _id: objId }, { id: eventId }], userEmail: email });
+      return new Response(JSON.stringify({ success: true, message: "Calendar reminder deleted." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+  // ── Research Papers MongoDB API ──
+  if (url.pathname === "/api/papers") {
+    const papersCol = await getCollection<Document>("papers");
+
+    if (request.method === "GET") {
+      const projectIdParam = url.searchParams.get("projectId");
+      const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+
+      const query: Record<string, any> = {};
+      if (projectIdParam) query.projectId = projectIdParam;
+      if (userEmail) query.userEmail = userEmail.trim().toLowerCase();
+
+      const docs = await papersCol.find(query).sort({ uploadDate: -1 }).toArray();
+      const formatted = docs.map((p) => ({ ...p, id: p._id.toString(), _id: p._id.toString() }));
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "POST") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      if (!body || typeof body !== "object") {
+        return new Response(JSON.stringify({ error: "Body must be an object." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const { projectId, title, authors, year, journal, url: paperUrl, fileData, summary, userEmail } = body;
+      if (!projectId || !title) {
+        return new Response(JSON.stringify({ error: "Project ID and Title are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const paperRecord = {
+        projectId: String(projectId),
+        title: String(title).trim(),
+        authors: authors ? String(authors).trim() : "",
+        year: year ? String(year).trim() : "",
+        journal: journal ? String(journal).trim() : "",
+        uploadDate: new Date().toISOString().split("T")[0],
+        url: paperUrl ? String(paperUrl).trim() : "",
+        fileData: fileData ? String(fileData) : undefined,
+        summary: summary ? String(summary) : `Research paper "${title}" uploaded to project.`,
+        userEmail: userEmail ? String(userEmail).trim().toLowerCase() : undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = await papersCol.insertOne(paperRecord);
+      const inserted = { ...paperRecord, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+
+      return new Response(JSON.stringify(inserted), { status: 201, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "PUT") {
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      if (!body || typeof body !== "object") {
+        return new Response(JSON.stringify({ error: "Body must be an object." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const paperId = body.id || body._id;
+      if (!paperId) {
+        return new Response(JSON.stringify({ error: "Paper ID is required for update." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = paperId;
+      if (ObjectId.isValid(paperId)) {
+        objId = new ObjectId(paperId);
+      }
+
+      const updateFields: Record<string, any> = {
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (body.title !== undefined) updateFields.title = String(body.title).trim();
+      if (body.authors !== undefined) updateFields.authors = String(body.authors).trim();
+      if (body.year !== undefined) updateFields.year = String(body.year).trim();
+      if (body.journal !== undefined) updateFields.journal = String(body.journal).trim();
+      if (body.url !== undefined) updateFields.url = String(body.url).trim();
+      if (body.fileData !== undefined) updateFields.fileData = body.fileData;
+      if (body.summary !== undefined) updateFields.summary = String(body.summary).trim();
+
+      await papersCol.updateOne(
+        { $or: [{ _id: objId }, { id: String(paperId) }] },
+        { $set: updateFields }
+      );
+
+      const updatedDoc = await papersCol.findOne({ $or: [{ _id: objId }, { id: String(paperId) }] });
+      const formatted = updatedDoc ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() } : null;
+
+      return new Response(JSON.stringify(formatted || { success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "DELETE") {
+      const paperId = url.searchParams.get("id");
+      if (!paperId) {
+        return new Response(JSON.stringify({ error: "Paper ID required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      let objId: any = paperId;
+      if (ObjectId.isValid(paperId)) {
+        objId = new ObjectId(paperId);
+      }
+
+      await papersCol.deleteOne({ $or: [{ _id: objId }, { id: paperId }] });
+      return new Response(JSON.stringify({ success: true, message: "Paper deleted from MongoDB database." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
   if (url.pathname === "/api/faculty-list") {
     if (request.method === "GET") {
       try {
         const usersCollection = await getCollection<UserRecord>("users");
         const facultyUsers = await usersCollection
           .find({ role: "faculty" })
-          .project({ name: 1, email: 1, displayName: 1, affiliation: 1, photoURL: 1 })
+          .project({ name: 1, email: 1, displayName: 1, affiliation: 1, department: 1, researchInterests: 1, bio: 1, photoURL: 1 })
           .toArray();
 
-        const dbFacultyList = facultyUsers.map((f) => ({
-          name: f.displayName || f.name,
+        const dbFacultyList = facultyUsers.map((f: any) => ({
+          id: f._id.toString(),
+          _id: f._id.toString(),
+          name: f.displayName || f.name || "Faculty Advisor",
           email: f.email,
-          title: f.affiliation || "Faculty Advisor",
-          department: "Academic Department",
+          title: f.affiliation || f.title || "Professor & Academic Advisor",
+          department: f.department || "School of Computer Science & AI",
+          researchInterests: Array.isArray(f.researchInterests)
+            ? f.researchInterests
+            : typeof f.researchInterests === "string" && f.researchInterests
+            ? f.researchInterests.split(",").map((s: string) => s.trim())
+            : ["Artificial Intelligence", "Academic Research", "Machine Learning"],
+          bio: f.bio || "",
+          photoURL: f.photoURL || "",
         }));
 
         return new Response(JSON.stringify(dbFacultyList), {

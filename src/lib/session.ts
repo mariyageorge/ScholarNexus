@@ -65,7 +65,8 @@ export function getUserInitials(user: UserSession | null): string {
 }
 
 export function getHomePathForRole(role?: string): string {
-  if (role === "admin") return "/admin";
-  if (role === "faculty") return "/faculty";
+  const r = (role || "").toLowerCase();
+  if (r === "admin") return "/admin";
+  if (r === "faculty") return "/faculty";
   return "/dashboard";
 }
