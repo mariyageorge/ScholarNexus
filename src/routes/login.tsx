@@ -75,7 +75,7 @@ function LoginPage() {
         localStorage.removeItem("scholarnexusRemember");
       }
 
-      window.location.href = getHomePathForRole(data.role);
+      window.location.href = getHomePathForRole(data.role, email);
     } catch (error) {
       setErrorMessage("Unable to reach the server. Please try again later.");
     } finally {
@@ -127,7 +127,7 @@ function LoginPage() {
       };
       setUserSession(userPayload);
       localStorage.removeItem("scholarnexusRemember");
-      window.location.href = getHomePathForRole(data.role);
+      window.location.href = getHomePathForRole(data.role, data.email);
     } catch (error) {
       console.error("Google sign-in failed:", error);
       const errorMessage =

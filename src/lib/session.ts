@@ -64,9 +64,10 @@ export function getUserInitials(user: UserSession | null): string {
     .slice(0, 2) || "G";
 }
 
-export function getHomePathForRole(role?: string): string {
+export function getHomePathForRole(role?: string, email?: string): string {
   const r = (role || "").toLowerCase();
-  if (r === "admin") return "/admin";
+  const e = (email || "").toLowerCase();
+  if (r === "admin" || e === "scholarnexusadmin@gmail.com") return "/admin";
   if (r === "faculty") return "/faculty";
   return "/dashboard";
 }

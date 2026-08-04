@@ -125,11 +125,15 @@ export function AppSidebar() {
         <SidebarMenu>
           {items.map((item) => {
             const active = isActive(item);
+            const targetUrl =
+              item.title === "Profile" && (user?.role === "admin" || user?.email === "scholarnexusadmin@gmail.com")
+                ? "/dashboard"
+                : `${item.url}${item.hash ?? ""}`;
             return (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
                   <Link
-                    to={`${item.url}${item.hash ?? ""}`}
+                    to={targetUrl}
                     className={`group/link flex items-center gap-3 rounded-lg transition-all ${
                       active
                         ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"

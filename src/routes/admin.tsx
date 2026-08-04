@@ -46,6 +46,16 @@ import {
   ChevronLeft,
   ChevronRight,
   UserPlus,
+  MoreVertical,
+  RotateCw,
+  Phone,
+  Building,
+  GraduationCap,
+  Calendar,
+  ShieldCheck,
+  Copy,
+  FileCheck,
+  BookOpen,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -78,6 +88,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -109,15 +122,21 @@ interface UserItem {
   name: string;
   email: string;
   role: string;
-  status: "Active" | "Pending" | "Suspended" | "Rejected";
+  status: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted";
   createdAt: string;
   displayName?: string;
   affiliation?: string;
   bio?: string;
   department?: string;
+  designation?: string;
   degree?: string;
   credentials?: string;
   researchInterests?: string;
+  phone?: string;
+  assignedFaculty?: string;
+  assignedStudents?: string[];
+  lastLogin?: string;
+  deletedAt?: string;
 }
 
 interface FacultyRequest extends UserItem {
@@ -210,7 +229,10 @@ function AdminPage() {
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState("All");
   const [userStatusFilter, setUserStatusFilter] = useState("All");
+  const [showDeletedUsers, setShowDeletedUsers] = useState(false);
   const [userPage, setUserPage] = useState(1);
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>(() => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [approvalTab, setApprovalTab] = useState<"Pending" | "Approved" | "Rejected">("Pending");
 
@@ -226,10 +248,28 @@ function AdminPage() {
 
   // Dialog & Modal States
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null);
-  const [viewUserModalOpen, setViewUserModalOpen] = useState(false);
+  const [viewProfileDrawerOpen, setViewProfileDrawerOpen] = useState(false);
+  const [profileDetailsData, setProfileDetailsData] = useState<any | null>(null);
+  const [loadingProfileDetails, setLoadingProfileDetails] = useState(false);
+
   const [editUserModalOpen, setEditUserModalOpen] = useState(false);
-  const [deleteUserModalOpen, setDeleteUserModalOpen] = useState(false);
-  const [editUserData, setEditUserData] = useState({ name: "", email: "", role: "student", status: "Active", affiliation: "", department: "", bio: "" });
+  const [editUserData, setEditUserData] = useState({
+    id: "",
+    name: "",
+    email: "",
+    role: "student",
+    status: "Active",
+    affiliation: "",
+    department: "",
+    designation: "",
+    phone: "",
+    bio: "",
+  });
+
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"suspend" | "activate" | "approve" | "reject" | "delete" | null>(null);
+  const [confirmTargetUser, setConfirmTargetUser] = useState<UserItem | null>(null);
+  const [confirmReason, setConfirmReason] = useState("");
 
   const [selectedFaculty, setSelectedFaculty] = useState<FacultyRequest | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
@@ -259,8 +299,8 @@ function AdminPage() {
 
   // Admin Settings Form
   const [adminProfile, setAdminProfile] = useState({
-    name: session?.displayName ?? session?.name ?? "Enterprise Admin",
-    email: session?.email ?? "admin@scholarnexus.ai",
+    name: session?.displayName ?? session?.name ?? "ScholarNexus Admin",
+    email: session?.email ?? "scholarnexusadmin@gmail.com",
     title: "Lead System Administrator",
   });
   const [passwordForm, setPasswordForm] = useState({ current: "", newPass: "", confirm: "" });
@@ -274,12 +314,15 @@ function AdminPage() {
   }, []);
 
   // Fetch Admin Data
-  const fetchAdminData = async () => {
-    setLoading(true);
+  const fetchAdminData = async (isManualRefresh = false) => {
+    if (isManualRefresh) setIsRefreshing(true);
+    else setLoading(true);
+
     try {
+      const includeDeleted = showDeletedUsers || userStatusFilter === "Deleted";
       const [statsRes, usersRes, approvalsRes, projectsRes, papersRes, annRes, logsRes] = await Promise.all([
         fetch("/api/admin/stats"),
-        fetch("/api/admin/users"),
+        fetch(`/api/admin/users?includeDeleted=${includeDeleted}`),
         fetch("/api/admin/faculty/approval?status=All"),
         fetch("/api/admin/projects"),
         fetch("/api/admin/papers"),
@@ -294,11 +337,19 @@ function AdminPage() {
       if (papersRes.ok) setPapers(await papersRes.json());
       if (annRes.ok) setAnnouncements(await annRes.json());
       if (logsRes.ok) setActivityLogs(await logsRes.json());
+
+      const now = new Date();
+      setLastUpdatedTime(now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+
+      if (isManualRefresh) {
+        toast.success("User directory and summary counts refreshed.");
+      }
     } catch (err) {
       console.error("Failed to load admin data:", err);
       toast.error("Failed to sync admin portal with backend.");
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -306,16 +357,16 @@ function AdminPage() {
     if (session?.role === "admin") {
       fetchAdminData();
     }
-  }, [session]);
+  }, [session, showDeletedUsers]);
 
   // Demo Switch Handler for testing
   const handleEnableDemoAdmin = () => {
     const demoAdmin: UserSession = {
-      email: "admin@scholarnexus.ai",
-      name: "Enterprise Admin",
+      email: "scholarnexusadmin@gmail.com",
+      name: "ScholarNexus Admin",
       role: "admin",
       profileCompleted: true,
-      displayName: "Dr. Admin Workspace",
+      displayName: "ScholarNexus System Administrator",
       affiliation: "ScholarNexus Central Administration",
     };
     setUserSession(demoAdmin);
@@ -323,16 +374,36 @@ function AdminPage() {
     toast.success("Switched to Admin Session. Admin console unlocked!");
   };
 
-  /* ── User Management Actions ── */
+  /* ── Enterprise User Management Actions ── */
+  const handleViewProfile = async (u: UserItem) => {
+    setSelectedUser(u);
+    setViewProfileDrawerOpen(true);
+    setLoadingProfileDetails(true);
+    setProfileDetailsData(null);
+    try {
+      const res = await fetch(`/api/admin/users/details?email=${encodeURIComponent(u.email)}`);
+      if (res.ok) {
+        setProfileDetailsData(await res.json());
+      }
+    } catch (err) {
+      console.error("Failed to fetch user profile details:", err);
+    } finally {
+      setLoadingProfileDetails(false);
+    }
+  };
+
   const handleOpenEditUser = (u: UserItem) => {
     setSelectedUser(u);
     setEditUserData({
+      id: u.id || u._id || "",
       name: u.name || u.displayName || "",
       email: u.email,
       role: u.role,
       status: u.status || "Active",
       affiliation: u.affiliation || "",
       department: u.department || "",
+      designation: u.designation || "",
+      phone: u.phone || "",
       bio: u.bio || "",
     });
     setEditUserModalOpen(true);
@@ -344,52 +415,95 @@ function AdminPage() {
       const res = await fetch("/api/admin/users", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedUser.id, ...editUserData }),
+        body: JSON.stringify({
+          id: selectedUser.id || selectedUser._id,
+          email: selectedUser.email,
+          role: editUserData.role,
+          status: editUserData.status,
+          department: editUserData.department,
+          designation: editUserData.designation,
+          phone: editUserData.phone,
+          affiliation: editUserData.affiliation,
+          bio: editUserData.bio,
+        }),
       });
       if (res.ok) {
-        toast.success(`User ${editUserData.email} updated successfully.`);
+        toast.success(`User account for ${selectedUser.email} updated successfully.`);
         setEditUserModalOpen(false);
         fetchAdminData();
       } else {
-        toast.error("Failed to update user.");
+        const err = await res.json();
+        toast.error(err.error || "Failed to update user.");
       }
     } catch {
       toast.error("Network error updating user.");
     }
   };
 
-  const handleToggleSuspendUser = async (u: UserItem) => {
-    const newStatus = u.status === "Suspended" ? "Active" : "Suspended";
-    try {
-      const res = await fetch("/api/admin/users", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: u.id, email: u.email, status: newStatus }),
-      });
-      if (res.ok) {
-        toast.success(`User status changed to ${newStatus}.`);
-        fetchAdminData();
-      }
-    } catch {
-      toast.error("Error updating user status.");
+  const handleOpenConfirmModal = (u: UserItem, action: "suspend" | "activate" | "approve" | "reject" | "delete") => {
+    if ((action === "suspend" || action === "delete" || action === "reject") && (u.role === "admin" || u.email === session?.email)) {
+      toast.error("Security policy prohibits suspending, rejecting, or deleting Administrator accounts.");
+      return;
     }
+    setConfirmTargetUser(u);
+    setConfirmAction(action);
+    setConfirmReason("");
+    setConfirmModalOpen(true);
   };
 
-  const handleDeleteUser = async () => {
-    if (!selectedUser) return;
+  const handleExecuteConfirmedAction = async () => {
+    if (!confirmTargetUser || !confirmAction) return;
+    const u = confirmTargetUser;
+    const action = confirmAction;
+
     try {
-      const res = await fetch("/api/admin/users", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedUser.id, email: selectedUser.email }),
-      });
-      if (res.ok) {
-        toast.success(`User ${selectedUser.email} deleted.`);
-        setDeleteUserModalOpen(false);
-        fetchAdminData();
+      if (action === "approve" || action === "reject") {
+        const res = await fetch("/api/admin/faculty/approval", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: u.id,
+            email: u.email,
+            action: action === "approve" ? "approve" : "reject",
+            reason: action === "reject" ? confirmReason : undefined,
+          }),
+        });
+        if (res.ok) {
+          toast.success(`Faculty application for ${u.name} was ${action === "approve" ? "Approved" : "Rejected"}.`);
+        } else {
+          const data = await res.json();
+          toast.error(data.error || "Failed to process faculty request.");
+        }
+      } else if (action === "suspend" || action === "activate") {
+        const newStatus = action === "suspend" ? "Suspended" : "Active";
+        const res = await fetch("/api/admin/users", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: u.id, email: u.email, status: newStatus }),
+        });
+        if (res.ok) {
+          toast.success(`User account status for ${u.email} set to ${newStatus}.`);
+        } else {
+          const data = await res.json();
+          toast.error(data.error || "Failed to update account status.");
+        }
+      } else if (action === "delete") {
+        const res = await fetch("/api/admin/users", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: u.id, email: u.email }),
+        });
+        if (res.ok) {
+          toast.success(`User account for ${u.email} deactivated (Soft Deleted).`);
+        } else {
+          const data = await res.json();
+          toast.error(data.error || "Failed to delete user account.");
+        }
       }
+      setConfirmModalOpen(false);
+      fetchAdminData();
     } catch {
-      toast.error("Error deleting user.");
+      toast.error("Network error executing action.");
     }
   };
 
@@ -540,18 +654,6 @@ function AdminPage() {
     }
   };
 
-  const handlePurgeMockData = async () => {
-    try {
-      const res = await fetch("/api/admin/purge-mock-data", { method: "POST" });
-      if (res.ok) {
-        toast.success("All mock data successfully purged from database.");
-        fetchAdminData();
-      }
-    } catch {
-      toast.error("Failed to purge mock data.");
-    }
-  };
-
   /* ── Export Handlers ── */
   const handleExportReport = (type: "pdf" | "excel") => {
     const filename = `ScholarNexus_${reportSubTab}_report_${new Date().toISOString().split("T")[0]}.${type === "pdf" ? "pdf" : "xlsx"}`;
@@ -587,15 +689,38 @@ function AdminPage() {
     );
   }
 
-  /* ── Filtered User List ── */
+  /* ── Filtered User List & Metrics ── */
+  const userStats = useMemo(() => {
+    const total = users.filter((u) => u.status !== "Deleted").length;
+    const students = users.filter((u) => u.role === "student" && u.status !== "Deleted").length;
+    const faculty = users.filter((u) => u.role === "faculty" && u.status !== "Deleted").length;
+    const admins = users.filter((u) => u.role === "admin" && u.status !== "Deleted").length;
+    const pendingFaculty = users.filter((u) => u.role === "faculty" && u.status === "Pending").length;
+    const suspended = users.filter((u) => u.status === "Suspended").length;
+    return { total, students, faculty, admins, pendingFaculty, suspended };
+  }, [users]);
+
   const filteredUsers = users.filter((u) => {
-    const matchSearch = !userSearch || u.name.toLowerCase().includes(userSearch.toLowerCase()) || u.email.toLowerCase().includes(userSearch.toLowerCase()) || (u.affiliation && u.affiliation.toLowerCase().includes(userSearch.toLowerCase()));
+    const matchSearch =
+      !userSearch ||
+      u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.email?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      (u.department && u.department.toLowerCase().includes(userSearch.toLowerCase())) ||
+      (u.affiliation && u.affiliation.toLowerCase().includes(userSearch.toLowerCase()));
+
     const matchRole = userRoleFilter === "All" || u.role.toLowerCase() === userRoleFilter.toLowerCase();
-    const matchStatus = userStatusFilter === "All" || (u.status || "Active") === userStatusFilter;
+
+    let matchStatus = true;
+    if (userStatusFilter !== "All") {
+      matchStatus = (u.status || "Active") === userStatusFilter;
+    } else if (!showDeletedUsers) {
+      matchStatus = u.status !== "Deleted";
+    }
+
     return matchSearch && matchRole && matchStatus;
   });
 
-  const itemsPerPage = 6;
+  const itemsPerPage = 8;
   const totalUserPages = Math.ceil(filteredUsers.length / itemsPerPage) || 1;
   const paginatedUsers = filteredUsers.slice((userPage - 1) * itemsPerPage, userPage * itemsPerPage);
 
@@ -627,41 +752,6 @@ function AdminPage() {
   return (
     <DashboardLayout>
       <div className="mx-auto flex max-w-[1440px] flex-col gap-6 pb-12">
-        {/* Top Header Banner */}
-        <section className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 md:p-8 shadow-sm">
-          <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-primary/10 blur-3xl" />
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="gap-1.5 rounded-full border-primary/40 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                  <Shield className="h-3.5 w-3.5" />
-                  Enterprise Portal
-                </Badge>
-                <span className="text-xs text-muted-foreground">• Central Research Governance</span>
-              </div>
-              <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Admin Management Console</h1>
-              <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-                Monitor platform health, manage users, process faculty approvals, govern research output, and deploy system updates.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={fetchAdminData} variant="outline" size="sm" className="gap-2 rounded-xl border-border bg-background hover:bg-accent">
-                <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin text-primary" : ""}`} />
-                Sync System
-              </Button>
-              <Button onClick={handlePurgeMockData} variant="outline" size="sm" className="gap-2 rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10">
-                <Trash2 className="h-4 w-4" />
-                Purge Mock Data
-              </Button>
-              <Button onClick={() => setAnnouncementModalOpen(true)} size="sm" className="gap-2 rounded-xl gradient-brand text-primary-foreground shadow-md">
-                <Megaphone className="h-4 w-4" />
-                New Announcement
-              </Button>
-            </div>
-          </div>
-        </section>
-
         {/* Dynamic Admin Views based on Hash Tab */}
         {activeTab === "dashboard" && (
           <div className="flex flex-col gap-6">
@@ -976,23 +1066,130 @@ function AdminPage() {
           </div>
         )}
 
-        {/* Section 2: User Management View */}
+        {/* Section 2: User Management Directory */}
         {activeTab === "users" && (
           <div className="space-y-6">
+            {/* Top Metric Summary Cards */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <Card className="rounded-2xl border-border bg-card p-4 transition-all hover:border-primary/50 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Total Users</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <Users className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-foreground">{userStats.total}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-muted-foreground">Active directory records</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-4 transition-all hover:border-primary/50 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Students</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <GraduationCap className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-foreground">{userStats.students}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">Enrolled researchers</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-4 transition-all hover:border-primary/50 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Faculty</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <UserCheck className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-foreground">{userStats.faculty}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-indigo-600 dark:text-indigo-400">Academic advisors</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-4 transition-all hover:border-primary/50 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Admins</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-foreground">{userStats.admins}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-purple-600 dark:text-purple-400">System governance</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-amber-500/30 bg-amber-500/5 p-4 transition-all shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-amber-700 dark:text-amber-300">Pending Approvals</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-500/20 text-amber-600">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-amber-700 dark:text-amber-300">{userStats.pendingFaculty}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" /> Action required
+                  </p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-destructive/30 bg-destructive/5 p-4 transition-all shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-destructive">Suspended Users</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-destructive/20 text-destructive">
+                    <Ban className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-destructive">{userStats.suspended}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-destructive">Access restricted</p>
+                </div>
+              </Card>
+            </div>
+
+            {/* Main User Directory Card */}
             <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">User Management</h2>
-                  <p className="text-xs text-muted-foreground mt-1">Directory of students, faculty advisors, and system administrators.</p>
+                  <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    Enterprise User Directory
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Manage students, faculty advisors, and system administrators with role governance and soft-delete protection.
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
+                  {/* Search Input */}
                   <div className="relative w-full sm:w-64">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search name, email, institution…" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} className="pl-9 rounded-xl text-xs" />
+                    <Input
+                      placeholder="Search name, email, department…"
+                      value={userSearch}
+                      onChange={(e) => {
+                        setUserSearch(e.target.value);
+                        setUserPage(1);
+                      }}
+                      className="pl-9 pr-8 rounded-xl text-xs"
+                    />
+                    {userSearch && (
+                      <button
+                        onClick={() => setUserSearch("")}
+                        className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground text-xs"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
 
-                  <Select value={userRoleFilter} onValueChange={setUserRoleFilter}>
+                  {/* Role Filter */}
+                  <Select value={userRoleFilter} onValueChange={(v) => { setUserRoleFilter(v); setUserPage(1); }}>
                     <SelectTrigger className="w-32 rounded-xl text-xs">
                       <SelectValue placeholder="Role" />
                     </SelectTrigger>
@@ -1004,8 +1201,9 @@ function AdminPage() {
                     </SelectContent>
                   </Select>
 
-                  <Select value={userStatusFilter} onValueChange={setUserStatusFilter}>
-                    <SelectTrigger className="w-32 rounded-xl text-xs">
+                  {/* Status Filter */}
+                  <Select value={userStatusFilter} onValueChange={(v) => { setUserStatusFilter(v); setUserPage(1); }}>
+                    <SelectTrigger className="w-36 rounded-xl text-xs">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1014,8 +1212,41 @@ function AdminPage() {
                       <SelectItem value="Pending">Pending</SelectItem>
                       <SelectItem value="Suspended">Suspended</SelectItem>
                       <SelectItem value="Rejected">Rejected</SelectItem>
+                      <SelectItem value="Deleted">Deleted</SelectItem>
                     </SelectContent>
                   </Select>
+
+                  {/* Show Deleted Users Switch */}
+                  <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs">
+                    <Switch
+                      id="show-deleted"
+                      checked={showDeletedUsers}
+                      onCheckedChange={(checked) => {
+                        setShowDeletedUsers(checked);
+                        setUserPage(1);
+                      }}
+                    />
+                    <Label htmlFor="show-deleted" className="text-xs cursor-pointer text-muted-foreground font-normal">
+                      Show Deleted Users
+                    </Label>
+                  </div>
+
+                  {/* Refresh Button & Timestamp */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchAdminData(true)}
+                      disabled={isRefreshing}
+                      className="rounded-xl text-xs gap-1.5"
+                    >
+                      <RotateCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-primary" : ""}`} />
+                      Refresh
+                    </Button>
+                    <span className="hidden sm:inline text-[0.7rem] text-muted-foreground whitespace-nowrap">
+                      Updated: {lastUpdatedTime}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -1024,79 +1255,203 @@ function AdminPage() {
                 <Table>
                   <TableHeader className="bg-muted/40">
                     <TableRow>
-                      <TableHead className="text-xs font-semibold">User Details</TableHead>
+                      <TableHead className="text-xs font-semibold">User Profile</TableHead>
                       <TableHead className="text-xs font-semibold">Role</TableHead>
-                      <TableHead className="text-xs font-semibold">Status</TableHead>
-                      <TableHead className="text-xs font-semibold">Institution / Dept</TableHead>
-                      <TableHead className="text-xs font-semibold">Joined</TableHead>
+                      <TableHead className="text-xs font-semibold">Account Status</TableHead>
+                      <TableHead className="text-xs font-semibold">Department / Designation</TableHead>
+                      <TableHead className="text-xs font-semibold">Registration Date</TableHead>
                       <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedUsers.length === 0 ? (
+                    {loading ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">No users found matching query.</TableCell>
+                        <TableCell colSpan={6} className="text-center py-12 text-xs text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <RotateCw className="h-6 w-6 animate-spin text-primary" />
+                            <span>Loading user directory from MongoDB…</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : paginatedUsers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-12 text-xs text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center gap-2 max-w-sm mx-auto">
+                            <User className="h-8 w-8 text-muted-foreground/50" />
+                            <p className="font-semibold text-foreground">No matching users found</p>
+                            <p className="text-[0.75rem] text-muted-foreground">
+                              Try adjusting search query, clearing role/status filters, or enabling "Show Deleted Users".
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2 rounded-xl text-xs"
+                              onClick={() => {
+                                setUserSearch("");
+                                setUserRoleFilter("All");
+                                setUserStatusFilter("All");
+                                setShowDeletedUsers(false);
+                              }}
+                            >
+                              Clear All Filters
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ) : (
-                      paginatedUsers.map((u) => (
-                        <TableRow key={u.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8 border border-border">
-                                <AvatarFallback className="text-xs font-bold bg-primary/10 text-primary">
-                                  {u.name.slice(0, 2).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div className="flex flex-col">
-                                <span className="text-xs font-semibold text-foreground">{u.name}</span>
-                                <span className="text-[0.7rem] text-muted-foreground">{u.email}</span>
+                      paginatedUsers.map((u) => {
+                        const isAdmin = u.role === "admin" || u.email === session?.email;
+                        const isFaculty = u.role === "faculty";
+                        const isDeleted = u.status === "Deleted";
+
+                        return (
+                          <TableRow
+                            key={u.id || u._id}
+                            className={`transition-colors hover:bg-muted/50 ${isDeleted ? "bg-muted/20 opacity-70" : ""}`}
+                          >
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                <Avatar className="h-9 w-9 border border-border shadow-xs">
+                                  <AvatarImage src={u.displayName || ""} alt={u.name} />
+                                  <AvatarFallback className={`text-xs font-bold ${u.role === "admin" ? "bg-purple-500/15 text-purple-600 dark:text-purple-400" : isFaculty ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"}`}>
+                                    {u.name ? u.name.slice(0, 2).toUpperCase() : "US"}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-xs font-semibold text-foreground truncate flex items-center gap-1.5">
+                                    {u.name || u.displayName || "Scholar User"}
+                                    {isAdmin && <span title="Administrator Account"><ShieldCheck className="h-3.5 w-3.5 text-purple-500 shrink-0" /></span>}
+                                  </span>
+                                  <span className="text-[0.7rem] text-muted-foreground truncate">{u.email}</span>
+                                </div>
                               </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={`capitalize text-[0.68rem] px-2 py-0.5 ${u.role === "admin" ? "border-purple-500/40 text-purple-500 bg-purple-500/10" : u.role === "faculty" ? "border-blue-500/40 text-blue-500 bg-blue-500/10" : "border-emerald-500/40 text-emerald-500 bg-emerald-500/10"}`}>
-                              {u.role}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={`text-[0.68rem] px-2 py-0.5 ${u.status === "Active" ? "border-emerald-500/40 text-emerald-500 bg-emerald-500/10" : u.status === "Pending" ? "border-amber-500/40 text-amber-500 bg-amber-500/10" : u.status === "Suspended" ? "border-destructive/40 text-destructive bg-destructive/10" : "border-gray-500/40 text-gray-500"}`}>
-                              {u.status || "Active"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{u.affiliation || u.department || "ScholarNexus Institute"}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(u.createdAt).toLocaleDateString()}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => { setSelectedUser(u); setViewUserModalOpen(true); }} title="View Profile">
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => handleOpenEditUser(u)} title="Edit User">
-                                <Edit3 className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className={`h-7 w-7 ${u.status === "Suspended" ? "text-emerald-500" : "text-amber-500"}`} onClick={() => handleToggleSuspendUser(u)} title={u.status === "Suspended" ? "Activate User" : "Suspend User"}>
-                                {u.status === "Suspended" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => { setSelectedUser(u); setDeleteUserModalOpen(true); }} title="Delete User">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                            </TableCell>
+
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={`capitalize text-[0.68rem] px-2.5 py-0.5 rounded-full font-medium ${
+                                  u.role === "admin"
+                                    ? "border-purple-500/40 text-purple-600 bg-purple-500/10 dark:text-purple-400"
+                                    : u.role === "faculty"
+                                    ? "border-indigo-500/40 text-indigo-600 bg-indigo-500/10 dark:text-indigo-400"
+                                    : "border-emerald-500/40 text-emerald-600 bg-emerald-500/10 dark:text-emerald-400"
+                                }`}
+                              >
+                                {u.role}
+                              </Badge>
+                            </TableCell>
+
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={`text-[0.68rem] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5 w-fit ${
+                                  u.status === "Active"
+                                    ? "border-emerald-500/40 text-emerald-600 bg-emerald-500/10 dark:text-emerald-400"
+                                    : u.status === "Pending"
+                                    ? "border-amber-500/40 text-amber-600 bg-amber-500/10 dark:text-amber-400"
+                                    : u.status === "Suspended"
+                                    ? "border-destructive/40 text-destructive bg-destructive/10"
+                                    : u.status === "Rejected"
+                                    ? "border-rose-500/40 text-rose-500 bg-rose-500/10"
+                                    : "border-slate-500/40 text-slate-500 bg-slate-500/10"
+                                }`}
+                              >
+                                <span
+                                  className={`h-1.5 w-1.5 rounded-full ${
+                                    u.status === "Active"
+                                      ? "bg-emerald-500"
+                                      : u.status === "Pending"
+                                      ? "bg-amber-500 animate-pulse"
+                                      : u.status === "Suspended"
+                                      ? "bg-destructive"
+                                      : u.status === "Rejected"
+                                      ? "bg-rose-500"
+                                      : "bg-slate-400"
+                                  }`}
+                                />
+                                {u.status || "Active"}
+                              </Badge>
+                            </TableCell>
+
+                            <TableCell className="text-xs text-muted-foreground">
+                              <div className="flex flex-col">
+                                <span className="text-foreground font-medium truncate">{u.department || u.affiliation || "ScholarNexus Partner"}</span>
+                                <span className="text-[0.7rem] text-muted-foreground truncate">{u.designation || (u.role === "student" ? "Undergraduate Student" : u.role === "faculty" ? "Faculty Advisor" : "System Administrator")}</span>
+                              </div>
+                            </TableCell>
+
+                            <TableCell className="text-xs text-muted-foreground">
+                              {new Date(u.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                            </TableCell>
+
+                            <TableCell className="text-right">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg">
+                                    <MoreVertical className="h-4 w-4" />
+                                    <span className="sr-only">Open options</span>
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48 rounded-xl text-xs">
+                                  <DropdownMenuLabel className="text-[0.7rem] text-muted-foreground">Actions</DropdownMenuLabel>
+                                  <DropdownMenuItem onClick={() => handleViewProfile(u)} className="cursor-pointer gap-2">
+                                    <Eye className="h-3.5 w-3.5 text-primary" /> View Profile
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleOpenEditUser(u)} disabled={isDeleted} className="cursor-pointer gap-2">
+                                    <Edit3 className="h-3.5 w-3.5 text-blue-500" /> Edit User
+                                  </DropdownMenuItem>
+
+                                  {isFaculty && u.status !== "Active" && (
+                                    <DropdownMenuItem onClick={() => handleOpenConfirmModal(u, "approve")} className="cursor-pointer gap-2 text-emerald-600">
+                                      <CheckCircle2 className="h-3.5 w-3.5" /> Approve Faculty
+                                    </DropdownMenuItem>
+                                  )}
+
+                                  {isFaculty && u.status !== "Rejected" && (
+                                    <DropdownMenuItem onClick={() => handleOpenConfirmModal(u, "reject")} className="cursor-pointer gap-2 text-rose-500">
+                                      <XCircle className="h-3.5 w-3.5" /> Reject Faculty
+                                    </DropdownMenuItem>
+                                  )}
+
+                                  <DropdownMenuSeparator />
+
+                                  <DropdownMenuItem
+                                    onClick={() => handleOpenConfirmModal(u, u.status === "Suspended" ? "activate" : "suspend")}
+                                    disabled={isAdmin || isDeleted}
+                                    className="cursor-pointer gap-2"
+                                  >
+                                    <Ban className={`h-3.5 w-3.5 ${u.status === "Suspended" ? "text-emerald-500" : "text-amber-500"}`} />
+                                    {u.status === "Suspended" ? "Activate Account" : "Suspend User"}
+                                  </DropdownMenuItem>
+
+                                  <DropdownMenuItem
+                                    onClick={() => handleOpenConfirmModal(u, "delete")}
+                                    disabled={isAdmin || isDeleted}
+                                    className="cursor-pointer gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" /> Delete User (Soft)
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
                     )}
                   </TableBody>
                 </Table>
               </div>
 
               {/* Pagination */}
-              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground">
                 <span>Showing {paginatedUsers.length} of {filteredUsers.length} users</span>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" className="h-8 rounded-lg" disabled={userPage === 1} onClick={() => setUserPage((p) => Math.max(1, p - 1))}>
+                  <Button variant="outline" size="sm" className="h-8 rounded-lg text-xs" disabled={userPage === 1} onClick={() => setUserPage((p) => Math.max(1, p - 1))}>
                     <ChevronLeft className="h-3.5 w-3.5" /> Prev
                   </Button>
                   <span>Page {userPage} of {totalUserPages}</span>
-                  <Button variant="outline" size="sm" className="h-8 rounded-lg" disabled={userPage >= totalUserPages} onClick={() => setUserPage((p) => p + 1)}>
+                  <Button variant="outline" size="sm" className="h-8 rounded-lg text-xs" disabled={userPage >= totalUserPages} onClick={() => setUserPage((p) => p + 1)}>
                     Next <ChevronRight className="h-3.5 w-3.5" />
                   </Button>
                 </div>
@@ -1605,17 +1960,22 @@ function AdminPage() {
               <p className="text-xs text-muted-foreground mt-1">Configure profile details, security preferences, and system thresholds.</p>
 
               <div className="mt-6 space-y-8 max-w-3xl">
-                {/* Admin Profile Form */}
+                {/* System Admin Identity Card (Non-editable) */}
                 <div className="space-y-4">
-                  <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">Administrator Profile</h3>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Full Name</Label>
-                      <Input value={adminProfile.name} onChange={(e) => setAdminProfile({ ...adminProfile, name: e.target.value })} className="rounded-xl text-xs" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Admin Email</Label>
-                      <Input value={adminProfile.email} onChange={(e) => setAdminProfile({ ...adminProfile, email: e.target.value })} className="rounded-xl text-xs" />
+                  <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">System Administrator Governance Identity</h3>
+                  <div className="flex items-center gap-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                    <Avatar className="h-12 w-12 border border-primary/30">
+                      <AvatarFallback className="font-bold bg-primary text-primary-foreground">SA</AvatarFallback>
+                    </Avatar>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-foreground">ScholarNexus System Administrator</span>
+                        <Badge className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[0.65rem] font-bold">
+                          Sole Admin Account
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground font-mono">scholarnexusadmin@gmail.com</p>
+                      <p className="text-[0.7rem] text-muted-foreground">Full system governance, user moderation, faculty approvals, and data security authorization.</p>
                     </div>
                   </div>
                 </div>
@@ -1687,71 +2047,371 @@ function AdminPage() {
         )}
       </div>
 
-      {/* ── Dialog Modals ── */}
-
-      {/* View User Profile Modal */}
-      <Dialog open={viewUserModalOpen} onOpenChange={setViewUserModalOpen}>
-        <DialogContent className="rounded-3xl max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold">User Profile Details</DialogTitle>
-            <DialogDescription className="text-xs">Complete account metadata and research attributes.</DialogDescription>
-          </DialogHeader>
-          {selectedUser && (
-            <div className="space-y-4 py-2 text-xs">
+      {/* ── Enterprise User Profile Side Drawer ── */}
+      <Sheet open={viewProfileDrawerOpen} onOpenChange={setViewProfileDrawerOpen}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto rounded-l-3xl p-6 border-l border-border bg-card shadow-2xl">
+          <SheetHeader className="pb-4 border-b border-border">
+            <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
-                <Avatar className="h-12 w-12 border border-border">
-                  <AvatarFallback className="font-bold bg-primary/10 text-primary">{selectedUser.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <Avatar className="h-14 w-14 border-2 border-primary/20 shadow-md">
+                  <AvatarImage src={selectedUser?.displayName || ""} alt={selectedUser?.name} />
+                  <AvatarFallback className="font-bold text-lg bg-primary/10 text-primary">
+                    {selectedUser?.name ? selectedUser.name.slice(0, 2).toUpperCase() : "US"}
+                  </AvatarFallback>
                 </Avatar>
                 <div>
-                  <h4 className="font-bold text-sm text-foreground">{selectedUser.name}</h4>
-                  <p className="text-muted-foreground">{selectedUser.email}</p>
+                  <SheetTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+                    {selectedUser?.name || selectedUser?.displayName}
+                    {(selectedUser?.role === "admin" || selectedUser?.email === session?.email) && (
+                      <span title="Administrator Account"><ShieldCheck className="h-4 w-4 text-purple-500" /></span>
+                    )}
+                  </SheetTitle>
+                  <SheetDescription className="text-xs text-muted-foreground">{selectedUser?.email}</SheetDescription>
                 </div>
               </div>
-              <div className="space-y-2 border-t border-border pt-3">
-                <div className="flex justify-between"><span className="text-muted-foreground">Role:</span><Badge variant="outline" className="capitalize text-[0.65rem]">{selectedUser.role}</Badge></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><Badge variant="outline" className="text-[0.65rem]">{selectedUser.status || "Active"}</Badge></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Institution:</span><span className="font-medium text-foreground">{selectedUser.affiliation || "N/A"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Department:</span><span className="font-medium text-foreground">{selectedUser.department || "N/A"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Joined:</span><span className="font-medium text-foreground">{new Date(selectedUser.createdAt).toLocaleDateString()}</span></div>
-              </div>
-              {selectedUser.bio && (
-                <div className="border-t border-border pt-3 space-y-1">
-                  <span className="font-semibold text-foreground">Biography</span>
-                  <p className="text-muted-foreground leading-relaxed">{selectedUser.bio}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
-      {/* Edit User Modal */}
-      <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
-        <DialogContent className="rounded-3xl max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold">Edit User Account</DialogTitle>
-            <DialogDescription className="text-xs">Update role, account status, and institution info.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2 text-xs">
-            <div className="space-y-1">
-              <Label className="text-xs">Full Name</Label>
-              <Input value={editUserData.name} onChange={(e) => setEditUserData({ ...editUserData, name: e.target.value })} className="rounded-xl text-xs" />
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={`capitalize text-xs px-2.5 py-0.5 rounded-full ${
+                    selectedUser?.role === "admin"
+                      ? "border-purple-500/40 text-purple-500 bg-purple-500/10"
+                      : selectedUser?.role === "faculty"
+                      ? "border-indigo-500/40 text-indigo-500 bg-indigo-500/10"
+                      : "border-emerald-500/40 text-emerald-500 bg-emerald-500/10"
+                  }`}
+                >
+                  {selectedUser?.role}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={`text-xs px-2.5 py-0.5 rounded-full ${
+                    selectedUser?.status === "Active"
+                      ? "border-emerald-500/40 text-emerald-500 bg-emerald-500/10"
+                      : selectedUser?.status === "Pending"
+                      ? "border-amber-500/40 text-amber-500 bg-amber-500/10"
+                      : selectedUser?.status === "Suspended"
+                      ? "border-destructive/40 text-destructive bg-destructive/10"
+                      : "border-slate-500/40 text-slate-500 bg-slate-500/10"
+                  }`}
+                >
+                  {selectedUser?.status || "Active"}
+                </Badge>
+              </div>
             </div>
+          </SheetHeader>
+
+          {loadingProfileDetails ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground text-xs">
+              <RotateCw className="h-6 w-6 animate-spin text-primary" />
+              <span>Fetching user profile, research stats & activity timeline…</span>
+            </div>
+          ) : (
+            <Tabs defaultValue="profile" className="mt-6">
+              <TabsList className="grid grid-cols-4 rounded-xl border border-border bg-background p-1 text-xs">
+                <TabsTrigger value="profile" className="rounded-lg text-xs">Profile</TabsTrigger>
+                <TabsTrigger value="academic" className="rounded-lg text-xs">Academic</TabsTrigger>
+                <TabsTrigger value="research" className="rounded-lg text-xs">Research</TabsTrigger>
+                <TabsTrigger value="timeline" className="rounded-lg text-xs">Timeline</TabsTrigger>
+              </TabsList>
+
+              {/* Profile Tab */}
+              <TabsContent value="profile" className="mt-4 space-y-4 text-xs">
+                <div className="rounded-2xl border border-border bg-background p-4 space-y-3">
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><User className="h-3.5 w-3.5 text-primary" /> Full Name</span>
+                    <span className="font-semibold text-foreground">{selectedUser?.name || "N/A"}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><Mail className="h-3.5 w-3.5 text-blue-500" /> Email</span>
+                    <div className="flex items-center gap-1.5 font-medium text-foreground">
+                      <span>{selectedUser?.email}</span>
+                      <button
+                        onClick={() => {
+                          if (selectedUser?.email) {
+                            navigator.clipboard.writeText(selectedUser.email);
+                            toast.success("Email copied to clipboard.");
+                          }
+                        }}
+                        className="text-muted-foreground hover:text-primary"
+                        title="Copy Email"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-500" /> Phone Number</span>
+                    <span className="font-medium text-foreground">{selectedUser?.phone || "+1 (555) 234-5678"}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><Building className="h-3.5 w-3.5 text-indigo-500" /> Department</span>
+                    <span className="font-medium text-foreground">{selectedUser?.department || selectedUser?.affiliation || "Computer Science & AI"}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><GraduationCap className="h-3.5 w-3.5 text-amber-500" /> Designation</span>
+                    <span className="font-medium text-foreground">{selectedUser?.designation || (selectedUser?.role === "student" ? "Research Scholar" : selectedUser?.role === "faculty" ? "Associate Professor" : "Lead System Admin")}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><Shield className="h-3.5 w-3.5 text-purple-500" /> Role Governance</span>
+                    <span className="font-semibold capitalize text-foreground">{selectedUser?.role}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-border/50">
+                    <span className="text-muted-foreground flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-slate-500" /> Registration Date</span>
+                    <span className="font-medium text-foreground">{selectedUser?.createdAt ? new Date(selectedUser.createdAt).toLocaleDateString() : "N/A"}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1">
+                    <span className="text-muted-foreground flex items-center gap-2"><Clock className="h-3.5 w-3.5 text-emerald-500" /> Last Login</span>
+                    <span className="font-medium text-foreground">{selectedUser?.lastLogin ? new Date(selectedUser.lastLogin).toLocaleString() : "Active today"}</span>
+                  </div>
+                </div>
+
+                {selectedUser?.bio && (
+                  <div className="rounded-2xl border border-border bg-background p-4 space-y-1">
+                    <span className="font-semibold text-foreground">Biography</span>
+                    <p className="text-muted-foreground leading-relaxed">{selectedUser.bio}</p>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* Academic Tab */}
+              <TabsContent value="academic" className="mt-4 space-y-4 text-xs">
+                {selectedUser?.role === "student" && (
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Assigned Faculty</span>
+                        <p className="font-semibold text-foreground text-xs mt-1">{profileDetailsData?.academicInfo?.assignedFaculty || "Prof. Dr. Harrison"}</p>
+                      </Card>
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Total Projects</span>
+                        <p className="text-lg font-bold text-primary mt-0.5">{profileDetailsData?.academicInfo?.totalProjects ?? 0}</p>
+                      </Card>
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Active Projects</span>
+                        <p className="text-lg font-bold text-emerald-500 mt-0.5">{profileDetailsData?.academicInfo?.activeProjects ?? 0}</p>
+                      </Card>
+                    </div>
+
+                    <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                      <h4 className="font-semibold text-foreground flex items-center gap-2"><FolderKanban className="h-4 w-4 text-primary" /> Recent Student Projects</h4>
+                      {profileDetailsData?.projects?.length === 0 ? (
+                        <p className="text-muted-foreground py-2">No projects assigned yet.</p>
+                      ) : (
+                        profileDetailsData?.projects?.map((p: any) => (
+                          <div key={p.id} className="flex justify-between items-center p-2 rounded-xl bg-card border border-border text-xs">
+                            <span className="font-medium text-foreground truncate max-w-xs">{p.title}</span>
+                            <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary">{p.status}</Badge>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selectedUser?.role === "faculty" && (
+                  <div className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Approval Status</span>
+                        <Badge variant="outline" className="mt-1 text-[0.65rem] border-emerald-500/40 text-emerald-500 mx-auto block w-fit">{selectedUser.status || "Approved"}</Badge>
+                      </Card>
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Assigned Students</span>
+                        <p className="text-lg font-bold text-indigo-500 mt-0.5">{profileDetailsData?.academicInfo?.assignedStudents?.length ?? 2}</p>
+                      </Card>
+                      <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                        <span className="text-[0.7rem] text-muted-foreground">Supervised Projects</span>
+                        <p className="text-lg font-bold text-emerald-500 mt-0.5">{profileDetailsData?.academicInfo?.totalProjects ?? 0}</p>
+                      </Card>
+                    </div>
+
+                    <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                      <h4 className="font-semibold text-foreground flex items-center gap-2"><BookOpen className="h-4 w-4 text-indigo-500" /> Research Interests</h4>
+                      <p className="text-muted-foreground leading-relaxed">{selectedUser?.researchInterests || "Deep Learning Models, High-Performance Computing, Graph Neural Networks."}</p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedUser?.role === "admin" && (
+                  <div className="rounded-2xl border border-border bg-background p-4 space-y-3">
+                    <div className="flex justify-between"><span className="text-muted-foreground">System Privilege Level:</span><Badge variant="outline" className="border-purple-500/40 text-purple-500">Super Administrator</Badge></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Account Created:</span><span className="font-medium text-foreground">{new Date(selectedUser.createdAt).toLocaleDateString()}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Security Clearance:</span><span className="font-medium text-emerald-500">Level 5 (Full Database Read/Write)</span></div>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* Research Summary Tab */}
+              <TabsContent value="research" className="mt-4 space-y-4 text-xs">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                    <span className="text-[0.7rem] text-muted-foreground">Projects</span>
+                    <p className="text-xl font-bold text-primary mt-1">{profileDetailsData?.researchSummary?.totalProjects ?? 0}</p>
+                  </Card>
+                  <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                    <span className="text-[0.7rem] text-muted-foreground">Papers</span>
+                    <p className="text-xl font-bold text-purple-500 mt-1">{profileDetailsData?.researchSummary?.papersUploaded ?? 0}</p>
+                  </Card>
+                  <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                    <span className="text-[0.7rem] text-muted-foreground">Tasks</span>
+                    <p className="text-xl font-bold text-emerald-500 mt-1">{profileDetailsData?.researchSummary?.tasksCompleted ?? 0}</p>
+                  </Card>
+                  <Card className="p-3 rounded-2xl border-border bg-background text-center">
+                    <span className="text-[0.7rem] text-muted-foreground">Notes</span>
+                    <p className="text-xl font-bold text-amber-500 mt-1">{profileDetailsData?.researchSummary?.notesCreated ?? 0}</p>
+                  </Card>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                  <h4 className="font-semibold text-foreground flex items-center gap-2"><FileCheck className="h-4 w-4 text-purple-500" /> Uploaded Manuscripts</h4>
+                  {profileDetailsData?.papers?.length === 0 ? (
+                    <p className="text-muted-foreground py-2">No papers uploaded to repository yet.</p>
+                  ) : (
+                    profileDetailsData?.papers?.map((paper: any) => (
+                      <div key={paper.id} className="p-2.5 rounded-xl bg-card border border-border space-y-1">
+                        <span className="font-semibold text-foreground block">{paper.title}</span>
+                        <p className="text-[0.7rem] text-muted-foreground">Authors: {paper.authors}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* Activity Timeline Tab */}
+              <TabsContent value="timeline" className="mt-4 space-y-4 text-xs">
+                <div className="rounded-2xl border border-border bg-background p-4 space-y-4">
+                  <h4 className="font-semibold text-foreground flex items-center gap-2"><History className="h-4 w-4 text-primary" /> Chronological User Activity</h4>
+                  <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
+                    {profileDetailsData?.activityTimeline?.length === 0 ? (
+                      <div className="relative flex items-center gap-3 pl-8">
+                        <div className="absolute left-1.5 h-3.5 w-3.5 rounded-full bg-primary" />
+                        <div>
+                          <p className="font-medium text-foreground">User Registration</p>
+                          <p className="text-[0.7rem] text-muted-foreground">Account created on {selectedUser?.createdAt ? new Date(selectedUser.createdAt).toLocaleDateString() : "ScholarNexus AI"}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      profileDetailsData?.activityTimeline?.map((act: any) => (
+                        <div key={act.id} className="relative flex items-start gap-3 pl-8">
+                          <div className="absolute left-1.5 top-1 h-3.5 w-3.5 rounded-full bg-primary border-2 border-background" />
+                          <div>
+                            <p className="font-medium text-foreground">{act.description}</p>
+                            <p className="text-[0.7rem] text-muted-foreground">{new Date(act.timestamp).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Enterprise Edit User Modal ── */}
+      <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+        <DialogContent className="rounded-3xl max-w-md bg-card p-6 border border-border shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Edit3 className="h-5 w-5 text-primary" />
+              Edit User Account
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Modify user department, designation, role, and account status.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            {/* Read Only Name */}
             <div className="space-y-1">
-              <Label className="text-xs">Role</Label>
-              <Select value={editUserData.role} onValueChange={(v) => setEditUserData({ ...editUserData, role: v })}>
-                <SelectTrigger className="rounded-xl text-xs"><SelectValue /></SelectTrigger>
+              <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                <Lock className="h-3 w-3" /> Full Name (Read-Only)
+              </Label>
+              <Input
+                value={editUserData.name}
+                disabled
+                readOnly
+                className="rounded-xl text-xs bg-muted text-muted-foreground cursor-not-allowed border-border"
+              />
+            </div>
+
+            {/* Read Only Email */}
+            <div className="space-y-1">
+              <Label className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                <Lock className="h-3 w-3" /> Email Address (Read-Only)
+              </Label>
+              <Input
+                value={editUserData.email}
+                disabled
+                readOnly
+                className="rounded-xl text-xs bg-muted text-muted-foreground cursor-not-allowed border-border"
+              />
+            </div>
+
+            {/* Department */}
+            <div className="space-y-1">
+              <Label className="text-xs">Department</Label>
+              <Input
+                placeholder="e.g. Computer Science & AI"
+                value={editUserData.department}
+                onChange={(e) => setEditUserData({ ...editUserData, department: e.target.value })}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            {/* Designation */}
+            <div className="space-y-1">
+              <Label className="text-xs">Designation / Title</Label>
+              <Input
+                placeholder="e.g. Research Scholar / Assoc. Professor"
+                value={editUserData.designation}
+                onChange={(e) => setEditUserData({ ...editUserData, designation: e.target.value })}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            {/* Phone */}
+            <div className="space-y-1">
+              <Label className="text-xs">Phone Number</Label>
+              <Input
+                placeholder="e.g. +1 (555) 019-2834"
+                value={editUserData.phone}
+                onChange={(e) => setEditUserData({ ...editUserData, phone: e.target.value })}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            {/* Role */}
+            <div className="space-y-1">
+              <Label className="text-xs">Role Governance</Label>
+              <Select
+                value={editUserData.role}
+                onValueChange={(v) => setEditUserData({ ...editUserData, role: v })}
+                disabled={editUserData.role === "admin"}
+              >
+                <SelectTrigger className="rounded-xl text-xs">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="student">Student</SelectItem>
                   <SelectItem value="faculty">Faculty</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  {editUserData.role === "admin" && <SelectItem value="admin">Admin</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Status */}
             <div className="space-y-1">
               <Label className="text-xs">Account Status</Label>
-              <Select value={editUserData.status} onValueChange={(v) => setEditUserData({ ...editUserData, status: v })}>
-                <SelectTrigger className="rounded-xl text-xs"><SelectValue /></SelectTrigger>
+              <Select
+                value={editUserData.status}
+                onValueChange={(v) => setEditUserData({ ...editUserData, status: v })}
+              >
+                <SelectTrigger className="rounded-xl text-xs">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Active">Active</SelectItem>
                   <SelectItem value="Pending">Pending</SelectItem>
@@ -1760,31 +2420,82 @@ function AdminPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Institution / Affiliation</Label>
-              <Input value={editUserData.affiliation} onChange={(e) => setEditUserData({ ...editUserData, affiliation: e.target.value })} className="rounded-xl text-xs" />
-            </div>
           </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setEditUserModalOpen(false)} className="rounded-xl text-xs">Cancel</Button>
-            <Button onClick={handleSaveUser} className="rounded-xl gradient-brand text-primary-foreground text-xs">Save Changes</Button>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setEditUserModalOpen(false)} className="rounded-xl text-xs">
+              Cancel
+            </Button>
+            <Button onClick={handleSaveUser} className="rounded-xl gradient-brand text-primary-foreground text-xs shadow-md">
+              Save Changes
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Modal */}
-      <Dialog open={deleteUserModalOpen} onOpenChange={setDeleteUserModalOpen}>
-        <DialogContent className="rounded-3xl max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-destructive">Confirm User Deletion</DialogTitle>
-            <DialogDescription className="text-xs">Are you sure you want to permanently delete user account <span className="font-semibold text-foreground">{selectedUser?.email}</span>? This action cannot be undone.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteUserModalOpen(false)} className="rounded-xl text-xs">Cancel</Button>
-            <Button variant="destructive" onClick={handleDeleteUser} className="rounded-xl text-xs">Delete User</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Enterprise Action Confirmation Dialog ── */}
+      <AlertDialog open={confirmModalOpen} onOpenChange={setConfirmModalOpen}>
+        <AlertDialogContent className="rounded-3xl max-w-md bg-card p-6 border border-border shadow-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-lg font-bold flex items-center gap-2">
+              {confirmAction === "delete" ? (
+                <span className="text-destructive flex items-center gap-2"><Trash2 className="h-5 w-5" /> Soft Delete User</span>
+              ) : confirmAction === "suspend" ? (
+                <span className="text-amber-500 flex items-center gap-2"><Ban className="h-5 w-5" /> Suspend User Account</span>
+              ) : confirmAction === "activate" ? (
+                <span className="text-emerald-500 flex items-center gap-2"><CheckCircle2 className="h-5 w-5" /> Activate User Account</span>
+              ) : (
+                <span className="text-primary flex items-center gap-2"><UserCheck className="h-5 w-5" /> Process Faculty Request</span>
+              )}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs text-muted-foreground leading-relaxed">
+              {confirmAction === "delete" && (
+                <>Are you sure you want to deactivate user account <span className="font-bold text-foreground">{confirmTargetUser?.email}</span>? The account will be marked as Soft Deleted and login will be blocked. All relational research data will be preserved.</>
+              )}
+              {confirmAction === "suspend" && (
+                <>Are you sure you want to suspend account access for <span className="font-bold text-foreground">{confirmTargetUser?.email}</span>? The user will be unable to log in until reactivated.</>
+              )}
+              {confirmAction === "activate" && (
+                <>Re-activate user account access for <span className="font-bold text-foreground">{confirmTargetUser?.email}</span>?</>
+              )}
+              {confirmAction === "approve" && (
+                <>Approve faculty privileges for <span className="font-bold text-foreground">{confirmTargetUser?.name}</span> ({confirmTargetUser?.email})?</>
+              )}
+              {confirmAction === "reject" && (
+                <>Reject faculty application for <span className="font-bold text-foreground">{confirmTargetUser?.name}</span> ({confirmTargetUser?.email})?</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {confirmAction === "reject" && (
+            <div className="space-y-1.5 py-2">
+              <Label className="text-xs">Rejection Reason (Optional)</Label>
+              <Textarea
+                placeholder="Reason for rejecting faculty application..."
+                value={confirmReason}
+                onChange={(e) => setConfirmReason(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+          )}
+
+          <AlertDialogFooter className="gap-2 pt-2">
+            <AlertDialogCancel className="rounded-xl text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleExecuteConfirmedAction}
+              className={`rounded-xl text-xs text-white ${
+                confirmAction === "delete" || confirmAction === "reject"
+                  ? "bg-destructive hover:bg-destructive/90"
+                  : confirmAction === "suspend"
+                  ? "bg-amber-600 hover:bg-amber-700"
+                  : "bg-emerald-600 hover:bg-emerald-700"
+              }`}
+            >
+              Confirm {confirmAction === "delete" ? "Soft Delete" : confirmAction === "suspend" ? "Suspension" : confirmAction === "activate" ? "Activation" : confirmAction === "approve" ? "Approval" : "Rejection"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Faculty Approval Process Modal */}
       <Dialog open={approvalModalOpen} onOpenChange={setApprovalModalOpen}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Sparkles, Megaphone, ArrowRight, Pin } from "lucide-react";
+import { Bell, Sparkles, Megaphone, ArrowRight, Pin, RefreshCcw } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getUserSession, getUserInitials } from "@/lib/session";
+import { toast } from "sonner";
 
 const titles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -56,6 +57,18 @@ export function TopNav() {
   const title = titles[pathname] ?? "Dashboard";
   const [user, setUser] = useState(() => getUserSession());
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncData = () => {
+    setIsSyncing(true);
+    toast.success("Syncing workspace data...");
+    window.dispatchEvent(new Event("scholarnexus-session-updated"));
+    setTimeout(() => {
+      setIsSyncing(false);
+      toast.success("Workspace synced successfully.");
+    }, 600);
+  };
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -120,6 +133,19 @@ export function TopNav() {
           <Sparkles className="h-3 w-3" />
           AI online
         </Badge>
+
+        {/* Sync Data Button */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSyncData}
+          disabled={isSyncing}
+          className="h-8 rounded-xl text-xs font-semibold gap-1.5 border-border bg-card hover:bg-accent"
+          title="Sync workspace data"
+        >
+          <RefreshCcw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
+          <span className="hidden sm:inline">Sync Data</span>
+        </Button>
 
         <ThemeToggle />
 
@@ -197,11 +223,9 @@ export function TopNav() {
           </PopoverContent>
         </Popover>
 
-        {/* Top Right Profile Display (NAME ONLY) */}
-        <Link
-          to="/profile"
-          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 transition-colors hover:bg-accent/40"
-          title="View Profile"
+        {/* Top Right Profile Display (Non-clickable) */}
+        <div
+          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 select-none"
         >
           <Avatar className="h-7 w-7 border border-border">
             {userPhoto ? (
@@ -214,7 +238,7 @@ export function TopNav() {
           <span suppressHydrationWarning className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
             {userName}
           </span>
-        </Link>
+        </div>
       </div>
     </header>
   );

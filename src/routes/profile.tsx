@@ -58,6 +58,10 @@ function UserProfilePage() {
       setIsLoading(false);
       return;
     }
+    if (session.role === "admin" || session.email === "scholarnexusadmin@gmail.com") {
+      window.location.href = "/dashboard";
+      return;
+    }
 
     setUser(session);
     setName(session.displayName ?? session.name ?? "");

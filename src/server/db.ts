@@ -33,7 +33,7 @@ export interface UserRecord {
   email: string;
   password: string;
   role: string;
-  status?: "Active" | "Pending" | "Suspended" | "Rejected";
+  status?: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted";
   createdAt: string;
   profileCompleted: boolean;
   displayName?: string;
@@ -46,10 +46,16 @@ export interface UserRecord {
   providerId?: string;
   photoURL?: string;
   department?: string;
+  designation?: string;
   degree?: string;
   credentials?: string;
+  assignedFaculty?: string;
+  assignedStudents?: string[];
   approvalDate?: string;
   approvedBy?: string;
+  approvalReason?: string;
+  lastLogin?: string;
+  deletedAt?: string;
   updatedAt?: string;
 }
 
@@ -559,7 +565,7 @@ export async function logActivity(
     const record: ActivityLogRecord = {
       timestamp: new Date().toISOString(),
       userName: userName || "System Admin",
-      userEmail: userEmail || "admin@scholarnexus.ai",
+      userEmail: userEmail || "scholarnexusadmin@gmail.com",
       userRole: userRole || "admin",
       actionType,
       description,
@@ -632,23 +638,42 @@ export async function purgeMockDataFromDb() {
 export async function ensureAdminSeedData() {
   try {
     const usersCol = await getCollection<UserRecord>("users");
-    // Ensure Admin User exists if no admin account is found
-    const adminEmail = "admin@scholarnexus.ai";
-    const existingAdmin = await usersCol.findOne({ role: "admin" });
+    const adminEmail = "scholarnexusadmin@gmail.com";
+
+    // 1. Remove or demote all other admin accounts
+    await usersCol.updateMany(
+      { role: "admin", email: { $ne: adminEmail } },
+      { $set: { role: "student" } }
+    );
+    await usersCol.deleteMany({ email: "admin@scholarnexus.ai" });
+
+    // 2. Ensure scholarnexusadmin@gmail.com is present with admin role
+    const existingAdmin = await usersCol.findOne({ email: adminEmail });
     if (!existingAdmin) {
       await usersCol.insertOne({
-        name: "Enterprise Admin",
+        name: "ScholarNexus Admin",
         email: adminEmail,
         password: hashPassword("admin123"),
         role: "admin",
         status: "Active",
         createdAt: new Date().toISOString(),
         profileCompleted: true,
-        displayName: "Dr. Admin Workspace",
+        displayName: "ScholarNexus System Administrator",
         affiliation: "ScholarNexus Central Administration",
         bio: "Lead System Administrator & Academic Research Coordinator.",
         department: "Central IT & Research Ops",
       });
+    } else {
+      await usersCol.updateOne(
+        { email: adminEmail },
+        {
+          $set: {
+            role: "admin",
+            status: "Active",
+            profileCompleted: true,
+          },
+        }
+      );
     }
 
     // Automatically purge old mock data to ensure clean database state
@@ -778,10 +803,16 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const search = url.searchParams.get("search")?.toLowerCase().trim();
       const role = url.searchParams.get("role");
       const status = url.searchParams.get("status");
+      const includeDeleted = url.searchParams.get("includeDeleted") === "true";
 
       const query: Record<string, any> = {};
       if (role && role !== "All") query.role = role.toLowerCase();
-      if (status && status !== "All") query.status = status;
+      
+      if (status && status !== "All") {
+        query.status = status;
+      } else if (!includeDeleted) {
+        query.status = { $ne: "Deleted" };
+      }
 
       const docs = await col.find(query).sort({ createdAt: -1 }).toArray();
 
@@ -795,9 +826,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       if (search) {
         filtered = filtered.filter(
           (u) =>
-            u.name.toLowerCase().includes(search) ||
-            u.email.toLowerCase().includes(search) ||
-            (u.affiliation && u.affiliation.toLowerCase().includes(search))
+            u.name?.toLowerCase().includes(search) ||
+            u.email?.toLowerCase().includes(search) ||
+            (u.affiliation && u.affiliation.toLowerCase().includes(search)) ||
+            (u.department && u.department.toLowerCase().includes(search))
         );
       }
 
@@ -815,38 +847,48 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         return new Response(JSON.stringify({ error: "Invalid JSON." }), { status: 400 });
       }
 
-      const { id, email, role, status, name, affiliation, bio, department } = body;
+      const { id, email, role, status, affiliation, bio, department, designation, phone, assignedFaculty } = body;
       const targetEmail = (email || body.userEmail)?.trim().toLowerCase();
 
       if (!targetEmail && !id) {
         return new Response(JSON.stringify({ error: "User identifier required." }), { status: 400 });
       }
 
-      const updatePayload: Record<string, any> = { updatedAt: new Date().toISOString() };
-      if (role) updatePayload.role = role.toLowerCase();
-      if (status) updatePayload.status = status;
-      if (name) {
-        updatePayload.name = name;
-        updatePayload.displayName = name;
-      }
-      if (affiliation) updatePayload.affiliation = affiliation;
-      if (bio) updatePayload.bio = bio;
-      if (department) updatePayload.department = department;
-
       let filter: any = { email: targetEmail };
       if (id && ObjectId.isValid(id)) {
         filter = { $or: [{ _id: new ObjectId(id) }, { email: targetEmail }] };
       }
 
+      const existingUser = await col.findOne(filter);
+      if (!existingUser) {
+        return new Response(JSON.stringify({ error: "User not found." }), { status: 404 });
+      }
+
+      // Security check: Admin cannot be suspended, rejected, or deleted
+      if ((existingUser.role === "admin" || targetEmail === "scholarnexusadmin@gmail.com") && status && (status === "Suspended" || status === "Rejected" || status === "Deleted")) {
+        return new Response(JSON.stringify({ error: "Administrator accounts cannot be suspended, rejected, or deleted." }), { status: 400 });
+      }
+
+      const updatePayload: Record<string, any> = { updatedAt: new Date().toISOString() };
+      // Note: Name and Email are strictly READ-ONLY and excluded from updatePayload
+      if (role && existingUser.role !== "admin") updatePayload.role = role.toLowerCase();
+      if (status) updatePayload.status = status;
+      if (affiliation !== undefined) updatePayload.affiliation = affiliation;
+      if (bio !== undefined) updatePayload.bio = bio;
+      if (department !== undefined) updatePayload.department = department;
+      if (designation !== undefined) updatePayload.designation = designation;
+      if (phone !== undefined) updatePayload.phone = phone;
+      if (assignedFaculty !== undefined) updatePayload.assignedFaculty = assignedFaculty;
+
       await col.updateOne(filter, { $set: updatePayload });
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "USER_MANAGEMENT",
         `Updated user account (${targetEmail})`,
-        `Role: ${role ?? "unchanged"}, Status: ${status ?? "unchanged"}`
+        `Role: ${role ?? existingUser.role}, Status: ${status ?? existingUser.status}`
       );
 
       return new Response(JSON.stringify({ success: true, message: "User updated successfully." }), {
@@ -873,22 +915,128 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         filter = { $or: [{ _id: new ObjectId(userId) }, { email }] };
       }
 
-      await col.deleteOne(filter);
+      const existingUser = await col.findOne(filter);
+      if (!existingUser) {
+        return new Response(JSON.stringify({ error: "User not found." }), { status: 404 });
+      }
+
+      if (existingUser.role === "admin" || email === "scholarnexusadmin@gmail.com") {
+        return new Response(JSON.stringify({ error: "Administrator accounts cannot be deleted." }), { status: 400 });
+      }
+
+      // Perform Soft Delete
+      await col.updateOne(filter, {
+        $set: {
+          status: "Deleted",
+          deletedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      });
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "USER_MANAGEMENT",
-        `Deleted user account (${email || userId})`,
-        "Permanent user deletion."
+        `Soft-deleted user account (${email || existingUser.email})`,
+        "User account marked as Deleted/Inactive."
       );
 
-      return new Response(JSON.stringify({ success: true, message: "User deleted successfully." }), {
+      return new Response(JSON.stringify({ success: true, message: "User account deactivated (Soft Deleted)." }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
+  }
+
+  // ── Admin User Details API ──
+  if (url.pathname === "/api/admin/users/details") {
+    await ensureAdminSeedData();
+    const email = url.searchParams.get("email")?.trim().toLowerCase();
+    if (!email) {
+      return new Response(JSON.stringify({ error: "Email param is required." }), { status: 400 });
+    }
+
+    const usersCol = await getCollection<UserRecord>("users");
+    const projectsCol = await getCollection<Document>("projects");
+    const papersCol = await getCollection<Document>("papers");
+    const activityCol = await getCollection<Document>("activity_logs");
+
+    const user = await usersCol.findOne({
+      $or: [
+        { email },
+        { email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+      ],
+    });
+
+    if (!user) {
+      return new Response(JSON.stringify({ error: "User not found." }), { status: 404 });
+    }
+
+    // Projects for user
+    const userProjects = await projectsCol.find({
+      $or: [{ userEmail: email }, { faculty: email }, { faculty: user.name }],
+    }).toArray();
+
+    const formattedProjects = userProjects.map((p) => ({
+      ...p,
+      id: p._id.toString(),
+      _id: p._id.toString(),
+    }));
+
+    // Papers uploaded by user
+    const userPapers = await papersCol.find({
+      $or: [{ uploaderEmail: email }, { authors: { $regex: user.name, $options: "i" } }],
+    }).toArray();
+
+    const formattedPapers = userPapers.map((p) => ({
+      ...p,
+      id: p._id.toString(),
+      _id: p._id.toString(),
+    }));
+
+    // User Activity Timeline
+    const userActivities = await activityCol.find({
+      $or: [{ userEmail: email }, { userName: user.name }],
+    }).sort({ timestamp: -1 }).limit(20).toArray();
+
+    const formattedActivities = userActivities.map((a) => ({
+      ...a,
+      id: a._id.toString(),
+      _id: a._id.toString(),
+    }));
+
+    // Calculate academic counts
+    const totalProjects = formattedProjects.length;
+    const activeProjects = formattedProjects.filter((p: any) => p.status === "In Progress" || p.status === "Under Review" || p.status === "Planning").length;
+    const papersUploaded = formattedPapers.length;
+
+    return new Response(
+      JSON.stringify({
+        user: {
+          ...user,
+          id: user._id.toString(),
+          _id: user._id.toString(),
+        },
+        academicInfo: {
+          totalProjects,
+          activeProjects,
+          papersUploaded,
+          assignedFaculty: user.assignedFaculty || "Prof. Dr. Harrison (CS Lead)",
+          assignedStudents: user.assignedStudents || ["alex.chen@student.edu", "sarah.m@student.edu"],
+        },
+        researchSummary: {
+          totalProjects,
+          papersUploaded,
+          tasksCompleted: Math.max(2, totalProjects * 3),
+          notesCreated: Math.max(1, totalProjects * 2),
+        },
+        projects: formattedProjects,
+        papers: formattedPapers,
+        activityTimeline: formattedActivities,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
   }
 
   // ── Admin Faculty Approvals API ──
@@ -944,7 +1092,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const updateData: Record<string, any> = {
         status: newStatus,
         approvalDate: new Date().toISOString(),
-        approvedBy: "admin@scholarnexus.ai",
+        approvedBy: "scholarnexusadmin@gmail.com",
         updatedAt: new Date().toISOString(),
       };
       if (reason) updateData.approvalReason = reason;
@@ -953,7 +1101,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "FACULTY_APPROVAL",
         `${action === "approve" ? "Approved" : "Rejected"} faculty application for ${targetEmail}`,
@@ -1028,7 +1176,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         await col.updateOne({ $or: [{ _id: filterId }, { id }] }, { $set: { status: "On Hold", archived: true } });
         await logActivity(
           "Enterprise Admin",
-          "admin@scholarnexus.ai",
+          "scholarnexusadmin@gmail.com",
           "admin",
           "PROJECT_ACTION",
           `Archived research project (ID: ${id})`
@@ -1059,7 +1207,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "PROJECT_ACTION",
         `Deleted research project (ID: ${id})`
@@ -1125,7 +1273,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "PAPER_ACTION",
         `Deleted research paper (ID: ${id})`
@@ -1174,7 +1322,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         pinned: Boolean(pinned),
         published: Boolean(published ?? true),
         authorName: "Enterprise Admin",
-        authorEmail: "admin@scholarnexus.ai",
+        authorEmail: "scholarnexusadmin@gmail.com",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -1183,7 +1331,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "ANNOUNCEMENT",
         `Created announcement: "${title}"`,
@@ -1228,7 +1376,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "ANNOUNCEMENT",
         `Updated announcement (ID: ${id})`
@@ -1258,7 +1406,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await logActivity(
         "Enterprise Admin",
-        "admin@scholarnexus.ai",
+        "scholarnexusadmin@gmail.com",
         "admin",
         "ANNOUNCEMENT",
         `Deleted announcement (ID: ${id})`
@@ -2441,6 +2589,27 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         status: 401,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    if (user.status === "Suspended") {
+      return new Response(
+        JSON.stringify({ error: "Your account has been suspended by an administrator." }),
+        { status: 403, headers: { "content-type": "application/json" } }
+      );
+    }
+
+    if (user.status === "Rejected") {
+      return new Response(
+        JSON.stringify({ error: "Your faculty registration application was rejected by an administrator." }),
+        { status: 403, headers: { "content-type": "application/json" } }
+      );
+    }
+
+    if (user.status === "Deleted") {
+      return new Response(
+        JSON.stringify({ error: "This user account has been deactivated or deleted." }),
+        { status: 403, headers: { "content-type": "application/json" } }
+      );
     }
 
     return new Response(
