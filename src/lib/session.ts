@@ -7,12 +7,22 @@ export type UserSession = {
   affiliation?: string;
   bio?: string;
   phone?: string;
-  researchInterests?: string;
+  researchInterests?: string | string[];
   profileImage?: string;
   provider?: string;
   providerId?: string;
   photoURL?: string;
   updatedAt?: string;
+
+  /* Faculty Fields */
+  status?: string;
+  approvalStatus?: string;
+  institution?: string;
+  department?: string;
+  designation?: string;
+  facultyId?: string;
+  areasOfExpertise?: string | string[];
+  orcid?: string;
 };
 
 const STORAGE_KEY = "scholarnexusUser";
@@ -64,10 +74,14 @@ export function getUserInitials(user: UserSession | null): string {
     .slice(0, 2) || "G";
 }
 
-export function getHomePathForRole(role?: string, email?: string): string {
+export function getHomePathForRole(role?: string, email?: string, status?: string): string {
   const r = (role || "").toLowerCase();
   const e = (email || "").toLowerCase();
+  const s = (status || "").toLowerCase();
   if (r === "admin" || e === "scholarnexusadmin@gmail.com") return "/admin";
-  if (r === "faculty") return "/faculty";
+  if (r === "faculty") {
+    if (s === "pending") return "/faculty-pending";
+    return "/faculty-dashboard";
+  }
   return "/dashboard";
 }

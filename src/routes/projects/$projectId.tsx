@@ -614,7 +614,7 @@ function ProjectWorkspacePage() {
         body: JSON.stringify({ ...updatedPaper, userEmail: user?.email }),
       }).catch((e) => console.error("MongoDB paper update sync failed:", e));
 
-      toast.success("Paper metadata updated in database!");
+      toast.success("Paper metadata updated successfully!");
     } else {
       const newPaper: ProjectPaper = {
         id: `paper-${Date.now()}`,

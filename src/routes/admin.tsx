@@ -314,9 +314,9 @@ function AdminPage() {
   }, []);
 
   // Fetch Admin Data
-  const fetchAdminData = async (isManualRefresh = false) => {
+  const fetchAdminData = async (isManualRefresh = false, isSilent = false) => {
     if (isManualRefresh) setIsRefreshing(true);
-    else setLoading(true);
+    else if (!isSilent && users.length === 0) setLoading(true);
 
     try {
       const includeDeleted = showDeletedUsers || userStatusFilter === "Deleted";
@@ -428,9 +428,24 @@ function AdminPage() {
         }),
       });
       if (res.ok) {
+        setUsers((prev) =>
+          prev.map((usr) =>
+            usr.id === selectedUser.id || usr.email === selectedUser.email
+              ? {
+                  ...usr,
+                  role: editUserData.role,
+                  status: editUserData.status as UserItem["status"],
+                  department: editUserData.department,
+                  designation: editUserData.designation,
+                  phone: editUserData.phone,
+                  affiliation: editUserData.affiliation,
+                }
+              : usr
+          )
+        );
         toast.success(`User account for ${selectedUser.email} updated successfully.`);
         setEditUserModalOpen(false);
-        fetchAdminData();
+        fetchAdminData(false, true);
       } else {
         const err = await res.json();
         toast.error(err.error || "Failed to update user.");
@@ -458,6 +473,8 @@ function AdminPage() {
 
     try {
       if (action === "approve" || action === "reject") {
+        const newStatus = action === "approve" ? "Active" : "Rejected";
+        setUsers((prev) => prev.map((usr) => (usr.id === u.id || usr.email === u.email) ? { ...usr, status: newStatus } : usr));
         const res = await fetch("/api/admin/faculty/approval", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -476,6 +493,7 @@ function AdminPage() {
         }
       } else if (action === "suspend" || action === "activate") {
         const newStatus = action === "suspend" ? "Suspended" : "Active";
+        setUsers((prev) => prev.map((usr) => (usr.id === u.id || usr.email === u.email) ? { ...usr, status: newStatus } : usr));
         const res = await fetch("/api/admin/users", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -488,6 +506,7 @@ function AdminPage() {
           toast.error(data.error || "Failed to update account status.");
         }
       } else if (action === "delete") {
+        setUsers((prev) => prev.map((usr) => (usr.id === u.id || usr.email === u.email) ? { ...usr, status: "Deleted" } : usr));
         const res = await fetch("/api/admin/users", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
@@ -501,7 +520,7 @@ function AdminPage() {
         }
       }
       setConfirmModalOpen(false);
-      fetchAdminData();
+      fetchAdminData(false, true);
     } catch {
       toast.error("Network error executing action.");
     }
@@ -768,7 +787,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalStudents ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">
                     <TrendingUp className="h-3 w-3" />
-                    <span>Registered in DB</span>
+                    <span>Registered Scholars</span>
                   </div>
                 </div>
               </Card>
@@ -800,7 +819,7 @@ function AdminPage() {
                   <span className="text-2xl font-bold text-foreground">{stats?.totalProjects ?? 0}</span>
                   <div className="mt-1 flex items-center gap-1 text-[0.7rem] font-medium text-muted-foreground">
                     <Activity className="h-3 w-3 text-primary" />
-                    <span>Active in DB</span>
+                    <span>Active Pipeline</span>
                   </div>
                 </div>
               </Card>
@@ -1269,7 +1288,7 @@ function AdminPage() {
                         <TableCell colSpan={6} className="text-center py-12 text-xs text-muted-foreground">
                           <div className="flex flex-col items-center justify-center gap-2">
                             <RotateCw className="h-6 w-6 animate-spin text-primary" />
-                            <span>Loading user directory from MongoDB…</span>
+                            <span>Loading user directory…</span>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -2237,7 +2256,7 @@ function AdminPage() {
                   <div className="rounded-2xl border border-border bg-background p-4 space-y-3">
                     <div className="flex justify-between"><span className="text-muted-foreground">System Privilege Level:</span><Badge variant="outline" className="border-purple-500/40 text-purple-500">Super Administrator</Badge></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Account Created:</span><span className="font-medium text-foreground">{new Date(selectedUser.createdAt).toLocaleDateString()}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Security Clearance:</span><span className="font-medium text-emerald-500">Level 5 (Full Database Read/Write)</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Security Clearance:</span><span className="font-medium text-emerald-500">Level 5 (Full Administrative Access)</span></div>
                   </div>
                 )}
               </TabsContent>

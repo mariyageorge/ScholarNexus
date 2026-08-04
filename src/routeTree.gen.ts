@@ -24,6 +24,8 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as DocumentationRouteImport } from './routes/documentation'
 import { Route as DownloadsRouteImport } from './routes/downloads'
 import { Route as FacultyRouteImport } from './routes/faculty'
+import { Route as FacultyDashboardRouteImport } from './routes/faculty-dashboard'
+import { Route as FacultyPendingRouteImport } from './routes/faculty-pending'
 import { Route as FaqRouteImport } from './routes/faq'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as HelpRouteImport } from './routes/help'
@@ -43,6 +45,14 @@ import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as VerifyOtpRouteImport } from './routes/verify-otp'
+import { Route as FacultyAssistantRouteImport } from './routes/faculty.assistant'
+import { Route as FacultyProfileRouteImport } from './routes/faculty.profile'
+import { Route as FacultyProjectsRouteImport } from './routes/faculty.projects'
+import { Route as FacultyResourcesRouteImport } from './routes/faculty.resources'
+import { Route as FacultyReviewsRouteImport } from './routes/faculty.reviews'
+import { Route as FacultySettingsRouteImport } from './routes/faculty.settings'
+import { Route as FacultyStudentsRouteImport } from './routes/faculty.students'
+import { Route as FacultySupervisionRequestsRouteImport } from './routes/faculty.supervision-requests'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -118,6 +128,16 @@ const DownloadsRoute = DownloadsRouteImport.update({
 const FacultyRoute = FacultyRouteImport.update({
   id: '/faculty',
   path: '/faculty',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FacultyDashboardRoute = FacultyDashboardRouteImport.update({
+  id: '/faculty-dashboard',
+  path: '/faculty-dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FacultyPendingRoute = FacultyPendingRouteImport.update({
+  id: '/faculty-pending',
+  path: '/faculty-pending',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FaqRoute = FaqRouteImport.update({
@@ -215,6 +235,47 @@ const VerifyOtpRoute = VerifyOtpRouteImport.update({
   path: '/verify-otp',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FacultyAssistantRoute = FacultyAssistantRouteImport.update({
+  id: '/assistant',
+  path: '/assistant',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultyProfileRoute = FacultyProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultyProjectsRoute = FacultyProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultyResourcesRoute = FacultyResourcesRouteImport.update({
+  id: '/resources',
+  path: '/resources',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultyReviewsRoute = FacultyReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultySettingsRoute = FacultySettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultyStudentsRoute = FacultyStudentsRouteImport.update({
+  id: '/students',
+  path: '/students',
+  getParentRoute: () => FacultyRoute,
+} as any)
+const FacultySupervisionRequestsRoute =
+  FacultySupervisionRequestsRouteImport.update({
+    id: '/supervision-requests',
+    path: '/supervision-requests',
+    getParentRoute: () => FacultyRoute,
+  } as any)
 const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   id: '/$projectId',
   path: '/$projectId',
@@ -236,7 +297,9 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/documentation': typeof DocumentationRoute
   '/downloads': typeof DownloadsRoute
-  '/faculty': typeof FacultyRoute
+  '/faculty': typeof FacultyRouteWithChildren
+  '/faculty-dashboard': typeof FacultyDashboardRoute
+  '/faculty-pending': typeof FacultyPendingRoute
   '/faq': typeof FaqRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/help': typeof HelpRoute
@@ -256,6 +319,14 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-otp': typeof VerifyOtpRoute
+  '/faculty/assistant': typeof FacultyAssistantRoute
+  '/faculty/profile': typeof FacultyProfileRoute
+  '/faculty/projects': typeof FacultyProjectsRoute
+  '/faculty/resources': typeof FacultyResourcesRoute
+  '/faculty/reviews': typeof FacultyReviewsRoute
+  '/faculty/settings': typeof FacultySettingsRoute
+  '/faculty/students': typeof FacultyStudentsRoute
+  '/faculty/supervision-requests': typeof FacultySupervisionRequestsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
 }
 export interface FileRoutesByTo {
@@ -273,7 +344,9 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/documentation': typeof DocumentationRoute
   '/downloads': typeof DownloadsRoute
-  '/faculty': typeof FacultyRoute
+  '/faculty': typeof FacultyRouteWithChildren
+  '/faculty-dashboard': typeof FacultyDashboardRoute
+  '/faculty-pending': typeof FacultyPendingRoute
   '/faq': typeof FaqRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/help': typeof HelpRoute
@@ -293,6 +366,14 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-otp': typeof VerifyOtpRoute
+  '/faculty/assistant': typeof FacultyAssistantRoute
+  '/faculty/profile': typeof FacultyProfileRoute
+  '/faculty/projects': typeof FacultyProjectsRoute
+  '/faculty/resources': typeof FacultyResourcesRoute
+  '/faculty/reviews': typeof FacultyReviewsRoute
+  '/faculty/settings': typeof FacultySettingsRoute
+  '/faculty/students': typeof FacultyStudentsRoute
+  '/faculty/supervision-requests': typeof FacultySupervisionRequestsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
 }
 export interface FileRoutesById {
@@ -311,7 +392,9 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/documentation': typeof DocumentationRoute
   '/downloads': typeof DownloadsRoute
-  '/faculty': typeof FacultyRoute
+  '/faculty': typeof FacultyRouteWithChildren
+  '/faculty-dashboard': typeof FacultyDashboardRoute
+  '/faculty-pending': typeof FacultyPendingRoute
   '/faq': typeof FaqRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/help': typeof HelpRoute
@@ -331,6 +414,14 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-otp': typeof VerifyOtpRoute
+  '/faculty/assistant': typeof FacultyAssistantRoute
+  '/faculty/profile': typeof FacultyProfileRoute
+  '/faculty/projects': typeof FacultyProjectsRoute
+  '/faculty/resources': typeof FacultyResourcesRoute
+  '/faculty/reviews': typeof FacultyReviewsRoute
+  '/faculty/settings': typeof FacultySettingsRoute
+  '/faculty/students': typeof FacultyStudentsRoute
+  '/faculty/supervision-requests': typeof FacultySupervisionRequestsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
 }
 export interface FileRouteTypes {
@@ -351,6 +442,8 @@ export interface FileRouteTypes {
     | '/documentation'
     | '/downloads'
     | '/faculty'
+    | '/faculty-dashboard'
+    | '/faculty-pending'
     | '/faq'
     | '/forgot-password'
     | '/help'
@@ -370,6 +463,14 @@ export interface FileRouteTypes {
     | '/terms'
     | '/verify-email'
     | '/verify-otp'
+    | '/faculty/assistant'
+    | '/faculty/profile'
+    | '/faculty/projects'
+    | '/faculty/resources'
+    | '/faculty/reviews'
+    | '/faculty/settings'
+    | '/faculty/students'
+    | '/faculty/supervision-requests'
     | '/projects/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -388,6 +489,8 @@ export interface FileRouteTypes {
     | '/documentation'
     | '/downloads'
     | '/faculty'
+    | '/faculty-dashboard'
+    | '/faculty-pending'
     | '/faq'
     | '/forgot-password'
     | '/help'
@@ -407,6 +510,14 @@ export interface FileRouteTypes {
     | '/terms'
     | '/verify-email'
     | '/verify-otp'
+    | '/faculty/assistant'
+    | '/faculty/profile'
+    | '/faculty/projects'
+    | '/faculty/resources'
+    | '/faculty/reviews'
+    | '/faculty/settings'
+    | '/faculty/students'
+    | '/faculty/supervision-requests'
     | '/projects/$projectId'
   id:
     | '__root__'
@@ -425,6 +536,8 @@ export interface FileRouteTypes {
     | '/documentation'
     | '/downloads'
     | '/faculty'
+    | '/faculty-dashboard'
+    | '/faculty-pending'
     | '/faq'
     | '/forgot-password'
     | '/help'
@@ -444,6 +557,14 @@ export interface FileRouteTypes {
     | '/terms'
     | '/verify-email'
     | '/verify-otp'
+    | '/faculty/assistant'
+    | '/faculty/profile'
+    | '/faculty/projects'
+    | '/faculty/resources'
+    | '/faculty/reviews'
+    | '/faculty/settings'
+    | '/faculty/students'
+    | '/faculty/supervision-requests'
     | '/projects/$projectId'
   fileRoutesById: FileRoutesById
 }
@@ -462,7 +583,9 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   DocumentationRoute: typeof DocumentationRoute
   DownloadsRoute: typeof DownloadsRoute
-  FacultyRoute: typeof FacultyRoute
+  FacultyRoute: typeof FacultyRouteWithChildren
+  FacultyDashboardRoute: typeof FacultyDashboardRoute
+  FacultyPendingRoute: typeof FacultyPendingRoute
   FaqRoute: typeof FaqRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   HelpRoute: typeof HelpRoute
@@ -589,6 +712,20 @@ declare module '@tanstack/react-router' {
       path: '/faculty'
       fullPath: '/faculty'
       preLoaderRoute: typeof FacultyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/faculty-dashboard': {
+      id: '/faculty-dashboard'
+      path: '/faculty-dashboard'
+      fullPath: '/faculty-dashboard'
+      preLoaderRoute: typeof FacultyDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/faculty-pending': {
+      id: '/faculty-pending'
+      path: '/faculty-pending'
+      fullPath: '/faculty-pending'
+      preLoaderRoute: typeof FacultyPendingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/faq': {
@@ -724,6 +861,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VerifyOtpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/faculty/assistant': {
+      id: '/faculty/assistant'
+      path: '/assistant'
+      fullPath: '/faculty/assistant'
+      preLoaderRoute: typeof FacultyAssistantRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/profile': {
+      id: '/faculty/profile'
+      path: '/profile'
+      fullPath: '/faculty/profile'
+      preLoaderRoute: typeof FacultyProfileRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/projects': {
+      id: '/faculty/projects'
+      path: '/projects'
+      fullPath: '/faculty/projects'
+      preLoaderRoute: typeof FacultyProjectsRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/resources': {
+      id: '/faculty/resources'
+      path: '/resources'
+      fullPath: '/faculty/resources'
+      preLoaderRoute: typeof FacultyResourcesRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/reviews': {
+      id: '/faculty/reviews'
+      path: '/reviews'
+      fullPath: '/faculty/reviews'
+      preLoaderRoute: typeof FacultyReviewsRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/settings': {
+      id: '/faculty/settings'
+      path: '/settings'
+      fullPath: '/faculty/settings'
+      preLoaderRoute: typeof FacultySettingsRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/students': {
+      id: '/faculty/students'
+      path: '/students'
+      fullPath: '/faculty/students'
+      preLoaderRoute: typeof FacultyStudentsRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/supervision-requests': {
+      id: '/faculty/supervision-requests'
+      path: '/supervision-requests'
+      fullPath: '/faculty/supervision-requests'
+      preLoaderRoute: typeof FacultySupervisionRequestsRouteImport
+      parentRoute: typeof FacultyRoute
+    }
     '/projects/$projectId': {
       id: '/projects/$projectId'
       path: '/$projectId'
@@ -733,6 +926,31 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface FacultyRouteChildren {
+  FacultyAssistantRoute: typeof FacultyAssistantRoute
+  FacultyProfileRoute: typeof FacultyProfileRoute
+  FacultyProjectsRoute: typeof FacultyProjectsRoute
+  FacultyResourcesRoute: typeof FacultyResourcesRoute
+  FacultyReviewsRoute: typeof FacultyReviewsRoute
+  FacultySettingsRoute: typeof FacultySettingsRoute
+  FacultyStudentsRoute: typeof FacultyStudentsRoute
+  FacultySupervisionRequestsRoute: typeof FacultySupervisionRequestsRoute
+}
+
+const FacultyRouteChildren: FacultyRouteChildren = {
+  FacultyAssistantRoute: FacultyAssistantRoute,
+  FacultyProfileRoute: FacultyProfileRoute,
+  FacultyProjectsRoute: FacultyProjectsRoute,
+  FacultyResourcesRoute: FacultyResourcesRoute,
+  FacultyReviewsRoute: FacultyReviewsRoute,
+  FacultySettingsRoute: FacultySettingsRoute,
+  FacultyStudentsRoute: FacultyStudentsRoute,
+  FacultySupervisionRequestsRoute: FacultySupervisionRequestsRoute,
+}
+
+const FacultyRouteWithChildren =
+  FacultyRoute._addFileChildren(FacultyRouteChildren)
 
 interface ProjectsRouteChildren {
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
@@ -761,7 +979,9 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   DocumentationRoute: DocumentationRoute,
   DownloadsRoute: DownloadsRoute,
-  FacultyRoute: FacultyRoute,
+  FacultyRoute: FacultyRouteWithChildren,
+  FacultyDashboardRoute: FacultyDashboardRoute,
+  FacultyPendingRoute: FacultyPendingRoute,
   FaqRoute: FaqRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   HelpRoute: HelpRoute,

@@ -67,6 +67,15 @@ function LoginPage() {
         provider: data.provider,
         providerId: data.providerId,
         photoURL: data.photoURL,
+        status: data.status,
+        approvalStatus: data.approvalStatus,
+        institution: data.institution,
+        department: data.department,
+        designation: data.designation,
+        facultyId: data.facultyId,
+        researchInterests: data.researchInterests,
+        areasOfExpertise: data.areasOfExpertise,
+        orcid: data.orcid,
       };
       setUserSession(userPayload);
       if (remember) {
@@ -75,7 +84,7 @@ function LoginPage() {
         localStorage.removeItem("scholarnexusRemember");
       }
 
-      window.location.href = getHomePathForRole(data.role, email);
+      window.location.href = getHomePathForRole(data.role, email, data.approvalStatus || data.status);
     } catch (error) {
       setErrorMessage("Unable to reach the server. Please try again later.");
     } finally {

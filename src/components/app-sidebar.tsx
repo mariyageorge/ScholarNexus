@@ -59,14 +59,15 @@ const workspace: SidebarMenuItemType[] = [
 ];
 
 const facultyMenu: SidebarMenuItemType[] = [
-  { title: "Dashboard", url: "/faculty", icon: LayoutDashboard },
-  { title: "Assigned Students", url: "/faculty", hash: "#assigned-students", icon: Users },
-  { title: "Research Projects", url: "/faculty", hash: "#research-projects", icon: FolderKanban },
-  { title: "Uploaded Papers", url: "/faculty", hash: "#submitted-papers", icon: FileText },
-  { title: "Reviews", url: "/faculty", hash: "#reviews", icon: Quote },
-  { title: "Feedback", url: "/faculty", hash: "#feedback", icon: Sparkles },
-  { title: "Reports", url: "/faculty", hash: "#reports", icon: Bookmark },
-  { title: "Notifications", url: "/faculty", hash: "#notifications", icon: Bell },
+  { title: "Dashboard", url: "/faculty-dashboard", icon: LayoutDashboard },
+  { title: "My Students", url: "/faculty/students", icon: Users },
+  { title: "Supervision Requests", url: "/faculty/supervision-requests", icon: UserCheck },
+  { title: "Research Projects", url: "/faculty/projects", icon: FolderKanban },
+  { title: "Reviews & Feedback", url: "/faculty/reviews", icon: Quote },
+  { title: "Resources", url: "/faculty/resources", icon: Bookmark },
+  { title: "Research Profile", url: "/faculty/profile", icon: UserCircle },
+  { title: "AI Assistant", url: "/faculty/assistant", icon: Sparkles },
+  { title: "Settings", url: "/faculty/settings", icon: Settings },
 ];
 
 const facultyAccount: SidebarMenuItemType[] = [

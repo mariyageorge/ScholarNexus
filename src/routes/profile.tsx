@@ -68,7 +68,8 @@ function UserProfilePage() {
     setAffiliation(session.affiliation ?? "");
     setBio(session.bio ?? "");
     setPhone(session.phone ?? "");
-    setResearchInterests(session.researchInterests ?? "");
+    const rawInterests = session.researchInterests;
+    setResearchInterests(Array.isArray(rawInterests) ? rawInterests.join(", ") : rawInterests ?? "");
     setProfileImage(session.profileImage ?? session.photoURL ?? "");
 
     // Fetch latest profile details from server
@@ -82,7 +83,8 @@ function UserProfilePage() {
           setAffiliation(data.affiliation ?? session.affiliation ?? "");
           setBio(data.bio ?? session.bio ?? "");
           setPhone(data.phone ?? session.phone ?? "");
-          setResearchInterests(data.researchInterests ?? session.researchInterests ?? "");
+          const serverInterests = data.researchInterests ?? session.researchInterests;
+          setResearchInterests(Array.isArray(serverInterests) ? serverInterests.join(", ") : serverInterests ?? "");
           setProfileImage(data.profileImage ?? data.photoURL ?? session.photoURL ?? "");
 
           // Update local session cache if server has updated values
@@ -118,7 +120,8 @@ function UserProfilePage() {
     setAffiliation(user.affiliation ?? "");
     setBio(user.bio ?? "");
     setPhone(user.phone ?? "");
-    setResearchInterests(user.researchInterests ?? "");
+    const rawInt = user.researchInterests;
+    setResearchInterests(Array.isArray(rawInt) ? rawInt.join(", ") : rawInt ?? "");
     setProfileImage(user.profileImage ?? user.photoURL ?? "");
     toast.info("Form changes reset.");
   };

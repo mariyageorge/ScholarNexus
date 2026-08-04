@@ -40,7 +40,7 @@ export interface UserRecord {
   affiliation?: string;
   bio?: string;
   phone?: string;
-  researchInterests?: string;
+  researchInterests?: string | string[];
   profileImage?: string;
   provider?: string;
   providerId?: string;
@@ -57,6 +57,14 @@ export interface UserRecord {
   lastLogin?: string;
   deletedAt?: string;
   updatedAt?: string;
+
+  /* Faculty Specific Fields */
+  institution?: string;
+  facultyId?: string;
+  areasOfExpertise?: string | string[];
+  orcid?: string;
+  verificationDocument?: string;
+  approvalStatus?: "Pending" | "Approved" | "Rejected";
 }
 
 export interface AnnouncementRecord {
@@ -166,18 +174,44 @@ export async function authenticateUser(
 }
 
 export async function registerUser(
-  user: { name: string; email: string; password: string; role: string },
+  user: {
+    name: string;
+    email: string;
+    password: string;
+    role: string;
+    phone?: string;
+    institution?: string;
+    department?: string;
+    designation?: string;
+    facultyId?: string;
+    researchInterests?: string;
+    areasOfExpertise?: string;
+    orcid?: string;
+    verificationDocument?: string;
+  },
   dbName = "scholarnexus"
 ) {
-  const status = user.role === "faculty" ? "Pending" : "Active";
+  const isFaculty = user.role.toLowerCase() === "faculty";
+  const status = isFaculty ? "Pending" : "Active";
+  const approvalStatus: "Pending" | "Approved" = isFaculty ? "Pending" : "Approved";
   const record: UserRecord = {
     name: user.name,
     email: user.email.trim().toLowerCase(),
     password: hashPassword(user.password),
     role: user.role,
     status,
+    approvalStatus,
     createdAt: new Date().toISOString(),
     profileCompleted: false,
+    phone: user.phone || undefined,
+    institution: user.institution || (user.department ? user.institution || "ScholarNexus Institute" : undefined),
+    department: user.department || undefined,
+    designation: user.designation || undefined,
+    facultyId: user.facultyId || undefined,
+    researchInterests: user.researchInterests || undefined,
+    areasOfExpertise: user.areasOfExpertise || undefined,
+    orcid: user.orcid || undefined,
+    verificationDocument: user.verificationDocument || undefined,
   };
   return insertDocument("users", record, dbName);
 }
@@ -2244,7 +2278,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
 
       await papersCol.deleteOne({ $or: [{ _id: objId }, { id: paperId }] });
-      return new Response(JSON.stringify({ success: true, message: "Paper deleted from MongoDB database." }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ success: true, message: "Paper deleted successfully." }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
 
@@ -2253,7 +2287,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       try {
         const usersCollection = await getCollection<UserRecord>("users");
         const facultyUsers = await usersCollection
-          .find({ role: "faculty" })
+          .find({
+            role: "faculty",
+            status: "Active",
+          })
           .project({ name: 1, email: 1, displayName: 1, affiliation: 1, department: 1, researchInterests: 1, bio: 1, photoURL: 1 })
           .toArray();
 
@@ -2474,19 +2511,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
-    const { name, email, password, role } = body as {
-      name?: unknown;
-      email?: unknown;
-      password?: unknown;
-      role?: unknown;
-    };
+    const reqData = body as Record<string, any>;
+    const name = String(reqData.name || "");
+    const email = String(reqData.email || "");
+    const password = String(reqData.password || "");
+    const role = String(reqData.role || "");
 
-    if (
-      typeof name !== "string" ||
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      typeof role !== "string"
-    ) {
+    if (!name || !email || !password || !role) {
       return new Response(
         JSON.stringify({ error: "Invalid registration fields." }),
         {
@@ -2530,8 +2561,23 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
-    const result = await registerUser({ name, email, password, role });
-    return new Response(JSON.stringify({ userId: result.insertedId }), {
+    const result = await registerUser({
+      name,
+      email,
+      password,
+      role,
+      phone: reqData.phone,
+      institution: reqData.institution,
+      department: reqData.department,
+      designation: reqData.designation,
+      facultyId: reqData.facultyId,
+      researchInterests: reqData.researchInterests,
+      areasOfExpertise: reqData.areasOfExpertise,
+      orcid: reqData.orcid,
+      verificationDocument: reqData.verificationDocument,
+    });
+
+    return new Response(JSON.stringify({ userId: result.insertedId, role }), {
       status: 201,
       headers: { "content-type": "application/json" },
     });
@@ -2598,9 +2644,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
-    if (user.status === "Rejected") {
+    if (user.status === "Rejected" || user.approvalStatus === "Rejected") {
       return new Response(
-        JSON.stringify({ error: "Your faculty registration application was rejected by an administrator." }),
+        JSON.stringify({ error: "Your faculty registration application has been rejected by system administration." }),
         { status: 403, headers: { "content-type": "application/json" } }
       );
     }
@@ -2618,6 +2664,16 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         role: user.role,
         name: user.name,
         profileCompleted: user.profileCompleted,
+        status: user.status || "Active",
+        approvalStatus: user.approvalStatus || (user.status === "Pending" ? "Pending" : String(user.status) === "Rejected" ? "Rejected" : "Approved"),
+        institution: user.institution || user.affiliation,
+        department: user.department,
+        designation: user.designation,
+        facultyId: user.facultyId,
+        phone: user.phone,
+        researchInterests: user.researchInterests,
+        areasOfExpertise: user.areasOfExpertise,
+        orcid: user.orcid,
       }),
       {
         status: 200,

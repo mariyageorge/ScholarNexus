@@ -23,6 +23,7 @@ import { getUserSession, UserSession } from "@/lib/session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/faculty")({
@@ -213,9 +214,27 @@ function MyFacultyPage() {
         </div>
 
         {loading ? (
-          <div className="py-24 text-center space-y-3">
-            <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
-            <p className="text-xs text-muted-foreground">Loading assigned faculty guide information…</p>
+          <div className="space-y-6">
+            <Card className="rounded-2xl border border-border bg-card p-6 md:p-8 space-y-6">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                <Skeleton className="h-20 w-20 rounded-2xl shrink-0" />
+                <div className="space-y-3 w-full">
+                  <Skeleton className="h-6 w-48" />
+                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="h-4 w-64" />
+                </div>
+              </div>
+            </Card>
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card className="rounded-2xl border border-border bg-card p-6 space-y-4">
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-16 w-full" />
+              </Card>
+              <Card className="rounded-2xl border border-border bg-card p-6 space-y-4">
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-16 w-full" />
+              </Card>
+            </div>
           </div>
         ) : !activeProject || !activeProject.faculty || !assignedFaculty ? (
           /* EMPTY STATE WHEN NO FACULTY IS ASSIGNED */

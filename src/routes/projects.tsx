@@ -1103,7 +1103,7 @@ function ResearchProjectsPage() {
                 onValueChange={(val) => setFormData({ ...formData, faculty: val === "none" ? "" : val })}
               >
                 <SelectTrigger className="rounded-xl text-xs">
-                  <SelectValue placeholder="Assign a faculty mentor from database…" />
+                  <SelectValue placeholder="Select a faculty mentor…" />
                 </SelectTrigger>
                 <SelectContent className="max-h-56 rounded-xl">
                   {facultyList.length > 0 ? (
@@ -1114,7 +1114,7 @@ function ResearchProjectsPage() {
                     ))
                   ) : (
                     <SelectItem value="none" disabled className="text-xs text-muted-foreground italic">
-                      No faculty available
+                      No active faculty mentors available
                     </SelectItem>
                   )}
                   <SelectItem value="Independent Research" className="text-xs italic">
