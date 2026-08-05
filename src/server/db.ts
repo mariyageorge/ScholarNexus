@@ -64,7 +64,12 @@ export interface UserRecord {
   areasOfExpertise?: string | string[];
   orcid?: string;
   verificationDocument?: string;
-  approvalStatus?: "Pending" | "Approved" | "Rejected";
+  approvalStatus?: "Pending" | "Approved" | "Rejected" | "Info Requested";
+  adminMessage?: string;
+  requestedBy?: string;
+  requestedDate?: string;
+  rejectionDate?: string;
+  applicationHistory?: { action: string; timestamp: string; details?: string; by?: string }[];
 }
 
 export interface AnnouncementRecord {
@@ -1098,57 +1103,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    }
-
-    if (request.method === "POST") {
-      let body: any;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response(JSON.stringify({ error: "Invalid JSON." }), { status: 400 });
-      }
-
-      const { email, id, action, reason } = body;
-      const targetEmail = email?.trim().toLowerCase();
-
-      if (!action || (action !== "approve" && action !== "reject")) {
-        return new Response(JSON.stringify({ error: "Action must be 'approve' or 'reject'." }), {
-          status: 400,
-        });
-      }
-
-      let filter: any = { email: targetEmail };
-      if (id && ObjectId.isValid(id)) {
-        filter = { $or: [{ _id: new ObjectId(id) }, { email: targetEmail }] };
-      }
-
-      const newStatus = action === "approve" ? "Active" : "Rejected";
-      const updateData: Record<string, any> = {
-        status: newStatus,
-        approvalDate: new Date().toISOString(),
-        approvedBy: "scholarnexusadmin@gmail.com",
-        updatedAt: new Date().toISOString(),
-      };
-      if (reason) updateData.approvalReason = reason;
-
-      await col.updateOne(filter, { $set: updateData });
-
-      await logActivity(
-        "Enterprise Admin",
-        "scholarnexusadmin@gmail.com",
-        "admin",
-        "FACULTY_APPROVAL",
-        `${action === "approve" ? "Approved" : "Rejected"} faculty application for ${targetEmail}`,
-        reason ? `Reason: ${reason}` : undefined
-      );
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: `Faculty request ${action === "approve" ? "approved" : "rejected"} successfully.`,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
     }
   }
 
@@ -2760,6 +2714,112 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     );
   }
 
+  if (url.pathname === "/api/admin/faculty/approval") {
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "Method not allowed." }), { status: 405, headers: { "content-type": "application/json" } });
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+
+    const { id, email, action, reason, remarks, infoMessage } = body as {
+      id?: string;
+      email?: string;
+      action?: string;
+      reason?: string;
+      remarks?: string;
+      infoMessage?: string;
+    };
+
+    if (!id && !email) {
+      return new Response(JSON.stringify({ error: "User ID or Email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+
+    const usersCol = await getCollection<UserRecord>("users");
+    const filterQuery: any = {};
+    if (id && ObjectId.isValid(id)) {
+      filterQuery._id = new ObjectId(id);
+    } else if (id) {
+      filterQuery.id = id;
+    } else if (email) {
+      filterQuery.email = email.trim().toLowerCase();
+    }
+
+    const updatePayload: Record<string, any> = {
+      updatedAt: new Date().toISOString(),
+    };
+
+    let historyAction = "";
+    let historyDetails = "";
+
+    if (action === "approve") {
+      updatePayload.approvalStatus = "Approved";
+      updatePayload.status = "Active";
+      updatePayload.approvalDate = new Date().toISOString();
+      updatePayload.approvedBy = "scholarnexusadmin@gmail.com";
+      if (remarks?.trim()) updatePayload.approvalReason = remarks.trim();
+      historyAction = "Approved";
+      historyDetails = remarks?.trim() || "Faculty registration application approved by system administration.";
+    } else if (action === "reject") {
+      const rejReason = (reason || remarks || "").trim();
+      if (!rejReason) {
+        return new Response(JSON.stringify({ error: "Rejection reason is mandatory." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      updatePayload.approvalStatus = "Rejected";
+      updatePayload.status = "Rejected";
+      updatePayload.rejectionReason = rejReason;
+      updatePayload.approvalReason = rejReason;
+      updatePayload.rejectionDate = new Date().toISOString();
+      historyAction = "Rejected";
+      historyDetails = rejReason;
+    } else if (action === "request_info" || action === "request_more_info") {
+      const msg = (infoMessage || reason || remarks || "").trim();
+      if (!msg) {
+        return new Response(JSON.stringify({ error: "Clarification or document request message is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      updatePayload.approvalStatus = "Info Requested";
+      updatePayload.status = "Awaiting Applicant Response";
+      updatePayload.infoRequestMessage = msg;
+      updatePayload.adminMessage = msg;
+      updatePayload.requestedBy = "scholarnexusadmin@gmail.com";
+      updatePayload.requestedDate = new Date().toISOString();
+      historyAction = "Additional Information Requested";
+      historyDetails = msg;
+    } else {
+      return new Response(JSON.stringify({ error: "Invalid approval action." }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+
+    const historyItem = {
+      action: historyAction,
+      timestamp: new Date().toISOString(),
+      details: historyDetails,
+      by: "scholarnexusadmin@gmail.com",
+    };
+
+    await usersCol.updateOne(filterQuery, {
+      $set: updatePayload,
+      $push: { applicationHistory: historyItem },
+    });
+
+    await recordUserActivity(
+      email || "scholarnexusadmin@gmail.com",
+      "System Administrator",
+      `FACULTY_${action.toUpperCase()}`,
+      `Faculty Action: ${action}`,
+      `Faculty record ${email || id} set to ${updatePayload.approvalStatus}.`,
+      "Profile"
+    );
+
+    return new Response(JSON.stringify({ success: true, message: `Faculty application ${updatePayload.approvalStatus} successfully.` }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
   if (url.pathname === "/api/profile") {
     if (request.method === "GET") {
       const emailParam = url.searchParams.get("email") ?? request.headers.get("x-user-email");
@@ -2885,8 +2945,51 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         updateData.profileImage = body.photoURL;
       }
 
+      if (typeof body.verificationDocument === "string") {
+        updateData.verificationDocument = body.verificationDocument;
+      }
+      if (typeof body.status === "string") {
+        updateData.status = body.status;
+      }
+      if (typeof body.approvalStatus === "string") {
+        updateData.approvalStatus = body.approvalStatus;
+      }
+      if (typeof body.infoResponse === "string") {
+        updateData.infoResponse = body.infoResponse;
+      }
+      if (typeof body.institution === "string") {
+        updateData.institution = body.institution.trim();
+      }
+      if (typeof body.department === "string") {
+        updateData.department = body.department.trim();
+      }
+      if (typeof body.designation === "string") {
+        updateData.designation = body.designation.trim();
+      }
+      if (typeof body.facultyId === "string") {
+        updateData.facultyId = body.facultyId.trim();
+      }
+      if (typeof body.areasOfExpertise === "string" || Array.isArray(body.areasOfExpertise)) {
+        updateData.areasOfExpertise = body.areasOfExpertise;
+      }
+      if (typeof body.orcid === "string") {
+        updateData.orcid = body.orcid.trim();
+      }
+
       const collection = await getCollection<UserRecord>("users");
       const normalizedEmail = email.trim().toLowerCase();
+
+      const mongoUpdate: Record<string, any> = { $set: updateData };
+      if (body.infoResponse || body.status === "Pending") {
+        const historyItem = {
+          action: "Applicant Responded",
+          timestamp: new Date().toISOString(),
+          details: (typeof body.infoResponse === "string" && body.infoResponse.trim()) ? body.infoResponse.trim() : "Applicant updated registration profile details & verification proof.",
+          by: normalizedEmail,
+        };
+        mongoUpdate.$push = { applicationHistory: historyItem };
+      }
+
       await collection.updateOne(
         {
           $or: [
@@ -2894,7 +2997,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
             { email: { $regex: `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
           ],
         },
-        { $set: updateData }
+        mongoUpdate
       );
 
       const updatedUser = await findUserByEmail(normalizedEmail);

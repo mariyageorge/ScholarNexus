@@ -16,6 +16,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  HelpCircle,
+  Upload,
+  Send,
+  Edit,
+  Mail,
+  FileText,
 } from "lucide-react";
 import { getUserSession, UserSession } from "@/lib/session";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -23,6 +29,10 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/faculty-dashboard")({
@@ -35,72 +45,75 @@ export const Route = createFileRoute("/faculty-dashboard")({
   component: FacultyDashboardHome,
 });
 
-interface SupervisionRequest {
-  id: string;
-  studentName: string;
-  studentEmail: string;
-  projectTitle: string;
-  domain: string;
-  dateSubmitted: string;
-  status: "Pending" | "Accepted" | "Declined";
-}
-
-interface ActiveProject {
-  id: string;
-  title: string;
-  leadStudent: string;
-  domain: string;
-  progress: number;
-  status: string;
-  lastUpdated: string;
-}
-
 function FacultyDashboardHome() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Dashboard Data State
-  const [requests, setRequests] = useState<SupervisionRequest[]>([
+  // Mock Supervision Requests
+  const [requests, setRequests] = useState([
     {
-      id: "sr-101",
-      studentName: "Alex Chen",
-      studentEmail: "alex.chen@university.edu",
-      projectTitle: "Neural Architecture Search for Lightweight LLMs",
-      domain: "Artificial Intelligence",
-      dateSubmitted: "2026-08-02",
+      id: "req-1",
+      studentName: "Alex Rivera",
+      topic: "Multi-Agent Reinforcement Learning for Autonomous Drone Swarms",
+      submittedDate: "2026-08-02",
       status: "Pending",
+      gpa: "3.92",
     },
     {
-      id: "sr-102",
-      studentName: "Sophia Martinez",
-      studentEmail: "sophia.m@university.edu",
-      projectTitle: "Distributed Consensus Algorithms in Edge Computing",
-      domain: "Distributed Systems",
-      dateSubmitted: "2026-08-01",
+      id: "req-2",
+      studentName: "Sophia Chen",
+      topic: "Federated Learning Privacy Preserving Frameworks in Healthcare",
+      submittedDate: "2026-08-01",
       status: "Pending",
+      gpa: "3.88",
+    },
+    {
+      id: "req-3",
+      studentName: "David Kim",
+      topic: "Graph Neural Networks for Molecular Property Prediction",
+      submittedDate: "2026-07-29",
+      status: "Accepted",
+      gpa: "3.95",
     },
   ]);
 
-  const [activeProjects, setActiveProjects] = useState<ActiveProject[]>([
+  // Mock Research Projects
+  const [activeProjects] = useState([
     {
-      id: "proj-201",
-      title: "Quantum-Resistant Lattice Cryptography Framework",
-      leadStudent: "Ethan Vance",
-      domain: "Cybersecurity",
+      id: "proj-101",
+      title: "Quantum-Resilient Neural Cryptography",
+      studentsCount: 4,
       progress: 75,
-      status: "In Progress",
+      status: "Active",
       lastUpdated: "2026-08-03",
     },
     {
-      id: "proj-202",
-      title: "Biomedical Graph Representation for Molecular Docking",
-      leadStudent: "Maya Lin",
-      domain: "Bioinformatics",
+      id: "proj-102",
+      title: "Bio-inspired Large Language Model Optimization",
+      studentsCount: 3,
       progress: 40,
       status: "Under Review",
       lastUpdated: "2026-08-04",
     },
   ]);
+
+  const [dbUserStatus, setDbUserStatus] = useState<any | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Update Application Modal States
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [editInstitution, setEditInstitution] = useState("");
+  const [editDepartment, setEditDepartment] = useState("");
+  const [editDesignation, setEditDesignation] = useState("");
+  const [editFacultyId, setEditFacultyId] = useState("");
+  const [editResearchInterests, setEditResearchInterests] = useState("");
+  const [editAreasOfExpertise, setEditAreasOfExpertise] = useState("");
+  const [editOrcid, setEditOrcid] = useState("");
+  const [infoResponseText, setInfoResponseText] = useState("");
+
+  const [newDocumentBase64, setNewDocumentBase64] = useState("");
+  const [newDocumentName, setNewDocumentName] = useState("");
+  const [submittingResponse, setSubmittingResponse] = useState(false);
 
   useEffect(() => {
     const activeUser = getUserSession();
@@ -110,6 +123,22 @@ function FacultyDashboardHome() {
     }
     setSession(activeUser);
     setIsLoading(false);
+
+    fetch(`/api/profile?email=${encodeURIComponent(activeUser.email)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setDbUserStatus(data);
+          setEditInstitution(data.institution || data.affiliation || "");
+          setEditDepartment(data.department || "");
+          setEditDesignation(data.designation || "");
+          setEditFacultyId(data.facultyId || "");
+          setEditResearchInterests(Array.isArray(data.researchInterests) ? data.researchInterests.join(", ") : (data.researchInterests || ""));
+          setEditAreasOfExpertise(Array.isArray(data.areasOfExpertise) ? data.areasOfExpertise.join(", ") : (data.areasOfExpertise || ""));
+          setEditOrcid(data.orcid || "");
+        }
+      })
+      .catch((err) => console.error("Error loading profile status:", err));
   }, []);
 
   const handleAcceptRequest = (id: string) => {
@@ -126,6 +155,70 @@ function FacultyDashboardHome() {
     toast.info("Supervision request declined.");
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File size exceeds 5MB limit.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setNewDocumentBase64(event.target?.result as string);
+      setNewDocumentName(file.name);
+      toast.success(`Attached verification document: ${file.name}`);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmitClarification = async () => {
+    if (!session) return;
+
+    setSubmittingResponse(true);
+    try {
+      const payload: any = {
+        email: session.email,
+        status: "Pending",
+        approvalStatus: "Pending",
+        institution: editInstitution.trim(),
+        department: editDepartment.trim(),
+        designation: editDesignation.trim(),
+        facultyId: editFacultyId.trim(),
+        researchInterests: editResearchInterests.trim(),
+        areasOfExpertise: editAreasOfExpertise.trim(),
+        orcid: editOrcid.trim(),
+        infoResponse: infoResponseText.trim(),
+      };
+      if (newDocumentBase64) {
+        payload.verificationDocument = newDocumentBase64;
+      }
+
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        toast.success("Application details updated successfully. Returned to Admin Pending queue for review.");
+        setUpdateModalOpen(false);
+        setInfoResponseText("");
+        setNewDocumentBase64("");
+        setNewDocumentName("");
+        setDbUserStatus((prev: any) => ({ ...prev, status: "Pending", approvalStatus: "Pending" }));
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Failed to submit application update.");
+      }
+    } catch {
+      toast.error("Network error submitting application update.");
+    } finally {
+      setSubmittingResponse(false);
+    }
+  };
+
   const stats = [
     {
       title: "My Students",
@@ -138,75 +231,106 @@ function FacultyDashboardHome() {
     },
     {
       title: "Active Projects",
-      value: String(activeProjects.length + 3),
-      subText: "Under Active Mentorship",
+      value: "6",
+      subText: "Grant Funded & Labs",
       icon: FolderKanban,
-      color: "text-indigo-500",
-      bg: "bg-indigo-500/10",
-      border: "border-indigo-500/20",
+      color: "text-blue-500",
+      bg: "bg-blue-500/10",
+      border: "border-blue-500/20",
     },
     {
-      title: "Pending Requests",
-      value: String(requests.filter((r) => r.status === "Pending").length),
-      subText: "Awaiting Your Action",
+      title: "Pending Reviews",
+      value: requests.filter((r) => r.status === "Pending").length.toString(),
+      subText: "Applications Needing Action",
       icon: Clock,
       color: "text-amber-500",
       bg: "bg-amber-500/10",
       border: "border-amber-500/20",
     },
     {
-      title: "Reviews Pending",
-      value: "5",
-      subText: "Manuscripts to Review",
+      title: "Publications",
+      value: "28",
+      subText: "Peer-Reviewed Papers",
       icon: FileCheck,
-      color: "text-purple-500",
-      bg: "bg-purple-500/10",
-      border: "border-purple-500/20",
+      color: "text-indigo-500",
+      bg: "bg-indigo-500/10",
+      border: "border-indigo-500/20",
     },
   ];
 
+  const isInfoRequested = dbUserStatus?.approvalStatus === "Info Requested" || dbUserStatus?.status === "Awaiting Applicant Response";
+
   return (
     <DashboardLayout>
-      <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
-        {/* Welcome Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-6">
+      <div className="space-y-6">
+        {/* Top Header Banner */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-5">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="rounded-full border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold">
-                Faculty Portal
+              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                Faculty Workspace
+              </h1>
+              <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 bg-emerald-500/10 font-bold text-xs">
+                Verified Advisor
               </Badge>
-              <span className="text-xs text-muted-foreground font-medium">Academic Year 2026–2027</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-              Welcome back, {session?.displayName || session?.name || "Professor"}
-            </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
-              <Building className="h-3.5 w-3.5 text-primary" />
-              <span>{session?.institution || "ScholarNexus Partner Institution"}</span>
-              <span>•</span>
-              <Award className="h-3.5 w-3.5 text-indigo-500" />
-              <span>{session?.department || "Department of Computer Science"}</span>
+            <p className="text-xs text-muted-foreground">
+              Welcome back, Dr. {session?.name || "Faculty Portal"}. Manage your research groups, supervise student proposals, and track grants.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <Button
-              variant="outline"
               size="sm"
-              onClick={() => toast.success("Refreshed Faculty Dashboard metrics.")}
-              className="gap-2 rounded-xl text-xs font-semibold"
+              onClick={() => setUpdateModalOpen(true)}
+              variant="outline"
+              className="rounded-xl text-xs font-semibold gap-1.5"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh Data
+              <Edit className="h-3.5 w-3.5" /> Edit Profile Details
             </Button>
+
             <Button
               size="sm"
-              onClick={() => (window.location.href = "/faculty/projects")}
-              className="gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20"
+              className="gap-2 rounded-xl bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 font-semibold text-xs"
             >
               <Plus className="h-3.5 w-3.5" /> New Research Group
             </Button>
           </div>
         </div>
+
+        {/* Verification Alert Banner if Info Requested */}
+        {isInfoRequested && !bannerDismissed && (
+          <Card className="rounded-2xl border-blue-500/40 bg-blue-500/10 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500 text-white shrink-0 font-bold">
+                <HelpCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-bold text-blue-700 dark:text-blue-300 text-sm">Administrator requested additional information</p>
+                <p className="text-muted-foreground truncate max-w-xl text-xs mt-0.5">
+                  Reason: "{dbUserStatus.adminMessage || dbUserStatus.infoRequestMessage || "Please upload your institutional ID card or updated appointment letter."}"
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setBannerDismissed(true)}
+                className="rounded-xl text-xs font-semibold"
+              >
+                Dismiss
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setUpdateModalOpen(true)}
+                className="rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shrink-0 shadow-sm"
+              >
+                Update Application
+              </Button>
+            </div>
+          </Card>
+        )}
 
         {/* 4 Summary Metric Cards */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -222,80 +346,78 @@ function FacultyDashboardHome() {
                 </div>
               </div>
 
-              <div className="mt-4 space-y-1">
-                <span className="text-3xl font-bold tracking-tight text-foreground">{s.value}</span>
-                <p className="text-[0.7rem] font-medium text-muted-foreground flex items-center gap-1">
-                  <TrendingUp className="h-3 w-3 text-emerald-500" /> {s.subText}
-                </p>
+              <div className="mt-3 space-y-1">
+                <div className="text-2xl font-bold text-foreground">{s.value}</div>
+                <p className="text-[0.68rem] text-muted-foreground font-medium">{s.subText}</p>
               </div>
             </Card>
           ))}
         </div>
 
-        {/* 2-Column Content Layout */}
+        {/* Main Grid: Student Proposals & Research Projects */}
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* Main Left Column (2 Spans) */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Supervision Requests Section */}
+          {/* Left 2 Cols: Student Supervision Requests */}
+          <div className="lg:col-span-2 space-y-4">
             <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-foreground flex items-center gap-2">
                     <Users className="h-4 w-4 text-emerald-500" /> Student Supervision Requests
-                  </h2>
-                  <p className="text-xs text-muted-foreground">Scholars seeking thesis & research mentorship</p>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Review applications from students seeking thesis or research project guidance.</p>
                 </div>
-                <Badge variant="secondary" className="rounded-full text-xs font-semibold">
-                  {requests.filter((r) => r.status === "Pending").length} Action Required
+
+                <Badge variant="outline" className="rounded-full text-xs font-bold px-3 py-0.5 border-amber-500/40 text-amber-600 bg-amber-500/10">
+                  {requests.filter((r) => r.status === "Pending").length} Pending
                 </Badge>
               </div>
 
               <div className="space-y-3">
-                {requests.map((req) => (
+                {requests.map((r) => (
                   <div
-                    key={req.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-border bg-background p-4 hover:border-emerald-500/30 transition-all"
+                    key={r.id}
+                    className="rounded-2xl border border-border bg-background p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition hover:border-primary/40"
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-foreground text-sm">{req.studentName}</span>
-                        <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary">
-                          {req.domain}
-                        </Badge>
+                        <h4 className="font-bold text-xs text-foreground truncate">{r.studentName}</h4>
+                        <span className="text-[0.68rem] font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                          GPA: {r.gpa}
+                        </span>
                       </div>
-                      <p className="text-xs font-semibold text-muted-foreground">{req.projectTitle}</p>
-                      <span className="text-[0.65rem] text-muted-foreground">Submitted on {req.dateSubmitted}</span>
+                      <p className="text-xs text-muted-foreground font-medium truncate">{r.topic}</p>
+                      <p className="text-[0.65rem] text-muted-foreground">Submitted on {r.submittedDate}</p>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      {req.status === "Pending" ? (
+                      {r.status === "Pending" ? (
                         <>
                           <Button
                             size="sm"
-                            onClick={() => handleAcceptRequest(req.id)}
-                            className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold h-8 px-3"
+                            variant="outline"
+                            onClick={() => handleDeclineRequest(r.id)}
+                            className="rounded-xl text-xs font-semibold text-destructive hover:bg-destructive/10 border-destructive/30"
                           >
-                            Accept
+                            Decline
                           </Button>
                           <Button
                             size="sm"
-                            variant="outline"
-                            onClick={() => handleDeclineRequest(req.id)}
-                            className="rounded-xl text-xs font-semibold h-8 px-3 text-destructive border-destructive/30 hover:bg-destructive/10"
+                            onClick={() => handleAcceptRequest(r.id)}
+                            className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs"
                           >
-                            Decline
+                            Accept Student
                           </Button>
                         </>
                       ) : (
                         <Badge
                           variant="outline"
-                          className={
-                            req.status === "Accepted"
-                              ? "border-emerald-500/40 text-emerald-500 bg-emerald-500/10"
+                          className={`rounded-full text-xs font-bold px-3 py-1 ${
+                            r.status === "Accepted"
+                              ? "border-emerald-500/40 text-emerald-600 bg-emerald-500/10"
                               : "border-destructive/40 text-destructive bg-destructive/10"
-                          }
+                          }`}
                         >
-                          {req.status}
+                          {r.status}
                         </Badge>
                       )}
                     </div>
@@ -303,111 +425,193 @@ function FacultyDashboardHome() {
                 ))}
               </div>
             </Card>
+          </div>
 
-            {/* Active Supervised Projects */}
+          {/* Right 1 Col: Active Labs & Research Projects */}
+          <div className="space-y-4">
             <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <h2 className="text-base font-bold text-foreground flex items-center gap-2">
-                    <FolderKanban className="h-4 w-4 text-indigo-500" /> Active Research Projects
-                  </h2>
-                  <p className="text-xs text-muted-foreground">Supervised student research initiatives</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => (window.location.href = "/faculty/projects")}
-                  className="gap-1 text-xs font-semibold text-primary hover:text-primary/80"
-                >
-                  View All Projects <ArrowUpRight className="h-3.5 w-3.5" />
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <FolderKanban className="h-4 w-4 text-blue-500" /> Active Research Labs
+                </h3>
+                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 rounded-full">
+                  <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
                 </Button>
               </div>
 
-              <div className="space-y-4">
-                {activeProjects.map((proj) => (
-                  <div
-                    key={proj.id}
-                    className="rounded-2xl border border-border bg-background p-4 space-y-3 hover:border-indigo-500/30 transition-all"
-                  >
+              <div className="space-y-3">
+                {activeProjects.map((p) => (
+                  <div key={p.id} className="rounded-2xl border border-border bg-background p-4 space-y-2.5">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-bold text-foreground">{proj.title}</h3>
-                        <p className="text-xs text-muted-foreground">Lead Scholar: <span className="font-semibold text-foreground">{proj.leadStudent}</span> • {proj.domain}</p>
-                      </div>
-                      <Badge variant="outline" className="text-[0.65rem] border-indigo-500/30 text-indigo-500 bg-indigo-500/10">
-                        {proj.status}
+                      <h4 className="font-bold text-xs text-foreground leading-snug">{p.title}</h4>
+                      <Badge variant="outline" className="text-[0.65rem] font-bold px-2 py-0.5 rounded-full border-blue-500/40 text-blue-600 bg-blue-500/10 shrink-0">
+                        {p.status}
                       </Badge>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-semibold">
-                        <span className="text-muted-foreground">Milestone Completion</span>
-                        <span className="text-foreground">{proj.progress}%</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground font-semibold">
+                        <span>Milestone Progress</span>
+                        <span>{p.progress}%</span>
                       </div>
-                      <Progress value={proj.progress} className="h-2 rounded-full" />
+                      <Progress value={p.progress} className="h-1.5 rounded-full" />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[0.65rem] text-muted-foreground pt-1">
+                      <span>{p.studentsCount} Active Scholars</span>
+                      <span>Updated {p.lastUpdated}</span>
                     </div>
                   </div>
                 ))}
               </div>
             </Card>
           </div>
-
-          {/* Sidebar Right Column (1 Span) */}
-          <div className="space-y-6">
-            {/* Attention Required Card */}
-            <Card className="rounded-3xl border border-amber-500/30 bg-amber-500/5 p-6 shadow-sm space-y-4">
-              <h2 className="text-sm font-bold text-amber-600 dark:text-amber-400 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4" /> Requires Attention
-              </h2>
-
-              <div className="space-y-3 text-xs">
-                <div className="rounded-2xl border border-amber-500/20 bg-background p-3.5 space-y-1">
-                  <p className="font-bold text-foreground">Manuscript Draft Review</p>
-                  <p className="text-muted-foreground">"Edge Computing Security" submitted by Ethan Vance is waiting for review.</p>
-                  <span className="text-[0.65rem] text-amber-500 font-semibold">Due in 2 days</span>
-                </div>
-
-                <div className="rounded-2xl border border-amber-500/20 bg-background p-3.5 space-y-1">
-                  <p className="font-bold text-foreground">Supervision Sign-off</p>
-                  <p className="text-muted-foreground">Mid-term progress assessment for Maya Lin due for department submission.</p>
-                  <span className="text-[0.65rem] text-amber-500 font-semibold">Due tomorrow</span>
-                </div>
-              </div>
-            </Card>
-
-            {/* Recent Activity Timeline */}
-            <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-4">
-              <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-emerald-500" /> Faculty Activity Feed
-              </h2>
-
-              <div className="space-y-3 text-xs">
-                <div className="flex gap-3 items-start">
-                  <div className="grid h-6 w-6 place-items-center rounded-full bg-emerald-500/10 text-emerald-500 shrink-0 mt-0.5">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">Approved Project Milestone</p>
-                    <p className="text-[0.65rem] text-muted-foreground">Approved Chapter 3 for Alex Chen</p>
-                    <span className="text-[0.6rem] text-muted-foreground">2 hours ago</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-3 items-start">
-                  <div className="grid h-6 w-6 place-items-center rounded-full bg-indigo-500/10 text-indigo-500 shrink-0 mt-0.5">
-                    <BookOpen className="h-3.5 w-3.5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">Uploaded Research Reference</p>
-                    <p className="text-[0.65rem] text-muted-foreground">Added 2 papers to Lattice Cryptography</p>
-                    <span className="text-[0.6rem] text-muted-foreground">Yesterday</span>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
         </div>
       </div>
+
+      {/* FOCUSED FACULTY RESUBMISSION MODAL */}
+      <Dialog open={updateModalOpen} onOpenChange={setUpdateModalOpen}>
+        <DialogContent className="rounded-3xl max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <Edit className="h-5 w-5 text-blue-500" /> Update Faculty Application Information
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Modify your application attributes and re-upload verification proof. Submitting returns your application to the Admin Pending queue.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Admin Message Reminder */}
+            {dbUserStatus?.adminMessage && (
+              <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-3 text-xs space-y-1">
+                <span className="font-bold text-blue-600 flex items-center gap-1">
+                  <Mail className="h-3.5 w-3.5" /> Admin Request Instructions:
+                </span>
+                <p className="text-foreground leading-relaxed">"{dbUserStatus.adminMessage}"</p>
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Institution Name</Label>
+                <Input
+                  value={editInstitution}
+                  onChange={(e) => setEditInstitution(e.target.value)}
+                  className="rounded-xl text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Department</Label>
+                <Input
+                  value={editDepartment}
+                  onChange={(e) => setEditDepartment(e.target.value)}
+                  className="rounded-xl text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Designation / Title</Label>
+                <Input
+                  value={editDesignation}
+                  onChange={(e) => setEditDesignation(e.target.value)}
+                  className="rounded-xl text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Faculty Employee ID</Label>
+                <Input
+                  value={editFacultyId}
+                  onChange={(e) => setEditFacultyId(e.target.value)}
+                  className="rounded-xl text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">Research Interests</Label>
+              <Input
+                value={editResearchInterests}
+                onChange={(e) => setEditResearchInterests(e.target.value)}
+                placeholder="e.g. Distributed Systems, Neural Architecture Search"
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Areas of Expertise</Label>
+                <Input
+                  value={editAreasOfExpertise}
+                  onChange={(e) => setEditAreasOfExpertise(e.target.value)}
+                  placeholder="e.g. Deep Learning"
+                  className="rounded-xl text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">ORCID iD</Label>
+                <Input
+                  value={editOrcid}
+                  onChange={(e) => setEditOrcid(e.target.value)}
+                  placeholder="0000-0002-1825-0097"
+                  className="rounded-xl text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Document Re-upload */}
+            <div className="space-y-1.5 pt-1">
+              <Label className="text-xs font-semibold">Re-upload Verification Document</Label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="file"
+                  id="dashboard-doc-upload"
+                  accept="image/*,.pdf"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <label
+                  htmlFor="dashboard-doc-upload"
+                  className="cursor-pointer flex items-center gap-2 px-3.5 py-2 rounded-xl border border-border bg-background hover:bg-muted text-xs font-semibold transition-all"
+                >
+                  <Upload className="h-4 w-4 text-primary" /> Choose File
+                </label>
+                <span className="text-xs text-muted-foreground truncate">
+                  {newDocumentName ? newDocumentName : dbUserStatus?.verificationDocument ? "Current proof document attached" : "No new file selected"}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">Clarification Notes for Admin</Label>
+              <Textarea
+                placeholder="Explain the updates made to your credentials or document file..."
+                value={infoResponseText}
+                onChange={(e) => setInfoResponseText(e.target.value)}
+                className="rounded-xl text-xs min-h-[70px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setUpdateModalOpen(false)} className="rounded-xl text-xs font-semibold">
+              Cancel
+            </Button>
+            <Button
+              disabled={submittingResponse}
+              onClick={handleSubmitClarification}
+              className="rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs gap-1.5"
+            >
+              <Send className="h-3.5 w-3.5" /> Submit Updated Application
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

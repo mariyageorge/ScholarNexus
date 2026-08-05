@@ -80,8 +80,8 @@ export function getHomePathForRole(role?: string, email?: string, status?: strin
   const s = (status || "").toLowerCase();
   if (r === "admin" || e === "scholarnexusadmin@gmail.com") return "/admin";
   if (r === "faculty") {
-    if (s === "pending") return "/faculty-pending";
-    return "/faculty-dashboard";
+    if (s === "active" || s === "approved") return "/faculty-dashboard";
+    return "/faculty-pending";
   }
   return "/dashboard";
 }

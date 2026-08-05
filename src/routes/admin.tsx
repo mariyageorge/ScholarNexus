@@ -56,6 +56,8 @@ import {
   Copy,
   FileCheck,
   BookOpen,
+  HelpCircle,
+  Award,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -122,7 +124,7 @@ interface UserItem {
   name: string;
   email: string;
   role: string;
-  status: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted";
+  status: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted" | "Awaiting Applicant Response";
   createdAt: string;
   displayName?: string;
   affiliation?: string;
@@ -143,6 +145,21 @@ interface FacultyRequest extends UserItem {
   approvalDate?: string;
   approvedBy?: string;
   approvalReason?: string;
+  rejectionReason?: string;
+  rejectionDate?: string;
+  infoRequestMessage?: string;
+  adminMessage?: string;
+  requestedBy?: string;
+  requestedDate?: string;
+  institution?: string;
+  facultyId?: string;
+  areasOfExpertise?: string | string[];
+  orcid?: string;
+  verificationDocument?: string;
+  approvalStatus?: string;
+  updatedAt?: string;
+  infoResponse?: string;
+  applicationHistory?: { action: string; timestamp: string; details?: string; by?: string }[];
 }
 
 interface ProjectItem {
@@ -234,7 +251,7 @@ function AdminPage() {
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string>(() => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [approvalTab, setApprovalTab] = useState<"Pending" | "Approved" | "Rejected">("Pending");
+  const [approvalTab, setApprovalTab] = useState<"Pending" | "Awaiting Response" | "Approved" | "Rejected">("Pending");
 
   const [projectSearch, setProjectSearch] = useState("");
   const [projectStatusFilter, setProjectStatusFilter] = useState("All");
@@ -275,6 +292,28 @@ function AdminPage() {
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [approvalAction, setApprovalAction] = useState<"approve" | "reject">("approve");
   const [rejectionReason, setRejectionReason] = useState("");
+
+  // ── Faculty Approvals Portal States & Workflows ──
+  const [selectedApprovalUserId, setSelectedApprovalUserId] = useState<string | null>(null);
+  const [approvalSearch, setApprovalSearch] = useState("");
+  const [approvalStatusFilter, setApprovalStatusFilter] = useState("All");
+  const [approvalInstitutionFilter, setApprovalInstitutionFilter] = useState("All");
+  const [approvalDepartmentFilter, setApprovalDepartmentFilter] = useState("All");
+  const [approvalSort, setApprovalSort] = useState<"newest" | "oldest">("newest");
+
+  // Workflow Dialogs
+  const [approveDialogOpen, setApproveDialogOpen] = useState(false);
+  const [approveRemarks, setApproveRemarks] = useState("");
+
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReasonText, setRejectReasonText] = useState("");
+
+  const [requestInfoDialogOpen, setRequestInfoDialogOpen] = useState(false);
+  const [requestInfoMsg, setRequestInfoMsg] = useState("");
+  const [requestReasonText, setRequestReasonText] = useState("");
+  const [requestNotesText, setRequestNotesText] = useState("");
+
+  const [docPreviewModalOpen, setDocPreviewModalOpen] = useState(false);
 
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
   const [viewProjectModalOpen, setViewProjectModalOpen] = useState(false);
@@ -548,6 +587,235 @@ function AdminPage() {
       }
     } catch {
       toast.error("Failed to process faculty application.");
+    }
+  };
+
+  /* ── Enterprise Faculty Approvals Portal Logic ── */
+  const facultyUsersList = useMemo(() => {
+    return users.filter((u) => u.role === "faculty" && u.status !== "Deleted") as FacultyRequest[];
+  }, [users]);
+
+  const approvalPortalStats = useMemo(() => {
+    const pending = facultyUsersList.filter((f) => (f.status as string) === "Pending" || f.approvalStatus === "Pending" || (!f.status && !f.approvalStatus)).length;
+    const awaitingResponse = facultyUsersList.filter((f) => (f.status as string) === "Awaiting Applicant Response" || f.approvalStatus === "Info Requested").length;
+    const approved = facultyUsersList.filter((f) => f.status === "Active" || f.approvalStatus === "Approved").length;
+    const rejected = facultyUsersList.filter((f) => f.status === "Rejected" || f.approvalStatus === "Rejected").length;
+    return { pending, awaitingResponse, approved, rejected };
+  }, [facultyUsersList]);
+
+  const uniqueInstitutions = useMemo(() => {
+    const set = new Set<string>();
+    facultyUsersList.forEach((f) => {
+      const inst = f.institution || f.affiliation;
+      if (inst) set.add(inst);
+    });
+    return Array.from(set);
+  }, [facultyUsersList]);
+
+  const uniqueDepartments = useMemo(() => {
+    const set = new Set<string>();
+    facultyUsersList.forEach((f) => {
+      if (f.department) set.add(f.department);
+    });
+    return Array.from(set);
+  }, [facultyUsersList]);
+
+  const filteredFacultyApprovalsList = useMemo(() => {
+    return facultyUsersList.filter((f) => {
+      const fStatus = (f.status as string) || f.approvalStatus || "Pending";
+      const isPending = fStatus === "Pending" || f.approvalStatus === "Pending" || (!f.status && !f.approvalStatus);
+      const isAwaiting = fStatus === "Awaiting Applicant Response" || f.approvalStatus === "Info Requested";
+      const isApproved = fStatus === "Active" || f.approvalStatus === "Approved";
+      const isRejected = fStatus === "Rejected" || f.approvalStatus === "Rejected";
+
+      // Filter by Queue Tab
+      let matchTab = false;
+      if (approvalTab === "Pending") matchTab = isPending;
+      else if (approvalTab === "Awaiting Response") matchTab = isAwaiting;
+      else if (approvalTab === "Approved") matchTab = isApproved;
+      else if (approvalTab === "Rejected") matchTab = isRejected;
+
+      if (!matchTab) return false;
+
+      const q = approvalSearch.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        f.name.toLowerCase().includes(q) ||
+        f.email.toLowerCase().includes(q) ||
+        (f.facultyId && f.facultyId.toLowerCase().includes(q)) ||
+        (f.department && f.department.toLowerCase().includes(q));
+
+      const matchStatus =
+        approvalStatusFilter === "All" ||
+        (approvalStatusFilter === "Pending" && isPending) ||
+        (approvalStatusFilter === "Awaiting Applicant Response" && isAwaiting) ||
+        (approvalStatusFilter === "Approved" && isApproved) ||
+        (approvalStatusFilter === "Rejected" && isRejected);
+
+      const fInst = f.institution || f.affiliation || "Not Provided";
+      const matchInst = approvalInstitutionFilter === "All" || fInst === approvalInstitutionFilter;
+
+      const fDept = f.department || "Not Provided";
+      const matchDept = approvalDepartmentFilter === "All" || fDept === approvalDepartmentFilter;
+
+      return matchSearch && matchStatus && matchInst && matchDept;
+    }).sort((a, b) => {
+      const tA = new Date(a.createdAt).getTime();
+      const tB = new Date(b.createdAt).getTime();
+      return approvalSort === "newest" ? tB - tA : tA - tB;
+    });
+  }, [facultyUsersList, approvalTab, approvalSearch, approvalStatusFilter, approvalInstitutionFilter, approvalDepartmentFilter, approvalSort]);
+
+  const selectedApprovalUser = useMemo(() => {
+    if (selectedApprovalUserId) {
+      const found = facultyUsersList.find((f) => f.id === selectedApprovalUserId || f.email === selectedApprovalUserId);
+      if (found) return found;
+    }
+    return filteredFacultyApprovalsList[0] || facultyUsersList[0] || null;
+  }, [selectedApprovalUserId, facultyUsersList, filteredFacultyApprovalsList]);
+
+  const handleDownloadDoc = (docDataUrl?: string, userName?: string) => {
+    if (!docDataUrl || docDataUrl.trim() === "") {
+      toast.error("No verification document file attached to download.");
+      return;
+    }
+    try {
+      const a = document.createElement("a");
+      a.href = docDataUrl;
+      const cleanName = (userName || "Faculty").replace(/[^a-zA-Z0-9]/g, "_");
+      a.download = `Faculty_Verification_${cleanName}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.success(`Downloaded verification document for ${userName || "faculty applicant"}.`);
+    } catch (err) {
+      console.error("Failed to download document:", err);
+      toast.error("Failed to initiate document download.");
+    }
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!selectedApprovalUser) return;
+    const target = selectedApprovalUser;
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === target.id || u.email === target.email
+          ? { ...u, status: "Active", approvalStatus: "Approved", approvalReason: approveRemarks, approvedBy: "scholarnexusadmin@gmail.com", approvalDate: new Date().toISOString() }
+          : u
+      )
+    );
+    setApproveDialogOpen(false);
+    toast.success(`Faculty registration for ${target.name} approved successfully.`);
+    setApprovalTab("Approved");
+
+    try {
+      const res = await fetch("/api/admin/faculty/approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: target.id,
+          email: target.email,
+          action: "approve",
+          remarks: approveRemarks,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "Failed to update MongoDB record.");
+      }
+      fetchAdminData(false, true);
+    } catch {
+      toast.error("Network error executing approval.");
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!selectedApprovalUser || !rejectReasonText.trim()) return;
+    const target = selectedApprovalUser;
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === target.id || u.email === target.email
+          ? { ...u, status: "Rejected", approvalStatus: "Rejected", rejectionReason: rejectReasonText, rejectionDate: new Date().toISOString() }
+          : u
+      )
+    );
+    setRejectDialogOpen(false);
+    toast.info(`Faculty application for ${target.name} was Rejected.`);
+    setApprovalTab("Rejected");
+
+    try {
+      const res = await fetch("/api/admin/faculty/approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: target.id,
+          email: target.email,
+          action: "reject",
+          reason: rejectReasonText,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "Failed to update rejection in MongoDB.");
+      }
+      fetchAdminData(false, true);
+    } catch {
+      toast.error("Network error executing rejection.");
+    }
+  };
+
+  const handleConfirmRequestInfo = async () => {
+    if (!selectedApprovalUser) return;
+    const target = selectedApprovalUser;
+    const msg = (requestReasonText.trim() + (requestNotesText.trim() ? " - Notes: " + requestNotesText.trim() : "")) || requestInfoMsg.trim();
+    if (!msg) {
+      toast.error("Please enter a reason or notes for requesting additional information.");
+      return;
+    }
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === target.id || u.email === target.email
+          ? {
+              ...u,
+              status: "Awaiting Applicant Response",
+              approvalStatus: "Info Requested",
+              infoRequestMessage: msg,
+              adminMessage: msg,
+              requestedBy: "scholarnexusadmin@gmail.com",
+              requestedDate: new Date().toISOString(),
+            }
+          : u
+      )
+    );
+    setRequestInfoDialogOpen(false);
+    setRequestReasonText("");
+    setRequestNotesText("");
+    setRequestInfoMsg("");
+
+    toast.info(`Requested clarification from ${target.name}. Moved to Awaiting Response queue.`);
+    setApprovalTab("Awaiting Response");
+
+    try {
+      const res = await fetch("/api/admin/faculty/approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: target.id,
+          email: target.email,
+          action: "request_info",
+          infoMessage: msg,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "Failed to sync request with server.");
+      }
+      fetchAdminData(false, true);
+    } catch {
+      toast.error("Network error submitting request.");
     }
   };
 
@@ -1479,88 +1747,644 @@ function AdminPage() {
           </div>
         )}
 
-        {/* Section 3: Faculty Approvals View */}
+        {/* Section 3: Enterprise Faculty Approvals Portal */}
         {activeTab === "approvals" && (
           <div className="space-y-6">
-            <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-foreground">Faculty Approvals Portal</h2>
-                  <p className="text-xs text-muted-foreground mt-1">Review academic credentials and manage faculty access requests.</p>
-                </div>
-
-                <Tabs value={approvalTab} onValueChange={(v) => setApprovalTab(v as any)}>
-                  <TabsList className="rounded-xl border border-border bg-background p-1">
-                    <TabsTrigger value="Pending" className="rounded-lg text-xs font-medium">
-                      Pending ({facultyApprovals.filter((f) => f.status === "Pending").length})
-                    </TabsTrigger>
-                    <TabsTrigger value="Active" className="rounded-lg text-xs font-medium">
-                      Approved ({facultyApprovals.filter((f) => f.status === "Active").length})
-                    </TabsTrigger>
-                    <TabsTrigger value="Rejected" className="rounded-lg text-xs font-medium">
-                      Rejected ({facultyApprovals.filter((f) => f.status === "Rejected").length})
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredApprovals.length === 0 ? (
-                  <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
-                    No faculty applications found in "{approvalTab}" queue.
+            {/* Top Dashboard Summary Cards */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <Card className="rounded-2xl border-amber-500/30 bg-amber-500/5 p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">Pending</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-500/20 text-amber-600">
+                    <Clock className="h-4 w-4" />
                   </div>
-                ) : (
-                  filteredApprovals.map((f) => (
-                    <Card key={f.id} className="rounded-2xl border-border bg-card p-5 space-y-4 shadow-sm hover:border-primary/40 transition-all">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-10 w-10 border border-border">
-                            <AvatarFallback className="font-bold bg-primary/10 text-primary">
-                              {f.name.slice(0, 2).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <h3 className="font-semibold text-sm text-foreground">{f.name}</h3>
-                            <p className="text-xs text-muted-foreground">{f.email}</p>
-                          </div>
-                        </div>
-                        <Badge variant="outline" className={`text-[0.65rem] ${f.status === "Active" ? "border-emerald-500/40 text-emerald-500" : f.status === "Pending" ? "border-amber-500/40 text-amber-500" : "border-destructive/40 text-destructive"}`}>
-                          {f.status}
-                        </Badge>
-                      </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-amber-700 dark:text-amber-300">{approvalPortalStats.pending}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-amber-600">Awaiting initial verification</p>
+                </div>
+              </Card>
 
-                      <div className="space-y-1.5 text-xs">
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Department:</span>
-                          <span className="font-medium text-foreground">{f.department || "CS & AI"}</span>
-                        </div>
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Institution:</span>
-                          <span className="font-medium text-foreground">{f.affiliation || "University Partner"}</span>
-                        </div>
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Degree/CV:</span>
-                          <span className="font-medium text-primary underline cursor-pointer">{f.degree || "Ph.D. Computer Science"}</span>
-                        </div>
-                      </div>
+              <Card className="rounded-2xl border-blue-500/30 bg-blue-500/5 p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">Awaiting Response</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-blue-500/20 text-blue-600">
+                    <HelpCircle className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-blue-700 dark:text-blue-300">{approvalPortalStats.awaitingResponse}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-blue-600">Info requested from applicant</p>
+                </div>
+              </Card>
 
-                      {f.status === "Pending" && (
-                        <div className="flex items-center gap-2 pt-2 border-t border-border">
-                          <Button onClick={() => { setSelectedFaculty(f); setApprovalAction("approve"); setApprovalModalOpen(true); }} size="sm" className="flex-1 gap-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-xs">
-                            <Check className="h-3.5 w-3.5" />
-                            Approve
-                          </Button>
-                          <Button onClick={() => { setSelectedFaculty(f); setApprovalAction("reject"); setApprovalModalOpen(true); }} size="sm" variant="outline" className="flex-1 gap-1.5 rounded-xl text-destructive border-destructive/30 hover:bg-destructive/10 text-xs">
-                            <Ban className="h-3.5 w-3.5" />
-                            Reject
-                          </Button>
-                        </div>
-                      )}
-                    </Card>
-                  ))
-                )}
+              <Card className="rounded-2xl border-emerald-500/30 bg-emerald-500/5 p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Approved</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-500/20 text-emerald-600">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{approvalPortalStats.approved}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-emerald-600">Verified active faculty</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-rose-500/30 bg-rose-500/5 p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-rose-700 dark:text-rose-300">Rejected</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-rose-500/20 text-rose-600">
+                    <XCircle className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-rose-700 dark:text-rose-300">{approvalPortalStats.rejected}</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-rose-600">Declined applications</p>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-indigo-500/30 bg-indigo-500/5 p-4 shadow-xs col-span-2 sm:col-span-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Avg Review Time</span>
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-indigo-500/20 text-indigo-600">
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-indigo-700 dark:text-indigo-300">&lt; 24 Hours</span>
+                  <p className="mt-1 text-[0.7rem] font-medium text-indigo-600">Verification SLA</p>
+                </div>
+              </Card>
+            </div>
+
+            {/* Application Queue Status Tabs */}
+            <Card className="rounded-2xl border-border bg-card p-3 shadow-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setApprovalTab("Pending")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    approvalTab === "Pending"
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs"
+                      : "text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>Pending</span>
+                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-amber-500/30 text-amber-600 bg-amber-500/10">
+                    {approvalPortalStats.pending}
+                  </Badge>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setApprovalTab("Awaiting Response")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    approvalTab === "Awaiting Response"
+                      ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shadow-xs"
+                      : "text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                  <span>Awaiting Response</span>
+                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-blue-500/30 text-blue-600 bg-blue-500/10">
+                    {approvalPortalStats.awaitingResponse}
+                  </Badge>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setApprovalTab("Approved")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    approvalTab === "Approved"
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs"
+                      : "text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Approved</span>
+                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-emerald-500/30 text-emerald-600 bg-emerald-500/10">
+                    {approvalPortalStats.approved}
+                  </Badge>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setApprovalTab("Rejected")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    approvalTab === "Rejected"
+                      ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 shadow-xs"
+                      : "text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  <span>Rejected</span>
+                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-rose-500/30 text-rose-600 bg-rose-500/10">
+                    {approvalPortalStats.rejected}
+                  </Badge>
+                </button>
               </div>
             </Card>
+
+            {/* Search & Filter Toolbar */}
+            <Card className="rounded-2xl border-border bg-card p-4 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by faculty name, email, or employee ID..."
+                    value={approvalSearch}
+                    onChange={(e) => setApprovalSearch(e.target.value)}
+                    className="pl-9 rounded-xl text-xs"
+                  />
+                </div>
+
+                <Select value={approvalStatusFilter} onValueChange={setApprovalStatusFilter}>
+                  <SelectTrigger className="w-44 rounded-xl text-xs">
+                    <SelectValue placeholder="Status Filter" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs">
+                    <SelectItem value="All">All Statuses ({facultyUsersList.length})</SelectItem>
+                    <SelectItem value="Pending">Pending Review</SelectItem>
+                    <SelectItem value="Awaiting Applicant Response">Awaiting Response</SelectItem>
+                    <SelectItem value="Approved">Approved</SelectItem>
+                    <SelectItem value="Rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={approvalInstitutionFilter} onValueChange={setApprovalInstitutionFilter}>
+                  <SelectTrigger className="w-48 rounded-xl text-xs">
+                    <SelectValue placeholder="Institution" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs max-h-56">
+                    <SelectItem value="All">All Institutions</SelectItem>
+                    {uniqueInstitutions.map((inst) => (
+                      <SelectItem key={inst} value={inst}>{inst}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={approvalDepartmentFilter} onValueChange={setApprovalDepartmentFilter}>
+                  <SelectTrigger className="w-44 rounded-xl text-xs">
+                    <SelectValue placeholder="Department" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs max-h-56">
+                    <SelectItem value="All">All Departments</SelectItem>
+                    {uniqueDepartments.map((dept) => (
+                      <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={approvalSort} onValueChange={(v) => setApprovalSort(v as any)}>
+                  <SelectTrigger className="w-36 rounded-xl text-xs">
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs">
+                    <SelectItem value="newest">Newest First</SelectItem>
+                    <SelectItem value="oldest">Oldest First</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </Card>
+
+            {/* Enterprise Two-Panel Portal */}
+            <div className="grid gap-6 lg:grid-cols-12 min-h-[600px]">
+              {/* LEFT PANEL: Applications Directory Feed (5 cols) */}
+              <Card className="lg:col-span-5 rounded-3xl border-border bg-card p-4 shadow-sm flex flex-col space-y-3 max-h-[750px] overflow-hidden">
+                <div className="flex items-center justify-between px-2 pb-2 border-b border-border">
+                  <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                    {approvalTab} Applications ({filteredFacultyApprovalsList.length})
+                  </span>
+                  <Badge variant="outline" className="text-[0.65rem] font-semibold">
+                    Click to select & inspect
+                  </Badge>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                  {filteredFacultyApprovalsList.length === 0 ? (
+                    <div className="py-16 text-center space-y-3">
+                      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-muted/40 text-muted-foreground mx-auto">
+                        <CheckCircle2 className="h-6 w-6" />
+                      </div>
+                      <p className="text-xs font-semibold text-foreground">No applications in this tab</p>
+                      <p className="text-[0.7rem] text-muted-foreground max-w-xs mx-auto">
+                        No faculty applications match the active status tab "{approvalTab}" and filter criteria.
+                      </p>
+                    </div>
+                  ) : (
+                    filteredFacultyApprovalsList.map((f) => {
+                      const isSelected = (selectedApprovalUser?.id === f.id || selectedApprovalUser?.email === f.email);
+                      const fStatus = (f.status as string) || f.approvalStatus || "Pending";
+                      return (
+                        <div
+                          key={f.id || f.email}
+                          onClick={() => setSelectedApprovalUserId(f.id || f.email)}
+                          className={`cursor-pointer rounded-2xl border p-3.5 transition-all space-y-2 ${
+                            isSelected
+                              ? "border-primary bg-primary/5 shadow-xs ring-1 ring-primary/30"
+                              : "border-border bg-background hover:border-primary/40 hover:bg-muted/20"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-10 w-10 border border-border shrink-0">
+                                <AvatarFallback className="font-bold text-xs bg-primary/10 text-primary">
+                                  {f.name.slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-xs text-foreground truncate">{f.name}</h4>
+                                <p className="text-[0.7rem] text-muted-foreground truncate">{f.designation || "Faculty Applicant"}</p>
+                              </div>
+                            </div>
+
+                            <Badge
+                              variant="outline"
+                              className={`text-[0.62rem] px-2 py-0.5 rounded-full font-semibold shrink-0 ${
+                                fStatus === "Active" || fStatus === "Approved"
+                                  ? "border-emerald-500/40 text-emerald-600 bg-emerald-500/10"
+                                  : fStatus === "Awaiting Applicant Response" || fStatus === "Info Requested"
+                                  ? "border-blue-500/40 text-blue-600 bg-blue-500/10"
+                                  : fStatus === "Rejected"
+                                  ? "border-rose-500/40 text-rose-600 bg-rose-500/10"
+                                  : "border-amber-500/40 text-amber-600 bg-amber-500/10"
+                              }`}
+                            >
+                              {fStatus === "Awaiting Applicant Response" || fStatus === "Info Requested" ? "Awaiting Response" : fStatus}
+                            </Badge>
+                          </div>
+
+                          <div className="space-y-1 text-[0.7rem] text-muted-foreground">
+                            <p className="truncate font-medium text-foreground">
+                              {f.institution || f.affiliation || "Not Provided"}
+                            </p>
+                            <div className="flex items-center justify-between">
+                              <span>{f.department || "Not Provided"}</span>
+                              <span className="text-[0.65rem]">{new Date(f.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </Card>
+
+              {/* RIGHT PANEL: Inspection Workspace (7 cols) */}
+              <Card className="lg:col-span-7 rounded-3xl border-border bg-card p-6 shadow-sm flex flex-col justify-between space-y-6">
+                {!selectedApprovalUser ? (
+                  <div className="my-auto py-20 text-center space-y-3">
+                    <div className="grid h-16 w-16 place-items-center rounded-3xl bg-primary/10 text-primary mx-auto">
+                      <UserCheck className="h-8 w-8" />
+                    </div>
+                    <h3 className="text-base font-bold text-foreground">Select a Faculty Application</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      Choose a faculty registration card from the left directory to inspect credentials, application history, and execute workflow actions.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Selected Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-border">
+                      <div className="flex items-center gap-3.5">
+                        <Avatar className="h-14 w-14 border-2 border-primary/20 shrink-0">
+                          <AvatarFallback className="font-bold text-base bg-emerald-500/10 text-emerald-500">
+                            {selectedApprovalUser.name.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-bold text-foreground">{selectedApprovalUser.name}</h3>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
+                                selectedApprovalUser.status === "Active" || selectedApprovalUser.approvalStatus === "Approved"
+                                  ? "border-emerald-500/40 text-emerald-600 bg-emerald-500/10"
+                                  : selectedApprovalUser.status === "Awaiting Applicant Response" || selectedApprovalUser.approvalStatus === "Info Requested"
+                                  ? "border-blue-500/40 text-blue-600 bg-blue-500/10"
+                                  : selectedApprovalUser.status === "Rejected"
+                                  ? "border-rose-500/40 text-rose-600 bg-rose-500/10"
+                                  : "border-amber-500/40 text-amber-600 bg-amber-500/10"
+                              }`}
+                            >
+                              {selectedApprovalUser.status === "Awaiting Applicant Response" || selectedApprovalUser.approvalStatus === "Info Requested" ? "Awaiting Response" : (selectedApprovalUser.status || selectedApprovalUser.approvalStatus || "Pending")}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{selectedApprovalUser.email}</p>
+                        </div>
+                      </div>
+
+                      {/* Workflow Action Buttons (Strictly status scoped) */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* PENDING: Show Approve, Reject, Request Info */}
+                        {(selectedApprovalUser.status === "Pending" || selectedApprovalUser.approvalStatus === "Pending" || (!selectedApprovalUser.status && !selectedApprovalUser.approvalStatus)) && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setRequestReasonText("");
+                                setRequestNotesText("");
+                                setRequestInfoMsg("");
+                                setRequestInfoDialogOpen(true);
+                              }}
+                              className="gap-1.5 rounded-xl text-xs font-semibold border-blue-500/30 text-blue-600 hover:bg-blue-500/10"
+                            >
+                              <HelpCircle className="h-3.5 w-3.5" /> Request Info
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setRejectReasonText("");
+                                setRejectDialogOpen(true);
+                              }}
+                              className="gap-1.5 rounded-xl text-xs font-semibold border-destructive/30 text-destructive hover:bg-destructive/10"
+                            >
+                              <Ban className="h-3.5 w-3.5" /> Reject
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setApproveRemarks("");
+                                setApproveDialogOpen(true);
+                              }}
+                              className="gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20"
+                            >
+                              <Check className="h-3.5 w-3.5" /> Approve
+                            </Button>
+                          </>
+                        )}
+
+                        {/* AWAITING APPLICANT RESPONSE */}
+                        {(selectedApprovalUser.status === "Awaiting Applicant Response" || selectedApprovalUser.approvalStatus === "Info Requested") && (
+                          selectedApprovalUser.infoResponse?.trim() ? (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setRejectReasonText("");
+                                  setRejectDialogOpen(true);
+                                }}
+                                className="gap-1.5 rounded-xl text-xs font-semibold border-destructive/30 text-destructive hover:bg-destructive/10"
+                              >
+                                <Ban className="h-3.5 w-3.5" /> Reject Application
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setApproveRemarks("");
+                                  setApproveDialogOpen(true);
+                                }}
+                                className="gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20"
+                              >
+                                <Check className="h-3.5 w-3.5" /> Approve Application
+                              </Button>
+                            </>
+                          ) : (
+                            <Badge variant="outline" className="border-blue-500/40 text-blue-600 bg-blue-500/10 px-3 py-1.5 rounded-xl font-bold text-xs gap-1.5">
+                              <Clock className="h-4 w-4 text-blue-500" /> Waiting for Applicant Response
+                            </Badge>
+                          )
+                        )}
+
+                        {/* APPROVED: Badge only */}
+                        {(selectedApprovalUser.status === "Active" || selectedApprovalUser.approvalStatus === "Approved") && (
+                          <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 px-3 py-1.5 rounded-xl font-bold text-xs gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Approved Faculty
+                          </Badge>
+                        )}
+
+                        {/* REJECTED: Badge only */}
+                        {(selectedApprovalUser.status === "Rejected" || selectedApprovalUser.approvalStatus === "Rejected") && (
+                          <Badge variant="outline" className="border-rose-500/40 text-rose-600 bg-rose-500/10 px-3 py-1.5 rounded-xl font-bold text-xs gap-1.5">
+                            <XCircle className="h-4 w-4 text-rose-500" /> Application Rejected
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Status Information Details Box */}
+                    {(selectedApprovalUser.status === "Awaiting Applicant Response" || selectedApprovalUser.approvalStatus === "Info Requested") && (
+                      <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 space-y-3 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                            <HelpCircle className="h-4 w-4" /> Information Request Log
+                          </span>
+                          <span className="text-[0.68rem] text-muted-foreground">
+                            Requested On: {new Date(selectedApprovalUser.requestedDate || selectedApprovalUser.updatedAt || Date.now()).toLocaleString()}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[0.68rem] font-bold text-muted-foreground">Admin Request Message:</span>
+                          <p className="text-foreground leading-relaxed pl-3 border-l-2 border-blue-500 font-medium">
+                            "{selectedApprovalUser.adminMessage || selectedApprovalUser.infoRequestMessage || "Please update your verification proof document."}"
+                          </p>
+                        </div>
+
+                        {selectedApprovalUser.infoResponse?.trim() ? (
+                          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 space-y-1">
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Applicant Response Submitted:
+                            </span>
+                            <p className="text-foreground font-semibold leading-relaxed pl-3 border-l-2 border-emerald-500">
+                              "{selectedApprovalUser.infoResponse}"
+                            </p>
+                            <p className="text-[0.68rem] text-emerald-600 dark:text-emerald-400 font-bold pt-1">
+                              Response received. Click Approve or Reject above to complete decision.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="text-[0.68rem] text-muted-foreground flex justify-between pt-1">
+                            <span>Requested By: {selectedApprovalUser.requestedBy || "scholarnexusadmin@gmail.com"}</span>
+                            <span className="font-semibold text-blue-600">Awaiting applicant update</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {(selectedApprovalUser.status === "Active" || selectedApprovalUser.approvalStatus === "Approved") && (
+                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4" /> Approval Details
+                          </span>
+                          <span className="text-[0.68rem] text-muted-foreground">
+                            Approved On: {new Date(selectedApprovalUser.approvalDate || selectedApprovalUser.updatedAt || Date.now()).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="text-foreground leading-relaxed pl-5 border-l-2 border-emerald-500">
+                          "{selectedApprovalUser.approvalReason || "Faculty credentials and institutional affiliation verified."}"
+                        </p>
+                        <p className="text-[0.68rem] text-muted-foreground pt-1">Approved By: {selectedApprovalUser.approvedBy || "scholarnexusadmin@gmail.com"}</p>
+                      </div>
+                    )}
+
+                    {(selectedApprovalUser.status === "Rejected" || selectedApprovalUser.approvalStatus === "Rejected") && (
+                      <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                            <XCircle className="h-4 w-4" /> Rejection Record
+                          </span>
+                          <span className="text-[0.68rem] text-muted-foreground">
+                            Rejected On: {new Date(selectedApprovalUser.rejectionDate || selectedApprovalUser.updatedAt || Date.now()).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="text-foreground leading-relaxed pl-5 border-l-2 border-rose-500">
+                          "{selectedApprovalUser.rejectionReason || selectedApprovalUser.approvalReason || "Credentials could not be authenticated."}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Personal & Academic Cards */}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <User className="h-3.5 w-3.5 text-primary" /> Personal Information
+                        </h4>
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between"><span className="text-muted-foreground">Full Name:</span><span className="font-semibold text-foreground">{selectedApprovalUser.name}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Email:</span><span className="font-semibold text-foreground">{selectedApprovalUser.email}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Phone:</span><span className="font-semibold text-foreground">{selectedApprovalUser.phone || "Not Provided"}</span></div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <Building className="h-3.5 w-3.5 text-indigo-500" /> Academic Information
+                        </h4>
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between"><span className="text-muted-foreground">Institution:</span><span className="font-semibold text-foreground truncate max-w-[160px]">{selectedApprovalUser.institution || selectedApprovalUser.affiliation || "Not Provided"}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Department:</span><span className="font-semibold text-foreground">{selectedApprovalUser.department || "Not Provided"}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Designation:</span><span className="font-semibold text-foreground">{selectedApprovalUser.designation || "Not Provided"}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Faculty ID:</span><span className="font-mono font-bold text-foreground">{selectedApprovalUser.facultyId || "Not Provided"}</span></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Research Profile */}
+                    <div className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <BookOpen className="h-3.5 w-3.5 text-emerald-500" /> Research Profile
+                      </h4>
+                      <div className="space-y-1.5 text-xs">
+                        <div>
+                          <span className="text-muted-foreground block font-medium">Research Interests:</span>
+                          <span className="font-semibold text-foreground">{Array.isArray(selectedApprovalUser.researchInterests) ? selectedApprovalUser.researchInterests.join(", ") : (selectedApprovalUser.researchInterests || "Not Provided")}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block font-medium">Areas of Expertise:</span>
+                          <span className="font-semibold text-foreground">{Array.isArray(selectedApprovalUser.areasOfExpertise) ? selectedApprovalUser.areasOfExpertise.join(", ") : (selectedApprovalUser.areasOfExpertise || "Not Provided")}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-border/50">
+                          <span className="text-muted-foreground">ORCID iD:</span>
+                          <span className="font-mono font-bold text-primary">{selectedApprovalUser.orcid || "Not Provided"}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Verification Documents */}
+                    <div className="rounded-2xl border border-border bg-background p-4 space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                        <span className="flex items-center gap-1.5"><FileCheck className="h-3.5 w-3.5 text-purple-500" /> Verification Documents</span>
+                        <span className={`text-[0.65rem] font-semibold ${selectedApprovalUser.verificationDocument ? "text-emerald-500" : "text-amber-500"}`}>
+                          {selectedApprovalUser.verificationDocument ? "Proof Uploaded" : "No Document Uploaded"}
+                        </span>
+                      </h4>
+
+                      <div className="flex items-center justify-between rounded-xl border border-border p-3 bg-card">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-9 w-9 place-items-center rounded-xl bg-purple-500/10 text-purple-500 font-bold">
+                            <FileText className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-foreground">Faculty ID Card / Institutional Proof</p>
+                            <p className="text-[0.68rem] text-muted-foreground">
+                              {selectedApprovalUser.verificationDocument ? "Verification Document File Attached" : "Applicant did not attach proof"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!selectedApprovalUser.verificationDocument}
+                            onClick={() => setDocPreviewModalOpen(true)}
+                            className="gap-1.5 rounded-xl text-xs font-semibold h-8"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Preview
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!selectedApprovalUser.verificationDocument}
+                            onClick={() => handleDownloadDoc(selectedApprovalUser.verificationDocument, selectedApprovalUser.name)}
+                            className="gap-1.5 rounded-xl text-xs font-semibold h-8"
+                          >
+                            <Download className="h-3.5 w-3.5" /> Download
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Application History Timeline */}
+                    <div className="rounded-2xl border border-border bg-background p-4 space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-amber-500" /> Application History Timeline
+                      </h4>
+
+                      <div className="space-y-2">
+                        {Array.isArray(selectedApprovalUser.applicationHistory) && selectedApprovalUser.applicationHistory.length > 0 ? (
+                          selectedApprovalUser.applicationHistory.map((item, idx) => (
+                            <div key={idx} className="flex items-start gap-3 text-xs border-l-2 border-primary/30 pl-3 py-1">
+                              <div className="grid h-5 w-5 place-items-center rounded-full bg-primary/10 text-primary text-[0.6rem] font-bold shrink-0 mt-0.5">
+                                {idx + 1}
+                              </div>
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-foreground">{item.action}</span>
+                                  <span className="text-[0.65rem] text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</span>
+                                </div>
+                                {item.details && <p className="text-[0.7rem] text-muted-foreground">"{item.details}"</p>}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-4 text-center text-xs">
+                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2 space-y-0.5">
+                              <span className="font-bold text-[0.68rem] text-emerald-600">Application Created</span>
+                              <p className="text-[0.62rem] text-muted-foreground">{new Date(selectedApprovalUser.createdAt).toLocaleDateString()}</p>
+                            </div>
+                            <div className={`rounded-xl border p-2 space-y-0.5 ${selectedApprovalUser.verificationDocument ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-card opacity-60"}`}>
+                              <span className={`font-bold text-[0.68rem] ${selectedApprovalUser.verificationDocument ? "text-emerald-600" : "text-muted-foreground"}`}>Documents Uploaded</span>
+                              <p className="text-[0.62rem] text-muted-foreground">{selectedApprovalUser.verificationDocument ? "Uploaded" : "None"}</p>
+                            </div>
+                            <div className={`rounded-xl border p-2 space-y-0.5 ${selectedApprovalUser.status === "Awaiting Applicant Response" ? "border-blue-500/30 bg-blue-500/5" : "border-border bg-card opacity-60"}`}>
+                              <span className={`font-bold text-[0.68rem] ${selectedApprovalUser.status === "Awaiting Applicant Response" ? "text-blue-600" : "text-muted-foreground"}`}>Info Requested</span>
+                              <p className="text-[0.62rem] text-muted-foreground">{selectedApprovalUser.requestedDate ? new Date(selectedApprovalUser.requestedDate).toLocaleDateString() : "N/A"}</p>
+                            </div>
+                            <div className={`rounded-xl border p-2 space-y-0.5 ${selectedApprovalUser.status === "Active" ? "border-emerald-500/30 bg-emerald-500/5" : selectedApprovalUser.status === "Rejected" ? "border-rose-500/30 bg-rose-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+                              <span className={`font-bold text-[0.68rem] ${selectedApprovalUser.status === "Active" ? "text-emerald-600" : selectedApprovalUser.status === "Rejected" ? "text-rose-600" : "text-amber-600"}`}>
+                                {selectedApprovalUser.status || "Pending"}
+                              </span>
+                              <p className="text-[0.62rem] text-muted-foreground">Current Status</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
           </div>
         )}
 
@@ -2673,6 +3497,207 @@ function AdminPage() {
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setAnnouncementModalOpen(false)} className="rounded-xl text-xs">Cancel</Button>
             <Button onClick={handleSaveAnnouncement} className="rounded-xl gradient-brand text-primary-foreground text-xs">Publish Announcement</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Workflow Modal 1: Approve Faculty Confirmation Dialog */}
+      <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
+        <DialogContent className="rounded-3xl max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Approve Faculty Application
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Grant official Faculty Portal access and academic advisor credentials.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-2xl border border-border bg-muted/20 p-3.5 text-xs space-y-1">
+              <p className="font-bold text-foreground">{selectedApprovalUser?.name}</p>
+              <p className="text-muted-foreground">{selectedApprovalUser?.institution || selectedApprovalUser?.affiliation} — {selectedApprovalUser?.department || "Computer Science"}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Optional Admin Remarks</Label>
+              <Textarea
+                placeholder="e.g. Credentials verified with Department Head office."
+                value={approveRemarks}
+                onChange={(e) => setApproveRemarks(e.target.value)}
+                className="rounded-xl text-xs min-h-[80px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setApproveDialogOpen(false)} className="rounded-xl text-xs font-semibold">
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmApprove} className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs">
+              Confirm Approval
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Workflow Modal 2: Reject Faculty Dialog (Mandatory Reason) */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="rounded-3xl max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
+              <Ban className="h-5 w-5" /> Reject Faculty Application
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Decline access to the Faculty Portal. A mandatory rejection reason is required.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-3.5 text-xs space-y-1">
+              <p className="font-bold text-foreground">{selectedApprovalUser?.name}</p>
+              <p className="text-muted-foreground">{selectedApprovalUser?.email}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold flex items-center justify-between">
+                <span>Rejection Reason *</span>
+                <span className="text-[0.65rem] text-destructive font-bold">Mandatory</span>
+              </Label>
+              <Textarea
+                placeholder="e.g. Verification document could not be authenticated with institutional registry."
+                value={rejectReasonText}
+                onChange={(e) => setRejectReasonText(e.target.value)}
+                className="rounded-xl text-xs min-h-[100px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setRejectDialogOpen(false)} className="rounded-xl text-xs font-semibold">
+              Cancel
+            </Button>
+            <Button
+              disabled={!rejectReasonText.trim()}
+              onClick={handleConfirmReject}
+              className="rounded-xl bg-destructive hover:bg-destructive/90 text-white font-bold text-xs"
+            >
+              Reject Application
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Workflow Modal 3: Request Additional Information Dialog */}
+      <Dialog open={requestInfoDialogOpen} onOpenChange={setRequestInfoDialogOpen}>
+        <DialogContent className="rounded-3xl max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-blue-500 flex items-center gap-2">
+              <HelpCircle className="h-5 w-5" /> Request Additional Information
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Specify what additional credentials or proof the applicant must update. Updates status to Awaiting Applicant Response.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs space-y-1">
+              <p className="font-bold text-foreground">{selectedApprovalUser?.name}</p>
+              <p className="text-muted-foreground">{selectedApprovalUser?.email}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold flex items-center justify-between">
+                <span>Reason for Request *</span>
+                <span className="text-[0.65rem] text-blue-600 font-bold">Mandatory</span>
+              </Label>
+              <Input
+                placeholder="e.g. Please re-upload your official institutional faculty ID card or appointment letter."
+                value={requestReasonText}
+                onChange={(e) => setRequestReasonText(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Optional Notes / Specific Guidelines</Label>
+              <Textarea
+                placeholder="e.g. Ensure the document clearly displays your employee ID number, department seal, and current academic year."
+                value={requestNotesText}
+                onChange={(e) => setRequestNotesText(e.target.value)}
+                className="rounded-xl text-xs min-h-[80px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setRequestInfoDialogOpen(false)} className="rounded-xl text-xs font-semibold">
+              Cancel
+            </Button>
+            <Button
+              disabled={!requestReasonText.trim() && !requestInfoMsg.trim()}
+              onClick={handleConfirmRequestInfo}
+              className="rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+            >
+              Send Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Verification Document Preview Modal */}
+      <Dialog open={docPreviewModalOpen} onOpenChange={setDocPreviewModalOpen}>
+        <DialogContent className="rounded-3xl max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <FileCheck className="h-5 w-5 text-purple-500" /> Verification Document Preview
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Institutional proof submitted by <span className="font-semibold text-foreground">{selectedApprovalUser?.name}</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 text-center space-y-4">
+            {selectedApprovalUser?.verificationDocument ? (
+              <div className="overflow-hidden rounded-2xl border border-border bg-black/5 dark:bg-white/5 max-h-[500px] flex items-center justify-center p-3">
+                {selectedApprovalUser.verificationDocument.startsWith("data:application/pdf") || selectedApprovalUser.verificationDocument.endsWith(".pdf") ? (
+                  <iframe
+                    src={selectedApprovalUser.verificationDocument}
+                    className="w-full h-[450px] rounded-xl border border-border"
+                    title="PDF Document Preview"
+                  />
+                ) : (
+                  <img
+                    src={selectedApprovalUser.verificationDocument}
+                    alt="Faculty Identification Proof"
+                    className="max-h-[450px] w-auto object-contain rounded-xl shadow-md"
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border p-10 bg-muted/20 space-y-2">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-500/10 text-amber-500 mx-auto font-bold">
+                  <FileText className="h-6 w-6" />
+                </div>
+                <p className="text-xs font-bold text-foreground">No Document Uploaded</p>
+                <p className="text-[0.7rem] text-muted-foreground max-w-xs mx-auto">
+                  The applicant has not attached a faculty ID card or institutional proof document.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDocPreviewModalOpen(false)} className="rounded-xl text-xs font-semibold">
+              Close Preview
+            </Button>
+            <Button
+              disabled={!selectedApprovalUser?.verificationDocument}
+              onClick={() => handleDownloadDoc(selectedApprovalUser?.verificationDocument, selectedApprovalUser?.name)}
+              className="rounded-xl bg-primary text-primary-foreground font-semibold text-xs gap-1.5"
+            >
+              <Download className="h-3.5 w-3.5" /> Download Document
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
