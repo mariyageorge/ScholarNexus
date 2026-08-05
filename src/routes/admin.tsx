@@ -246,12 +246,11 @@ function AdminPage() {
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState("All");
   const [userStatusFilter, setUserStatusFilter] = useState("All");
-  const [showDeletedUsers, setShowDeletedUsers] = useState(false);
   const [userPage, setUserPage] = useState(1);
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string>(() => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [approvalTab, setApprovalTab] = useState<"Pending" | "Awaiting Response" | "Approved" | "Rejected">("Pending");
+  const [approvalTab, setApprovalTab] = useState<"All" | "Pending" | "Awaiting Response" | "Approved" | "Rejected">("All");
 
   const [projectSearch, setProjectSearch] = useState("");
   const [projectStatusFilter, setProjectStatusFilter] = useState("All");
@@ -358,10 +357,9 @@ function AdminPage() {
     else if (!isSilent && users.length === 0) setLoading(true);
 
     try {
-      const includeDeleted = showDeletedUsers || userStatusFilter === "Deleted";
       const [statsRes, usersRes, approvalsRes, projectsRes, papersRes, annRes, logsRes] = await Promise.all([
         fetch("/api/admin/stats"),
-        fetch(`/api/admin/users?includeDeleted=${includeDeleted}`),
+        fetch("/api/admin/users"),
         fetch("/api/admin/faculty/approval?status=All"),
         fetch("/api/admin/projects"),
         fetch("/api/admin/papers"),
@@ -396,7 +394,7 @@ function AdminPage() {
     if (session?.role === "admin") {
       fetchAdminData();
     }
-  }, [session, showDeletedUsers]);
+  }, [session]);
 
   // Demo Switch Handler for testing
   const handleEnableDemoAdmin = () => {
@@ -596,11 +594,12 @@ function AdminPage() {
   }, [users]);
 
   const approvalPortalStats = useMemo(() => {
+    const all = facultyUsersList.length;
     const pending = facultyUsersList.filter((f) => (f.status as string) === "Pending" || f.approvalStatus === "Pending" || (!f.status && !f.approvalStatus)).length;
     const awaitingResponse = facultyUsersList.filter((f) => (f.status as string) === "Awaiting Applicant Response" || f.approvalStatus === "Info Requested").length;
     const approved = facultyUsersList.filter((f) => f.status === "Active" || f.approvalStatus === "Approved").length;
     const rejected = facultyUsersList.filter((f) => f.status === "Rejected" || f.approvalStatus === "Rejected").length;
-    return { pending, awaitingResponse, approved, rejected };
+    return { all, pending, awaitingResponse, approved, rejected };
   }, [facultyUsersList]);
 
   const uniqueInstitutions = useMemo(() => {
@@ -630,7 +629,8 @@ function AdminPage() {
 
       // Filter by Queue Tab
       let matchTab = false;
-      if (approvalTab === "Pending") matchTab = isPending;
+      if (approvalTab === "All") matchTab = true;
+      else if (approvalTab === "Pending") matchTab = isPending;
       else if (approvalTab === "Awaiting Response") matchTab = isAwaiting;
       else if (approvalTab === "Approved") matchTab = isApproved;
       else if (approvalTab === "Rejected") matchTab = isRejected;
@@ -645,26 +645,19 @@ function AdminPage() {
         (f.facultyId && f.facultyId.toLowerCase().includes(q)) ||
         (f.department && f.department.toLowerCase().includes(q));
 
-      const matchStatus =
-        approvalStatusFilter === "All" ||
-        (approvalStatusFilter === "Pending" && isPending) ||
-        (approvalStatusFilter === "Awaiting Applicant Response" && isAwaiting) ||
-        (approvalStatusFilter === "Approved" && isApproved) ||
-        (approvalStatusFilter === "Rejected" && isRejected);
-
       const fInst = f.institution || f.affiliation || "Not Provided";
       const matchInst = approvalInstitutionFilter === "All" || fInst === approvalInstitutionFilter;
 
       const fDept = f.department || "Not Provided";
       const matchDept = approvalDepartmentFilter === "All" || fDept === approvalDepartmentFilter;
 
-      return matchSearch && matchStatus && matchInst && matchDept;
+      return matchSearch && matchInst && matchDept;
     }).sort((a, b) => {
       const tA = new Date(a.createdAt).getTime();
       const tB = new Date(b.createdAt).getTime();
       return approvalSort === "newest" ? tB - tA : tA - tB;
     });
-  }, [facultyUsersList, approvalTab, approvalSearch, approvalStatusFilter, approvalInstitutionFilter, approvalDepartmentFilter, approvalSort]);
+  }, [facultyUsersList, approvalTab, approvalSearch, approvalInstitutionFilter, approvalDepartmentFilter, approvalSort]);
 
   const selectedApprovalUser = useMemo(() => {
     if (selectedApprovalUserId) {
@@ -1000,8 +993,6 @@ function AdminPage() {
     let matchStatus = true;
     if (userStatusFilter !== "All") {
       matchStatus = (u.status || "Active") === userStatusFilter;
-    } else if (!showDeletedUsers) {
-      matchStatus = u.status !== "Deleted";
     }
 
     return matchSearch && matchRole && matchStatus;
@@ -1440,101 +1431,73 @@ function AdminPage() {
             </div>
 
             {/* Main User Directory Card */}
-            <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <Card className="rounded-3xl border-border bg-card p-6 shadow-sm space-y-5">
+              {/* Header Title Section */}
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 pb-3 border-b border-border/50">
                 <div>
-                  <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-                    <Users className="h-5 w-5 text-primary" />
-                    Enterprise User Directory
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2.5">
+                    <div className="grid h-8 w-8 place-items-center rounded-xl bg-primary/10 text-primary shrink-0">
+                      <Users className="h-4 w-4" />
+                    </div>
+                    <span>Enterprise User Directory</span>
                   </h2>
                   <p className="text-xs text-muted-foreground mt-1">
                     Manage students, faculty advisors, and system administrators with role governance and soft-delete protection.
                   </p>
                 </div>
+              </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Search Input */}
-                  <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search name, email, department…"
-                      value={userSearch}
-                      onChange={(e) => {
-                        setUserSearch(e.target.value);
-                        setUserPage(1);
-                      }}
-                      className="pl-9 pr-8 rounded-xl text-xs"
-                    />
-                    {userSearch && (
-                      <button
-                        onClick={() => setUserSearch("")}
-                        className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground text-xs"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Role Filter */}
-                  <Select value={userRoleFilter} onValueChange={(v) => { setUserRoleFilter(v); setUserPage(1); }}>
-                    <SelectTrigger className="w-32 rounded-xl text-xs">
-                      <SelectValue placeholder="Role" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="All">All Roles</SelectItem>
-                      <SelectItem value="Student">Student</SelectItem>
-                      <SelectItem value="Faculty">Faculty</SelectItem>
-                      <SelectItem value="Admin">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {/* Status Filter */}
-                  <Select value={userStatusFilter} onValueChange={(v) => { setUserStatusFilter(v); setUserPage(1); }}>
-                    <SelectTrigger className="w-36 rounded-xl text-xs">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="All">All Statuses</SelectItem>
-                      <SelectItem value="Active">Active</SelectItem>
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="Suspended">Suspended</SelectItem>
-                      <SelectItem value="Rejected">Rejected</SelectItem>
-                      <SelectItem value="Deleted">Deleted</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {/* Show Deleted Users Switch */}
-                  <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-1.5 text-xs">
-                    <Switch
-                      id="show-deleted"
-                      checked={showDeletedUsers}
-                      onCheckedChange={(checked) => {
-                        setShowDeletedUsers(checked);
-                        setUserPage(1);
-                      }}
-                    />
-                    <Label htmlFor="show-deleted" className="text-xs cursor-pointer text-muted-foreground font-normal">
-                      Show Deleted Users
-                    </Label>
-                  </div>
-
-                  {/* Refresh Button & Timestamp */}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => fetchAdminData(true)}
-                      disabled={isRefreshing}
-                      className="rounded-xl text-xs gap-1.5"
+              {/* Clean Unified Search & Filter Control Row */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Search Input */}
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search name, email, department…"
+                    value={userSearch}
+                    onChange={(e) => {
+                      setUserSearch(e.target.value);
+                      setUserPage(1);
+                    }}
+                    className="pl-9 pr-8 h-9 rounded-xl text-xs bg-background"
+                  />
+                  {userSearch && (
+                    <button
+                      onClick={() => setUserSearch("")}
+                      className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground text-xs"
                     >
-                      <RotateCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-primary" : ""}`} />
-                      Refresh
-                    </Button>
-                    <span className="hidden sm:inline text-[0.7rem] text-muted-foreground whitespace-nowrap">
-                      Updated: {lastUpdatedTime}
-                    </span>
-                  </div>
+                      ×
+                    </button>
+                  )}
                 </div>
+
+                {/* Role Filter */}
+                <Select value={userRoleFilter} onValueChange={(v) => { setUserRoleFilter(v); setUserPage(1); }}>
+                  <SelectTrigger className="w-40 h-9 rounded-xl text-xs bg-background">
+                    <SelectValue placeholder="Role" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs">
+                    <SelectItem value="All">All Roles</SelectItem>
+                    <SelectItem value="Student">Student</SelectItem>
+                    <SelectItem value="Faculty">Faculty</SelectItem>
+                    <SelectItem value="Admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Status Filter */}
+                <Select value={userStatusFilter} onValueChange={(v) => { setUserStatusFilter(v); setUserPage(1); }}>
+                  <SelectTrigger className="w-40 h-9 rounded-xl text-xs bg-background">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl text-xs">
+                    <SelectItem value="All">All Statuses</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Suspended">Suspended</SelectItem>
+                    <SelectItem value="Rejected">Rejected</SelectItem>
+                    <SelectItem value="Deleted">Deleted</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Data Table */}
@@ -1567,7 +1530,7 @@ function AdminPage() {
                             <User className="h-8 w-8 text-muted-foreground/50" />
                             <p className="font-semibold text-foreground">No matching users found</p>
                             <p className="text-[0.75rem] text-muted-foreground">
-                              Try adjusting search query, clearing role/status filters, or enabling "Show Deleted Users".
+                              Try adjusting search query or clearing role/status filters.
                             </p>
                             <Button
                               variant="outline"
@@ -1577,7 +1540,6 @@ function AdminPage() {
                                 setUserSearch("");
                                 setUserRoleFilter("All");
                                 setUserStatusFilter("All");
-                                setShowDeletedUsers(false);
                               }}
                             >
                               Clear All Filters
@@ -1818,134 +1780,72 @@ function AdminPage() {
               </Card>
             </div>
 
-            {/* Application Queue Status Tabs */}
+            {/* Single Row Unified Control & Filter Bar */}
             <Card className="rounded-2xl border-border bg-card p-3 shadow-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setApprovalTab("Pending")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    approvalTab === "Pending"
-                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs"
-                      : "text-muted-foreground hover:bg-muted/30"
-                  }`}
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                  <span>Pending</span>
-                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-amber-500/30 text-amber-600 bg-amber-500/10">
-                    {approvalPortalStats.pending}
-                  </Badge>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setApprovalTab("Awaiting Response")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    approvalTab === "Awaiting Response"
-                      ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shadow-xs"
-                      : "text-muted-foreground hover:bg-muted/30"
-                  }`}
-                >
-                  <HelpCircle className="h-3.5 w-3.5" />
-                  <span>Awaiting Response</span>
-                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-blue-500/30 text-blue-600 bg-blue-500/10">
-                    {approvalPortalStats.awaitingResponse}
-                  </Badge>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setApprovalTab("Approved")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    approvalTab === "Approved"
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs"
-                      : "text-muted-foreground hover:bg-muted/30"
-                  }`}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span>Approved</span>
-                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-emerald-500/30 text-emerald-600 bg-emerald-500/10">
-                    {approvalPortalStats.approved}
-                  </Badge>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setApprovalTab("Rejected")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    approvalTab === "Rejected"
-                      ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 shadow-xs"
-                      : "text-muted-foreground hover:bg-muted/30"
-                  }`}
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                  <span>Rejected</span>
-                  <Badge variant="outline" className="ml-1 text-[0.65rem] px-2 py-0 border-rose-500/30 text-rose-600 bg-rose-500/10">
-                    {approvalPortalStats.rejected}
-                  </Badge>
-                </button>
-              </div>
-            </Card>
-
-            {/* Search & Filter Toolbar */}
-            <Card className="rounded-2xl border-border bg-card p-4 shadow-xs">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="relative flex-1 min-w-[240px]">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                {/* Search Input */}
+                <div className="relative min-w-[220px] flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
-                    placeholder="Search by faculty name, email, or employee ID..."
+                    placeholder="Search name, email, ID..."
                     value={approvalSearch}
                     onChange={(e) => setApprovalSearch(e.target.value)}
-                    className="pl-9 rounded-xl text-xs"
+                    className="pl-8 h-9 rounded-xl text-xs bg-background"
                   />
                 </div>
 
-                <Select value={approvalStatusFilter} onValueChange={setApprovalStatusFilter}>
-                  <SelectTrigger className="w-44 rounded-xl text-xs">
-                    <SelectValue placeholder="Status Filter" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl text-xs">
-                    <SelectItem value="All">All Statuses ({facultyUsersList.length})</SelectItem>
-                    <SelectItem value="Pending">Pending Review</SelectItem>
-                    <SelectItem value="Awaiting Applicant Response">Awaiting Response</SelectItem>
-                    <SelectItem value="Approved">Approved</SelectItem>
-                    <SelectItem value="Rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Status Dropdown Select */}
+                  <Select value={approvalTab} onValueChange={(v) => setApprovalTab(v as any)}>
+                    <SelectTrigger className="w-52 h-9 rounded-xl text-xs bg-background font-medium">
+                      <SelectValue placeholder="Application Status" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl text-xs">
+                      <SelectItem value="All">All Statuses ({approvalPortalStats.all})</SelectItem>
+                      <SelectItem value="Pending">Pending ({approvalPortalStats.pending})</SelectItem>
+                      <SelectItem value="Awaiting Response">Awaiting Response ({approvalPortalStats.awaitingResponse})</SelectItem>
+                      <SelectItem value="Approved">Approved ({approvalPortalStats.approved})</SelectItem>
+                      <SelectItem value="Rejected">Rejected ({approvalPortalStats.rejected})</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-                <Select value={approvalInstitutionFilter} onValueChange={setApprovalInstitutionFilter}>
-                  <SelectTrigger className="w-48 rounded-xl text-xs">
-                    <SelectValue placeholder="Institution" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl text-xs max-h-56">
-                    <SelectItem value="All">All Institutions</SelectItem>
-                    {uniqueInstitutions.map((inst) => (
-                      <SelectItem key={inst} value={inst}>{inst}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {/* Institution Filter */}
+                  <Select value={approvalInstitutionFilter} onValueChange={setApprovalInstitutionFilter}>
+                    <SelectTrigger className="w-44 h-9 rounded-xl text-xs bg-background">
+                      <SelectValue placeholder="Institution" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl text-xs max-h-56">
+                      <SelectItem value="All">All Institutions</SelectItem>
+                      {uniqueInstitutions.map((inst) => (
+                        <SelectItem key={inst} value={inst}>{inst}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-                <Select value={approvalDepartmentFilter} onValueChange={setApprovalDepartmentFilter}>
-                  <SelectTrigger className="w-44 rounded-xl text-xs">
-                    <SelectValue placeholder="Department" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl text-xs max-h-56">
-                    <SelectItem value="All">All Departments</SelectItem>
-                    {uniqueDepartments.map((dept) => (
-                      <SelectItem key={dept} value={dept}>{dept}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {/* Department Filter */}
+                  <Select value={approvalDepartmentFilter} onValueChange={setApprovalDepartmentFilter}>
+                    <SelectTrigger className="w-40 h-9 rounded-xl text-xs bg-background">
+                      <SelectValue placeholder="Department" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl text-xs max-h-56">
+                      <SelectItem value="All">All Departments</SelectItem>
+                      {uniqueDepartments.map((dept) => (
+                        <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-                <Select value={approvalSort} onValueChange={(v) => setApprovalSort(v as any)}>
-                  <SelectTrigger className="w-36 rounded-xl text-xs">
-                    <SelectValue placeholder="Sort" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl text-xs">
-                    <SelectItem value="newest">Newest First</SelectItem>
-                    <SelectItem value="oldest">Oldest First</SelectItem>
-                  </SelectContent>
-                </Select>
+                  {/* Sort Filter */}
+                  <Select value={approvalSort} onValueChange={(v) => setApprovalSort(v as any)}>
+                    <SelectTrigger className="w-32 h-9 rounded-xl text-xs bg-background">
+                      <SelectValue placeholder="Sort" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl text-xs">
+                      <SelectItem value="newest">Newest First</SelectItem>
+                      <SelectItem value="oldest">Oldest First</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </Card>
 
@@ -2016,13 +1916,15 @@ function AdminPage() {
                             </Badge>
                           </div>
 
-                          <div className="space-y-1 text-[0.7rem] text-muted-foreground">
+                          <div className="space-y-1 text-[0.7rem] text-muted-foreground pt-1 border-t border-border/40">
                             <p className="truncate font-medium text-foreground">
                               {f.institution || f.affiliation || "Not Provided"}
                             </p>
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between pt-0.5">
                               <span>{f.department || "Not Provided"}</span>
-                              <span className="text-[0.65rem]">{new Date(f.createdAt).toLocaleDateString()}</span>
+                              <span className="text-[0.68rem] font-semibold text-primary flex items-center gap-0.5">
+                                View Details <ChevronRight className="h-3 w-3" />
+                              </span>
                             </div>
                           </div>
                         </div>

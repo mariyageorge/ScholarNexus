@@ -842,15 +842,12 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const search = url.searchParams.get("search")?.toLowerCase().trim();
       const role = url.searchParams.get("role");
       const status = url.searchParams.get("status");
-      const includeDeleted = url.searchParams.get("includeDeleted") === "true";
 
       const query: Record<string, any> = {};
       if (role && role !== "All") query.role = role.toLowerCase();
       
       if (status && status !== "All") {
         query.status = status;
-      } else if (!includeDeleted) {
-        query.status = { $ne: "Deleted" };
       }
 
       const docs = await col.find(query).sort({ createdAt: -1 }).toArray();
