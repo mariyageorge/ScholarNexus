@@ -33,7 +33,7 @@ export interface UserRecord {
   email: string;
   password: string;
   role: string;
-  status?: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted";
+  status?: "Active" | "Pending" | "Suspended" | "Rejected" | "Deleted" | "Awaiting Applicant Response";
   createdAt: string;
   profileCompleted: boolean;
   displayName?: string;
@@ -1075,6 +1075,161 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     );
   }
 
+  // ── Faculty Dashboard API ──
+  if (url.pathname === "/api/faculty/dashboard") {
+    await ensureAdminSeedData();
+    const email = url.searchParams.get("email")?.trim().toLowerCase();
+
+    const usersCol = await getCollection<UserRecord>("users");
+    const projectsCol = await getCollection<Document>("projects");
+    const papersCol = await getCollection<Document>("papers");
+    const supCol = await getCollection<Document>("supervision_requests");
+
+    // Fetch user profile
+    const facultyUser = email ? await usersCol.findOne({ email }) : null;
+    const facultyName = facultyUser?.name || "Faculty Member";
+
+    // 1. Supervised Students
+    const studentQuery: any = { role: "student", status: { $ne: "Deleted" } };
+    const studentDocs = await usersCol.find(studentQuery).toArray();
+    const totalStudents = studentDocs.length;
+
+    // 2. Active Projects
+    const projectDocs = await projectsCol.find({}).sort({ updatedAt: -1 }).toArray();
+    const activeProjects = projectDocs.map((p) => ({
+      id: p._id.toString(),
+      _id: p._id.toString(),
+      title: p.title || p.name || "Research Project",
+      studentsCount: p.studentsCount || (p.members?.length) || 0,
+      progress: p.progress ?? 0,
+      status: p.status || "Active",
+      domain: p.domain || p.category || "Research",
+      leadStudent: p.userEmail || p.leadStudent || "",
+      milestone: p.milestone || "",
+      lastUpdated: p.updatedAt ? new Date(p.updatedAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+    }));
+
+    // Clean up any old dummy seed requests
+    await supCol.deleteMany({ email: { $in: ["alex.rivera@student.edu", "sophia.chen@student.edu", "david.kim@student.edu"] } });
+
+    // 3. Supervision Requests
+    const supDocs = await supCol.find({}).sort({ createdAt: -1 }).toArray();
+
+    const requests = supDocs.map((r) => ({
+      id: r._id.toString(),
+      _id: r._id.toString(),
+      studentName: r.studentName,
+      email: r.email,
+      projectTitle: r.projectTitle || r.topic,
+      topic: r.topic || r.projectTitle,
+      domain: r.domain || "AI & ML",
+      proposalSummary: r.proposalSummary || r.topic,
+      submittedDate: r.submittedDate || r.submittedAt || new Date().toISOString().split("T")[0],
+      submittedAt: r.submittedAt || r.submittedDate || new Date().toISOString().split("T")[0],
+      status: r.status || "Pending",
+      gpa: r.gpa || "N/A",
+    }));
+
+    // 4. Publications
+    const paperDocs = await papersCol.find({}).toArray();
+    const totalPapers = paperDocs.length;
+
+    return new Response(
+      JSON.stringify({
+        stats: {
+          myStudents: totalStudents,
+          activeProjects: activeProjects.length,
+          pendingReviews: requests.filter((r) => r.status === "Pending").length,
+          publications: totalPapers,
+        },
+        requests,
+        projects: activeProjects,
+        students: studentDocs.map((s) => ({
+          id: s._id.toString(),
+          _id: s._id.toString(),
+          name: s.name,
+          email: s.email,
+          department: s.department || "Computer Science",
+          degreeProgram: (s as any).degreeProgram || s.affiliation || "Student Scholar",
+          activeProject: (s as any).activeProject || "Academic Research Initiative",
+          status: s.status === "Suspended" ? "On Leave" : "Active",
+          joinedDate: s.createdAt ? new Date(s.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+        })),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }
+
+  // ── Faculty Supervision Requests API ──
+  if (url.pathname === "/api/faculty/supervision-requests") {
+    await ensureAdminSeedData();
+    const supCol = await getCollection<Document>("supervision_requests");
+
+    // Clean up any old dummy seed requests
+    await supCol.deleteMany({ email: { $in: ["alex.rivera@student.edu", "sophia.chen@student.edu", "david.kim@student.edu"] } });
+
+    if (request.method === "PUT") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+      const { id, status } = body;
+      if (id && ObjectId.isValid(id)) {
+        await supCol.updateOne({ _id: new ObjectId(id) }, { $set: { status, updatedAt: new Date().toISOString() } });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    const supDocs = await supCol.find({}).sort({ createdAt: -1 }).toArray();
+
+    const requests = supDocs.map((r) => ({
+      id: r._id.toString(),
+      _id: r._id.toString(),
+      studentName: r.studentName,
+      email: r.email,
+      projectTitle: r.projectTitle || r.topic,
+      topic: r.topic || r.projectTitle,
+      domain: r.domain || "Artificial Intelligence",
+      proposalSummary: r.proposalSummary || r.topic,
+      submittedAt: r.submittedAt || r.submittedDate || new Date().toISOString().split("T")[0],
+      status: r.status || "Pending",
+      gpa: r.gpa || "N/A",
+    }));
+
+    return new Response(JSON.stringify(requests), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
+  // ── Faculty Reviews API ──
+  if (url.pathname === "/api/faculty/reviews") {
+    await ensureAdminSeedData();
+    const revCol = await getCollection<Document>("paper_reviews");
+
+    // Clean up dummy reviews
+    await revCol.deleteMany({ studentName: { $in: ["Alex Chen", "Ethan Vance"] } });
+
+    if (request.method === "PUT") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+      const { id, status } = body;
+      if (id && ObjectId.isValid(id)) {
+        await revCol.updateOne({ _id: new ObjectId(id) }, { $set: { status: status || "Feedback Provided", updatedAt: new Date().toISOString() } });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    const revDocs = await revCol.find({}).sort({ createdAt: -1 }).toArray();
+
+    const reviews = revDocs.map((r) => ({
+      id: r._id.toString(),
+      _id: r._id.toString(),
+      paperTitle: r.paperTitle,
+      studentName: r.studentName,
+      type: r.type,
+      submittedDate: r.submittedDate || new Date().toISOString().split("T")[0],
+      status: r.status || "Review Pending",
+    }));
+
+    return new Response(JSON.stringify(reviews), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
   // ── Admin Faculty Approvals API ──
   if (url.pathname === "/api/admin/faculty/approval") {
     await ensureAdminSeedData();
@@ -1100,6 +1255,32 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+      const { id, email, action, reason } = body;
+      let filter: any = {};
+      if (email) filter = { email: email.toLowerCase().trim() };
+      else if (id && ObjectId.isValid(id)) filter = { _id: new ObjectId(id) };
+
+      if (action === "approve") {
+        await col.updateOne(filter, {
+          $set: { status: "Active", approvalStatus: "Approved", updatedAt: new Date().toISOString() },
+          $unset: { adminMessage: "", infoRequestMessage: "" }
+        });
+      } else if (action === "reject") {
+        await col.updateOne(filter, {
+          $set: { status: "Rejected", approvalStatus: "Rejected", rejectionReason: reason || "Verification criteria not met.", updatedAt: new Date().toISOString() },
+          $unset: { adminMessage: "", infoRequestMessage: "" }
+        });
+      } else if (action === "request_info") {
+        await col.updateOne(filter, {
+          $set: { status: "Awaiting Applicant Response", approvalStatus: "Info Requested", adminMessage: reason, infoRequestMessage: reason, updatedAt: new Date().toISOString() }
+        });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
 

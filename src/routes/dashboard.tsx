@@ -167,7 +167,7 @@ function DashboardPage() {
     }
 
     if (session.role === "faculty") {
-      window.location.href = "/faculty";
+      window.location.href = "/faculty-dashboard";
       return;
     }
 

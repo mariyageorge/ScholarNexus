@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FolderKanban, Plus, Search, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card } from "@/components/ui/card";
@@ -20,36 +20,28 @@ export const Route = createFileRoute("/faculty/projects")({
 
 function FacultyProjectsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [projects, setProjects] = useState<any[]>([]);
 
-  const [projects] = useState([
-    {
-      id: "p-1",
-      title: "Quantum-Resistant Lattice Cryptography Framework",
-      domain: "Cybersecurity",
-      leadStudent: "Ethan Vance",
-      status: "In Progress",
-      progress: 75,
-      milestone: "Performance Benchmarking on Embedded Hardware",
-    },
-    {
-      id: "p-2",
-      title: "Biomedical Graph Representation for Molecular Docking",
-      domain: "Bioinformatics",
-      leadStudent: "Maya Lin",
-      status: "Under Review",
-      progress: 40,
-      milestone: "Graph Convolutional Network Training",
-    },
-    {
-      id: "p-3",
-      title: "Neural Architecture Search for Lightweight LLMs",
-      domain: "Artificial Intelligence",
-      leadStudent: "Alex Chen",
-      status: "Planning",
-      progress: 20,
-      milestone: "Search Space Definition & Hyperparameter Tuning",
-    },
-  ]);
+  useEffect(() => {
+    fetch("/api/admin/projects")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setProjects(
+            data.map((p: any) => ({
+              id: p.id || p._id,
+              title: p.title || p.name || "Research Project",
+              domain: p.domain || p.category || "Artificial Intelligence",
+              leadStudent: p.userEmail || p.leadStudent || "Alex Chen",
+              status: p.status || "Active",
+              progress: p.progress ?? 60,
+              milestone: p.milestone || "Phase Verification & Benchmarking",
+            }))
+          );
+        }
+      })
+      .catch((err) => console.error("Error loading faculty projects:", err));
+  }, []);
 
   const filtered = projects.filter((p) =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||

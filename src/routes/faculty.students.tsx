@@ -32,53 +32,21 @@ interface SupervisedStudent {
 function FacultyStudentsPage() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const [students] = useState<SupervisedStudent[]>([
-    {
-      id: "std-1",
-      name: "Alex Chen",
-      email: "alex.chen@university.edu",
-      department: "Computer Science",
-      degreeProgram: "M.S. Artificial Intelligence",
-      activeProject: "Neural Architecture Search for Lightweight LLMs",
-      status: "Active",
-      joinedDate: "2025-09-01",
-    },
-    {
-      id: "std-2",
-      name: "Sophia Martinez",
-      email: "sophia.m@university.edu",
-      department: "Computer Science",
-      degreeProgram: "Ph.D. Computer Science",
-      activeProject: "Distributed Consensus Algorithms in Edge Computing",
-      status: "Active",
-      joinedDate: "2024-08-15",
-    },
-    {
-      id: "std-3",
-      name: "Ethan Vance",
-      email: "ethan.vance@university.edu",
-      department: "Cybersecurity",
-      degreeProgram: "M.S. Information Security",
-      activeProject: "Quantum-Resistant Lattice Cryptography Framework",
-      status: "Active",
-      joinedDate: "2025-01-10",
-    },
-    {
-      id: "std-4",
-      name: "Maya Lin",
-      email: "maya.lin@university.edu",
-      department: "Bioinformatics",
-      degreeProgram: "Ph.D. Computational Biology",
-      activeProject: "Biomedical Graph Representation for Molecular Docking",
-      status: "Active",
-      joinedDate: "2024-01-15",
-    },
-  ]);
+  const [students, setStudents] = useState<SupervisedStudent[]>([]);
 
   useEffect(() => {
     const user = getUserSession();
-    if (user) setSession(user);
+    if (user) {
+      setSession(user);
+      fetch(`/api/faculty/dashboard?email=${encodeURIComponent(user.email)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.students) {
+            setStudents(data.students);
+          }
+        })
+        .catch((err) => console.error("Error loading faculty students DB data:", err));
+    }
   }, []);
 
   const filteredStudents = students.filter(

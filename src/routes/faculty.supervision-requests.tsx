@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { UserCheck, Clock, CheckCircle2, XCircle, Search, Filter } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card } from "@/components/ui/card";
@@ -30,33 +30,29 @@ interface RequestItem {
 }
 
 function SupervisionRequestsPage() {
-  const [requests, setRequests] = useState<RequestItem[]>([
-    {
-      id: "req-101",
-      studentName: "Alex Chen",
-      email: "alex.chen@university.edu",
-      projectTitle: "Neural Architecture Search for Lightweight LLMs",
-      domain: "Artificial Intelligence",
-      proposalSummary: "Focusing on hardware-aware NAS techniques for deploying transformer models on mobile hardware with ultra-low latency.",
-      submittedAt: "2026-08-02",
-      status: "Pending",
-    },
-    {
-      id: "req-102",
-      studentName: "Sophia Martinez",
-      email: "sophia.m@university.edu",
-      projectTitle: "Distributed Consensus Algorithms in Edge Computing",
-      domain: "Distributed Systems",
-      proposalSummary: "Investigating Byzantine fault-tolerant consensus mechanisms tailored for dynamic IoT edge node clusters.",
-      submittedAt: "2026-08-01",
-      status: "Pending",
-    },
-  ]);
+  const [requests, setRequests] = useState<RequestItem[]>([]);
 
-  const handleAction = (id: string, newStatus: "Accepted" | "Declined") => {
+  useEffect(() => {
+    fetch("/api/faculty/supervision-requests")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setRequests(data);
+      })
+      .catch((err) => console.error("Error fetching supervision requests:", err));
+  }, []);
+
+  const handleAction = async (id: string, newStatus: "Accepted" | "Declined") => {
     setRequests((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status: newStatus } : item))
     );
+    try {
+      await fetch("/api/faculty/supervision-requests", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: newStatus }),
+      });
+    } catch {}
+
     if (newStatus === "Accepted") {
       toast.success("Supervision request accepted. Scholar added to your supervision list.");
     } else {

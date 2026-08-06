@@ -58,10 +58,7 @@ function UserProfilePage() {
       setIsLoading(false);
       return;
     }
-    if (session.role === "admin" || session.email === "scholarnexusadmin@gmail.com") {
-      window.location.href = "/dashboard";
-      return;
-    }
+
 
     setUser(session);
     setName(session.displayName ?? session.name ?? "");
@@ -479,68 +476,70 @@ function UserProfilePage() {
               </div>
             </div>
 
-            {/* Academic Profile & Bio Card */}
-            <div className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-5">
-              <div className="border-b border-border pb-3">
-                <h2 className="text-lg font-semibold text-foreground">Academic Information & Bio</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Share your research focus, affiliation, and academic background.
-                </p>
-              </div>
+            {/* Academic Profile & Bio Card (Hidden for Admin) */}
+            {user.role !== "admin" && (
+              <div className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-5">
+                <div className="border-b border-border pb-3">
+                  <h2 className="text-lg font-semibold text-foreground">Academic Information & Bio</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Share your research focus, affiliation, and academic background.
+                  </p>
+                </div>
 
-              {/* Editable: Institution / Affiliation */}
-              <div className="space-y-2">
-                <Label htmlFor="affiliation" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                  Institution / Affiliation
-                </Label>
-                <Input
-                  id="affiliation"
-                  type="text"
-                  value={affiliation}
-                  onChange={(e) => setAffiliation(e.target.value)}
-                  placeholder="e.g. Stanford University — Department of Computer Science"
-                  className="rounded-xl border-border bg-background"
-                  maxLength={200}
-                />
-                <p className="text-[0.7rem] text-muted-foreground text-right">{affiliation.length}/200</p>
-              </div>
+                {/* Editable: Institution / Affiliation */}
+                <div className="space-y-2">
+                  <Label htmlFor="affiliation" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                    Institution / Affiliation
+                  </Label>
+                  <Input
+                    id="affiliation"
+                    type="text"
+                    value={affiliation}
+                    onChange={(e) => setAffiliation(e.target.value)}
+                    placeholder="e.g. Stanford University — Department of Computer Science"
+                    className="rounded-xl border-border bg-background"
+                    maxLength={200}
+                  />
+                  <p className="text-[0.7rem] text-muted-foreground text-right">{affiliation.length}/200</p>
+                </div>
 
-              {/* Editable: Bio */}
-              <div className="space-y-2">
-                <Label htmlFor="bio" className="text-xs font-semibold text-foreground">
-                  Short Bio
-                </Label>
-                <Textarea
-                  id="bio"
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  placeholder="A short introduction describing your academic background, current position, and pursuits..."
-                  rows={4}
-                  className="rounded-xl border-border bg-background resize-none"
-                  maxLength={500}
-                />
-                <p className="text-[0.7rem] text-muted-foreground text-right">{bio.length}/500</p>
-              </div>
+                {/* Editable: Bio */}
+                <div className="space-y-2">
+                  <Label htmlFor="bio" className="text-xs font-semibold text-foreground">
+                    Short Bio
+                  </Label>
+                  <Textarea
+                    id="bio"
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    placeholder="A short introduction describing your academic background, current position, and pursuits..."
+                    rows={4}
+                    className="rounded-xl border-border bg-background resize-none"
+                    maxLength={500}
+                  />
+                  <p className="text-[0.7rem] text-muted-foreground text-right">{bio.length}/500</p>
+                </div>
 
-              {/* Editable: Research Interests */}
-              <div className="space-y-2">
-                <Label htmlFor="researchInterests" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-                  Research Interests
-                </Label>
-                <Textarea
-                  id="researchInterests"
-                  value={researchInterests}
-                  onChange={(e) => setResearchInterests(e.target.value)}
-                  placeholder="e.g. Machine Learning, Natural Language Processing, Quantum Computing, Climate Modeling..."
-                  rows={4}
-                  className="rounded-xl border-border bg-background resize-none"
-                  maxLength={500}
-                />
-                <p className="text-[0.7rem] text-muted-foreground text-right">{researchInterests.length}/500</p>
+                {/* Editable: Research Interests */}
+                <div className="space-y-2">
+                  <Label htmlFor="researchInterests" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                    Research Interests
+                  </Label>
+                  <Textarea
+                    id="researchInterests"
+                    value={researchInterests}
+                    onChange={(e) => setResearchInterests(e.target.value)}
+                    placeholder="e.g. Machine Learning, Natural Language Processing, Quantum Computing, Climate Modeling..."
+                    rows={4}
+                    className="rounded-xl border-border bg-background resize-none"
+                    maxLength={500}
+                  />
+                  <p className="text-[0.7rem] text-muted-foreground text-right">{researchInterests.length}/500</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Action Bar */}

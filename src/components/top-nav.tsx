@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
-import { Bell, Sparkles, Megaphone, ArrowRight, Pin, RefreshCcw } from "lucide-react";
+import { Bell, Sparkles, Megaphone, ArrowRight, Pin, RefreshCcw, ChevronDown, Edit, User, Settings, LogOut } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { getUserSession, getUserInitials } from "@/lib/session";
+import { getUserSession, getUserInitials, clearUserSession } from "@/lib/session";
 import { toast } from "sonner";
 
 const titles: Record<string, string> = {
@@ -223,22 +231,71 @@ export function TopNav() {
           </PopoverContent>
         </Popover>
 
-        {/* Top Right Profile Display (Non-clickable) */}
-        <div
-          className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 select-none"
-        >
-          <Avatar className="h-7 w-7 border border-border">
-            {userPhoto ? (
-              <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
-            ) : null}
-            <AvatarFallback suppressHydrationWarning className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
-              {getUserInitials(user)}
-            </AvatarFallback>
-          </Avatar>
-          <span suppressHydrationWarning className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
-            {userName}
-          </span>
-        </div>
+        {/* Top Right Profile Menu */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 select-none transition hover:border-primary/50 hover:bg-accent/50 focus:outline-none cursor-pointer"
+            >
+              <Avatar className="h-7 w-7 border border-border">
+                {userPhoto ? (
+                  <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
+                ) : null}
+                <AvatarFallback suppressHydrationWarning className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
+                  {getUserInitials(user)}
+                </AvatarFallback>
+              </Avatar>
+              <span suppressHydrationWarning className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
+                {userName}
+              </span>
+              <ChevronDown className="h-3 w-3 text-muted-foreground hidden sm:block opacity-70" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 rounded-2xl p-2 shadow-xl border-border bg-card">
+            <DropdownMenuLabel className="font-normal p-2 pb-1">
+              <div className="flex flex-col space-y-1">
+                <p className="text-xs font-bold leading-none text-foreground">{userName}</p>
+                <p className="text-[0.68rem] leading-none text-muted-foreground truncate">{user?.email}</p>
+                <div className="pt-1">
+                  <Badge variant="outline" className="text-[0.6rem] font-semibold capitalize rounded-full px-2 py-0 border-primary/30 text-primary bg-primary/10">
+                    {user?.role || "Member"}
+                  </Badge>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              asChild
+              className="rounded-xl text-xs font-semibold cursor-pointer gap-2 py-2"
+            >
+              <Link
+                to={user?.role === "admin" ? "/admin" : user?.role === "faculty" ? "/faculty/profile" : "/profile"}
+                hash={user?.role === "admin" ? "settings" : undefined}
+              >
+                <User className="h-3.5 w-3.5 text-primary" /> My Profile
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              asChild
+              className="rounded-xl text-xs font-semibold cursor-pointer gap-2 py-2"
+            >
+              <Link to="/settings">
+                <Settings className="h-3.5 w-3.5" /> Account Settings
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => {
+                clearUserSession();
+                toast.success("Signed out successfully.");
+                window.location.href = "/login";
+              }}
+              className="rounded-xl text-xs font-semibold cursor-pointer gap-2 py-2 text-destructive focus:text-destructive focus:bg-destructive/10"
+            >
+              <LogOut className="h-3.5 w-3.5" /> Sign Out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

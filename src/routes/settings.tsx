@@ -61,6 +61,10 @@ function SettingsPage() {
     displayName: "",
     email: "",
     affiliation: "",
+    department: "",
+    designation: "",
+    facultyId: "",
+    orcid: "",
     bio: "",
     phone: "",
     researchInterests: "",
@@ -117,10 +121,14 @@ function SettingsPage() {
           name: data.name || "",
           displayName: data.displayName || data.name || "",
           email: data.email || email, // Email read-only
-          affiliation: data.affiliation || "",
+          affiliation: data.institution || data.affiliation || "",
+          department: data.department || "",
+          designation: data.designation || "",
+          facultyId: data.facultyId || "",
+          orcid: data.orcid || "",
           bio: data.bio || "",
           phone: data.phone || "",
-          researchInterests: data.researchInterests || "",
+          researchInterests: Array.isArray(data.researchInterests) ? data.researchInterests.join(", ") : (data.researchInterests || ""),
         });
         if (data.preferences) {
           setNotifications((prev) => ({ ...prev, ...data.preferences.notifications }));
@@ -133,10 +141,14 @@ function SettingsPage() {
           name: email.split("@")[0],
           displayName: email.split("@")[0],
           email,
-          affiliation: "Academic Research Lab",
+          affiliation: user?.institution || "Amal Jyothi College of Engineering",
+          department: user?.department || "Computer Applications",
+          designation: user?.designation || "Associate Professor",
+          facultyId: user?.facultyId || "FAC-1011",
+          orcid: user?.orcid || "",
           bio: "",
           phone: "",
-          researchInterests: "Artificial Intelligence, Data Science",
+          researchInterests: "Artificial Intelligence, Machine Learning",
         });
       }
     } catch {
@@ -160,6 +172,10 @@ function SettingsPage() {
           name: profileForm.name,
           displayName: profileForm.displayName,
           affiliation: profileForm.affiliation,
+          department: profileForm.department,
+          designation: profileForm.designation,
+          facultyId: profileForm.facultyId,
+          orcid: profileForm.orcid,
           bio: profileForm.bio,
           phone: profileForm.phone,
           researchInterests: profileForm.researchInterests,
@@ -338,37 +354,91 @@ function SettingsPage() {
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground">Institution / Affiliation</Label>
-                    <Input
-                      value={profileForm.affiliation}
-                      onChange={(e) => setProfileForm({ ...profileForm, affiliation: e.target.value })}
-                      placeholder="e.g. MIT AI Lab, Department of Computer Science"
-                      className="rounded-xl text-xs"
-                    />
-                  </div>
+                  {user?.role !== "admin" && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Institution / Affiliation</Label>
+                      <Input
+                        value={profileForm.affiliation}
+                        onChange={(e) => setProfileForm({ ...profileForm, affiliation: e.target.value })}
+                        placeholder="e.g. MIT AI Lab, Department of Computer Science"
+                        className="rounded-xl text-xs"
+                      />
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-foreground">Primary Research Interests</Label>
-                  <Input
-                    value={profileForm.researchInterests}
-                    onChange={(e) => setProfileForm({ ...profileForm, researchInterests: e.target.value })}
-                    placeholder="e.g. Machine Learning, Natural Language Processing, Cognitive Robotics"
-                    className="rounded-xl text-xs"
-                  />
-                </div>
+                {user?.role === "faculty" && (
+                  <>
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-foreground">Department</Label>
+                        <Input
+                          value={profileForm.department}
+                          onChange={(e) => setProfileForm({ ...profileForm, department: e.target.value })}
+                          placeholder="e.g. Computer Applications"
+                          className="rounded-xl text-xs"
+                        />
+                      </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-foreground">Academic Bio & Objectives</Label>
-                  <Textarea
-                    rows={4}
-                    value={profileForm.bio}
-                    onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
-                    placeholder="Brief overview of research background, ongoing publications, and goals…"
-                    className="rounded-xl text-xs leading-relaxed"
-                  />
-                </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-foreground">Designation / Academic Title</Label>
+                        <Input
+                          value={profileForm.designation}
+                          onChange={(e) => setProfileForm({ ...profileForm, designation: e.target.value })}
+                          placeholder="e.g. Associate Professor"
+                          className="rounded-xl text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-foreground">Faculty Employee ID</Label>
+                        <Input
+                          value={profileForm.facultyId}
+                          onChange={(e) => setProfileForm({ ...profileForm, facultyId: e.target.value })}
+                          placeholder="e.g. FAC-1011"
+                          className="rounded-xl text-xs font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-foreground">ORCID Identifier</Label>
+                        <Input
+                          value={profileForm.orcid}
+                          onChange={(e) => setProfileForm({ ...profileForm, orcid: e.target.value })}
+                          placeholder="e.g. 0000-0002-1825-0097"
+                          className="rounded-xl text-xs font-mono"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {user?.role !== "admin" && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Primary Research Interests</Label>
+                      <Input
+                        value={profileForm.researchInterests}
+                        onChange={(e) => setProfileForm({ ...profileForm, researchInterests: e.target.value })}
+                        placeholder="e.g. Machine Learning, Natural Language Processing, Cognitive Robotics"
+                        className="rounded-xl text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Academic Bio & Objectives</Label>
+                      <Textarea
+                        rows={4}
+                        value={profileForm.bio}
+                        onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
+                        placeholder="Brief overview of research background, ongoing publications, and goals…"
+                        className="rounded-xl text-xs leading-relaxed"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="pt-2 flex justify-end">
                   <Button type="submit" disabled={savingProfile} className="gap-2 rounded-xl bg-primary text-xs font-semibold px-6">

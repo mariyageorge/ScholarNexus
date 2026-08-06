@@ -112,6 +112,14 @@ function FacultyPendingPage() {
       window.location.href = "/login";
       return;
     }
+    if (session.role === "admin" || session.email === "scholarnexusadmin@gmail.com") {
+      window.location.href = "/admin";
+      return;
+    }
+    if (session.role === "student") {
+      window.location.href = "/dashboard";
+      return;
+    }
     setUser(session);
     fetchLatestProfile(session.email);
   }, []);

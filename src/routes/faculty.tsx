@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   GraduationCap,
@@ -67,6 +67,12 @@ interface StudentProject {
 }
 
 function MyFacultyPage() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  if (pathname !== "/faculty" && pathname !== "/faculty/") {
+    return <Outlet />;
+  }
+
   const [user, setUser] = useState<UserSession | null>(() => {
     if (typeof window !== "undefined") return getUserSession();
     return null;
@@ -81,6 +87,10 @@ function MyFacultyPage() {
     const session = getUserSession();
     if (!session) {
       window.location.href = "/login";
+      return;
+    }
+    if (window.location.pathname === "/faculty" && session.role === "faculty") {
+      window.location.href = "/faculty/profile";
       return;
     }
     setUser(session);

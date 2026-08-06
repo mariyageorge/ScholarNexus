@@ -18,11 +18,19 @@ export const Route = createFileRoute("/faculty/profile")({
 });
 
 function FacultyProfilePage() {
-  const [session, setSession] = useState<UserSession | null>(null);
+  const [session, setSession] = useState<any | null>(null);
 
   useEffect(() => {
     const user = getUserSession();
-    if (user) setSession(user);
+    if (user) {
+      setSession(user);
+      fetch(`/api/profile?email=${encodeURIComponent(user.email)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data) setSession((prev: any) => ({ ...prev, ...data }));
+        })
+        .catch((err) => console.error("Error loading profile details:", err));
+    }
   }, []);
 
   return (
@@ -41,7 +49,13 @@ function FacultyProfilePage() {
             </p>
           </div>
 
-          <Button variant="outline" className="gap-2 rounded-xl text-xs font-semibold">
+          <Button
+            variant="outline"
+            onClick={() => {
+              window.location.href = "/faculty-dashboard?edit=true";
+            }}
+            className="gap-2 rounded-xl text-xs font-semibold cursor-pointer hover:border-primary/50"
+          >
             <Edit3 className="h-4 w-4" /> Edit Profile Details
           </Button>
         </div>
@@ -59,9 +73,9 @@ function FacultyProfilePage() {
                   <ShieldCheck className="h-3.5 w-3.5 mr-1" /> Approved Faculty
                 </Badge>
               </div>
-              <p className="text-xs font-semibold text-muted-foreground">{session?.designation || "Associate Professor"} • {session?.department || "Department of Computer Science"}</p>
+              <p className="text-xs font-semibold text-muted-foreground">{session?.designation || "Faculty Member"}{session?.department ? ` • ${session.department}` : ""}</p>
               <p className="text-xs text-muted-foreground flex items-center gap-1.5 pt-0.5">
-                <Building className="h-3.5 w-3.5 text-primary" /> {session?.institution || "ScholarNexus Partner University"}
+                <Building className="h-3.5 w-3.5 text-primary" /> {session?.institution || session?.affiliation || "Academic Institution"}
               </p>
             </div>
           </div>
@@ -78,21 +92,21 @@ function FacultyProfilePage() {
               <span className="text-[0.68rem] text-muted-foreground flex items-center gap-1 font-medium">
                 <Phone className="h-3.5 w-3.5 text-emerald-500" /> Phone Number
               </span>
-              <p className="font-bold text-foreground text-xs">{session?.phone || "+1 (555) 019-2834"}</p>
+              <p className="font-bold text-foreground text-xs">{session?.phone || "Not Provided"}</p>
             </div>
 
             <div className="rounded-2xl border border-border bg-background p-4 space-y-1">
               <span className="text-[0.68rem] text-muted-foreground flex items-center gap-1 font-medium">
                 <Award className="h-3.5 w-3.5 text-indigo-500" /> Faculty Employee ID
               </span>
-              <p className="font-mono font-bold text-foreground text-xs">{session?.facultyId || "FAC-2026-9812"}</p>
+              <p className="font-mono font-bold text-foreground text-xs">{session?.facultyId || "Not Provided"}</p>
             </div>
 
             <div className="rounded-2xl border border-border bg-background p-4 space-y-1">
               <span className="text-[0.68rem] text-muted-foreground flex items-center gap-1 font-medium">
                 <BookOpen className="h-3.5 w-3.5 text-amber-500" /> ORCID Identifier
               </span>
-              <p className="font-mono font-bold text-foreground text-xs">{session?.orcid || "0000-0002-1825-0097"}</p>
+              <p className="font-mono font-bold text-foreground text-xs">{session?.orcid || "Not Provided"}</p>
             </div>
           </div>
 
@@ -100,7 +114,7 @@ function FacultyProfilePage() {
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Research Focus & Domains</h3>
             <div className="rounded-2xl border border-border bg-background p-4">
               <p className="text-xs font-medium text-foreground leading-relaxed">
-                {session?.researchInterests || "Artificial Intelligence, Deep Learning, Graph Neural Networks, and Distributed Edge Computing Systems."}
+                {Array.isArray(session?.researchInterests) ? session.researchInterests.join(", ") : (session?.researchInterests || "Not Provided")}
               </p>
             </div>
           </div>

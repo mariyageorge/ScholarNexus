@@ -2889,14 +2889,18 @@ function AdminPage() {
                     <span className="text-muted-foreground flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-emerald-500" /> Phone Number</span>
                     <span className="font-medium text-foreground">{selectedUser?.phone || "+1 (555) 234-5678"}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
-                    <span className="text-muted-foreground flex items-center gap-2"><Building className="h-3.5 w-3.5 text-indigo-500" /> Department</span>
-                    <span className="font-medium text-foreground">{selectedUser?.department || selectedUser?.affiliation || "Computer Science & AI"}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-border/50">
-                    <span className="text-muted-foreground flex items-center gap-2"><GraduationCap className="h-3.5 w-3.5 text-amber-500" /> Designation</span>
-                    <span className="font-medium text-foreground">{selectedUser?.designation || (selectedUser?.role === "student" ? "Research Scholar" : selectedUser?.role === "faculty" ? "Associate Professor" : "Lead System Admin")}</span>
-                  </div>
+                  {selectedUser?.role === "faculty" && (
+                    <>
+                      <div className="flex justify-between items-center py-1 border-b border-border/50">
+                        <span className="text-muted-foreground flex items-center gap-2"><Building className="h-3.5 w-3.5 text-indigo-500" /> Department</span>
+                        <span className="font-medium text-foreground">{selectedUser?.department || selectedUser?.affiliation || "Computer Science & AI"}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-border/50">
+                        <span className="text-muted-foreground flex items-center gap-2"><GraduationCap className="h-3.5 w-3.5 text-amber-500" /> Designation</span>
+                        <span className="font-medium text-foreground">{selectedUser?.designation || "Associate Professor"}</span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between items-center py-1 border-b border-border/50">
                     <span className="text-muted-foreground flex items-center gap-2"><Shield className="h-3.5 w-3.5 text-purple-500" /> Role Governance</span>
                     <span className="font-semibold capitalize text-foreground">{selectedUser?.role}</span>
@@ -3095,27 +3099,30 @@ function AdminPage() {
               />
             </div>
 
-            {/* Department */}
-            <div className="space-y-1">
-              <Label className="text-xs">Department</Label>
-              <Input
-                placeholder="e.g. Computer Science & AI"
-                value={editUserData.department}
-                onChange={(e) => setEditUserData({ ...editUserData, department: e.target.value })}
-                className="rounded-xl text-xs"
-              />
-            </div>
+            {/* Faculty Specific Fields: Department & Designation */}
+            {editUserData.role === "faculty" && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Department</Label>
+                  <Input
+                    placeholder="e.g. Computer Science & AI"
+                    value={editUserData.department}
+                    onChange={(e) => setEditUserData({ ...editUserData, department: e.target.value })}
+                    className="rounded-xl text-xs"
+                  />
+                </div>
 
-            {/* Designation */}
-            <div className="space-y-1">
-              <Label className="text-xs">Designation / Title</Label>
-              <Input
-                placeholder="e.g. Research Scholar / Assoc. Professor"
-                value={editUserData.designation}
-                onChange={(e) => setEditUserData({ ...editUserData, designation: e.target.value })}
-                className="rounded-xl text-xs"
-              />
-            </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Designation / Title</Label>
+                  <Input
+                    placeholder="e.g. Associate Professor"
+                    value={editUserData.designation}
+                    onChange={(e) => setEditUserData({ ...editUserData, designation: e.target.value })}
+                    className="rounded-xl text-xs"
+                  />
+                </div>
+              </>
+            )}
 
             {/* Phone */}
             <div className="space-y-1">

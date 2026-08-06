@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Quote, FileText, CheckCircle2, MessageSquare, Clock } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card } from "@/components/ui/card";
@@ -18,29 +18,28 @@ export const Route = createFileRoute("/faculty/reviews")({
 });
 
 function FacultyReviewsPage() {
-  const [reviews, setReviews] = useState([
-    {
-      id: "rev-1",
-      paperTitle: "Neural Architecture Search for Edge Devices: A Survey",
-      studentName: "Alex Chen",
-      type: "Conference Manuscript Draft",
-      submittedDate: "2026-08-01",
-      status: "Review Pending",
-    },
-    {
-      id: "rev-2",
-      paperTitle: "Lattice-Based Post-Quantum Digital Signatures",
-      studentName: "Ethan Vance",
-      type: "Thesis Chapter 4",
-      submittedDate: "2026-07-28",
-      status: "Feedback Provided",
-    },
-  ]);
+  const [reviews, setReviews] = useState<any[]>([]);
 
-  const handleReviewAction = (id: string) => {
+  useEffect(() => {
+    fetch("/api/faculty/reviews")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setReviews(data);
+      })
+      .catch((err) => console.error("Error fetching reviews:", err));
+  }, []);
+
+  const handleReviewAction = async (id: string) => {
     setReviews((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: "Feedback Provided" } : r))
     );
+    try {
+      await fetch("/api/faculty/reviews", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "Feedback Provided" }),
+      });
+    } catch {}
     toast.success("Feedback submitted to scholar successfully.");
   };
 

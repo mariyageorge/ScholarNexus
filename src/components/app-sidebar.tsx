@@ -126,10 +126,7 @@ export function AppSidebar() {
         <SidebarMenu>
           {items.map((item) => {
             const active = isActive(item);
-            const targetUrl =
-              item.title === "Profile" && (user?.role === "admin" || user?.email === "scholarnexusadmin@gmail.com")
-                ? "/dashboard"
-                : `${item.url}${item.hash ?? ""}`;
+            const targetUrl = `${item.url}${item.hash ?? ""}`;
             return (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
