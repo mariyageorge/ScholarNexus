@@ -95,12 +95,16 @@ export interface Project {
   userEmail: string;
   title: string;
   description: string;
+  abstract?: string;
   domain: string;
   status: ProjectStatus;
   progress: number;
   startDate: string;
   expectedCompletionDate: string;
-  faculty?: string;
+  facultyId?: string | null;
+  faculty?: string | null;
+  supervisionStatus?: "Not Assigned" | "Pending Approval" | "Under Supervision" | "Rejected";
+  keywords?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -201,7 +205,7 @@ function ResearchProjectsPage() {
     progress: 0,
     startDate: todayStr,
     expectedCompletionDate: getMinCompletionDateString(todayStr),
-    faculty: "",
+    keywords: "",
   });
 
   // Form Touch Tracking (Shows validation errors ONLY when invalid and touched or upon form submit)
@@ -399,7 +403,7 @@ function ResearchProjectsPage() {
       progress: 0,
       startDate: start,
       expectedCompletionDate: getMinCompletionDateString(start),
-      faculty: "",
+      keywords: "",
     });
     setIsFormModalOpen(true);
   };
@@ -416,7 +420,7 @@ function ResearchProjectsPage() {
       progress: Number(project.progress) || 0,
       startDate: start,
       expectedCompletionDate: project.expectedCompletionDate || getMinCompletionDateString(start),
-      faculty: project.faculty || "",
+      keywords: Array.isArray(project.keywords) ? project.keywords.join(", ") : "",
     });
     setIsFormModalOpen(true);
   };
@@ -847,7 +851,15 @@ function ResearchProjectsPage() {
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <GraduationCap className="h-3.5 w-3.5 text-primary" />
-                        <span className="truncate font-medium text-foreground">{p.faculty || "Independent Research"}</span>
+                        <span className="truncate font-medium text-foreground">
+                          {p.supervisionStatus === "Under Supervision" && p.faculty
+                            ? p.faculty
+                            : p.supervisionStatus === "Pending Approval"
+                            ? "Supervisor: Pending"
+                            : p.supervisionStatus === "Rejected"
+                            ? "Supervisor: Rejected"
+                            : "No supervisor assigned"}
+                        </span>
                       </span>
                       <span className="flex items-center gap-1 text-[0.7rem]">
                         <Clock className="h-3 w-3" />
@@ -1093,35 +1105,17 @@ function ResearchProjectsPage() {
               </div>
             </div>
 
-            {/* Faculty Mentor Selector (Strictly from DB) */}
+            {/* Keywords Input Field */}
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-foreground">
-                Faculty Mentor / Advisor <span className="text-muted-foreground">(Optional)</span>
+                Keywords <span className="text-muted-foreground">(Comma separated)</span>
               </Label>
-              <Select
-                value={formData.faculty}
-                onValueChange={(val) => setFormData({ ...formData, faculty: val === "none" ? "" : val })}
-              >
-                <SelectTrigger className="rounded-xl text-xs">
-                  <SelectValue placeholder="Select a faculty mentor…" />
-                </SelectTrigger>
-                <SelectContent className="max-h-56 rounded-xl">
-                  {facultyList.length > 0 ? (
-                    facultyList.map((f) => (
-                      <SelectItem key={f.email || f.name} value={f.name} className="text-xs">
-                        {f.name} {f.title ? `— ${f.title}` : ""}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <SelectItem value="none" disabled className="text-xs text-muted-foreground italic">
-                      No active faculty mentors available
-                    </SelectItem>
-                  )}
-                  <SelectItem value="Independent Research" className="text-xs italic">
-                    Independent Research (No Mentor)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                placeholder="e.g. artificial intelligence, deep learning, computer vision"
+                value={formData.keywords}
+                onChange={(e) => handleFieldChange("keywords", e.target.value)}
+                className="rounded-xl text-xs"
+              />
             </div>
 
             {/* Dialog Action Buttons */}

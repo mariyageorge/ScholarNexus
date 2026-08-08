@@ -75,6 +75,7 @@ function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [supervisionRequests, setSupervisionRequests] = useState<any[]>([]);
   const [readIds, setReadIds] = useState<string[]>([]);
   const [clearedIds, setClearedIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("all");
@@ -107,9 +108,10 @@ function NotificationsPage() {
     }
 
     try {
-      const [tasksRes, projRes] = await Promise.all([
+      const [tasksRes, projRes, supRes] = await Promise.all([
         fetch(`/api/tasks?email=${encodeURIComponent(email)}`),
         fetch(`/api/projects?email=${encodeURIComponent(email)}`),
+        fetch(`/api/supervision-requests?studentEmail=${encodeURIComponent(email)}`),
       ]);
 
       if (tasksRes.ok) {
@@ -120,6 +122,11 @@ function NotificationsPage() {
       if (projRes.ok) {
         const projData = await projRes.json();
         if (Array.isArray(projData)) setProjects(projData);
+      }
+
+      if (supRes.ok) {
+        const supData = await supRes.json();
+        if (Array.isArray(supData)) setSupervisionRequests(supData);
       }
     } catch (err) {
       toast.error("Failed to fetch notification sources.");
@@ -288,9 +295,38 @@ function NotificationsPage() {
       }
     });
 
+    // 3. Supervision Request Notifications (Approved & Rejected with Reason)
+    supervisionRequests.forEach((req) => {
+      const reqId = req.id || req._id;
+      if (req.status === "Approved" || req.status === "Accepted") {
+        const notifId = `notif-sup-approved-${reqId}`;
+        list.push({
+          id: notifId,
+          title: `Supervision Request Approved: ${req.projectTitle}`,
+          content: `Great news! Dr. ${req.facultyName} has approved your supervision request for project "${req.projectTitle}".`,
+          category: "Feedback",
+          read: readIds.includes(notifId),
+          timestamp: "Approved",
+          projectLink: `/projects/${req.projectId}`,
+        });
+      } else if (req.status === "Rejected" || req.status === "Declined") {
+        const notifId = `notif-sup-rejected-${reqId}`;
+        const reasonText = req.facultyRemarks ? ` Reason: "${req.facultyRemarks}"` : "";
+        list.push({
+          id: notifId,
+          title: `Supervision Request Declined: ${req.projectTitle}`,
+          content: `Your supervision request for project "${req.projectTitle}" was declined by ${req.facultyName}.${reasonText}`,
+          category: "Feedback",
+          read: readIds.includes(notifId),
+          timestamp: "Declined",
+          projectLink: `/projects/${req.projectId}`,
+        });
+      }
+    });
+
     // Filter out cleared notifications
     return list.filter((item) => !clearedIds.includes(item.id));
-  }, [tasks, projects, readIds, clearedIds, todayStr]);
+  }, [tasks, projects, supervisionRequests, readIds, clearedIds, todayStr]);
 
   const handleMarkAllRead = () => {
     const allIds = generatedNotifications.map((n) => n.id);

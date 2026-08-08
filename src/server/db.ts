@@ -106,12 +106,19 @@ export interface ProjectRecord {
   userEmail: string;
   title: string;
   description: string;
+  abstract?: string;
   domain: string;
   status: "Planning" | "In Progress" | "Under Review" | "Completed" | "On Hold";
   progress: number;
   startDate: string;
   expectedCompletionDate: string;
-  faculty?: string;
+  facultyId?: string | null;
+  faculty?: string | null;
+  requestedFacultyId?: string | null;
+  requestedFacultyName?: string | null;
+  supervisionStatus?: string;
+  keywords?: string[];
+  lastRejectionReason?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1160,41 +1167,244 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     );
   }
 
-  // ── Faculty Supervision Requests API ──
-  if (url.pathname === "/api/faculty/supervision-requests") {
-    await ensureAdminSeedData();
+  // ── Supervision Requests & Workflow API ──
+  if (url.pathname === "/api/supervision-requests" || url.pathname === "/api/faculty/supervision-requests") {
     const supCol = await getCollection<Document>("supervision_requests");
+    const projectsCol = await getCollection<Document>("projects");
+    const notifCol = await getCollection<Document>("notifications");
 
-    // Clean up any old dummy seed requests
-    await supCol.deleteMany({ email: { $in: ["alex.rivera@student.edu", "sophia.chen@student.edu", "david.kim@student.edu"] } });
+    // GET Requests
+    if (request.method === "GET") {
+      const projectId = url.searchParams.get("projectId");
+      const studentEmail = url.searchParams.get("studentEmail") || url.searchParams.get("email");
+      const facultyEmail = url.searchParams.get("facultyEmail");
+      const status = url.searchParams.get("status");
 
+      const query: Record<string, any> = {};
+      if (projectId) query.projectId = projectId;
+      if (studentEmail) query.studentEmail = studentEmail.trim().toLowerCase();
+      if (facultyEmail) query.facultyEmail = facultyEmail.trim().toLowerCase();
+      if (status && status !== "All") query.status = status;
+
+      const docs = await supCol.find(query).sort({ requestedAt: -1, createdAt: -1 }).toArray();
+
+      const requests = docs.map((r) => ({
+        id: r._id.toString(),
+        _id: r._id.toString(),
+        projectId: r.projectId,
+        studentId: r.studentId,
+        studentName: r.studentName || "Student Scholar",
+        studentEmail: r.studentEmail || r.email || "",
+        email: r.studentEmail || r.email || "",
+        facultyId: r.facultyId,
+        facultyName: r.facultyName || "Faculty Supervisor",
+        facultyEmail: r.facultyEmail || "",
+        message: r.message || "I would like you to supervise my research project.",
+        projectTitle: r.projectTitle || "Research Project",
+        domain: r.domain || "General",
+        abstract: r.abstract || r.proposalSummary || "",
+        proposalSummary: r.abstract || r.proposalSummary || "",
+        status: r.status || "Pending",
+        requestedAt: r.requestedAt || r.createdAt || new Date().toISOString(),
+        respondedAt: r.respondedAt || null,
+        facultyRemarks: r.facultyRemarks || r.rejectionReason || null,
+        submittedAt: r.requestedAt ? new Date(r.requestedAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      }));
+
+      return new Response(JSON.stringify(requests), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // POST New Supervision Request
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { projectId, studentId, studentEmail, studentName, facultyId, facultyEmail, facultyName, message, projectTitle, domain, abstract } = body;
+
+      if (!projectId || !facultyId || !studentEmail) {
+        return new Response(JSON.stringify({ error: "Project ID, Faculty ID, and Student Email are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      // Check Rule 5: Each project can have only one active Pending supervision request.
+      const existingPending = await supCol.findOne({
+        projectId: String(projectId),
+        status: "Pending",
+      });
+
+      if (existingPending) {
+        return new Response(JSON.stringify({ error: "Waiting for faculty approval." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const now = new Date().toISOString();
+      const newRequest = {
+        projectId: String(projectId),
+        studentId: studentId || studentEmail,
+        studentEmail: studentEmail.trim().toLowerCase(),
+        studentName: studentName || "Student Scholar",
+        facultyId: String(facultyId),
+        facultyEmail: facultyEmail ? facultyEmail.trim().toLowerCase() : "",
+        facultyName: facultyName || "Faculty Supervisor",
+        message: message ? message.trim() : "I would like you to supervise my research project.",
+        projectTitle: projectTitle || "Research Project",
+        domain: domain || "General",
+        abstract: abstract || "",
+        status: "Pending",
+        requestedAt: now,
+        respondedAt: null,
+        facultyRemarks: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await supCol.insertOne(newRequest as any);
+
+      // Update Project Status
+      let filterId: any = projectId;
+      if (ObjectId.isValid(projectId)) {
+        filterId = new ObjectId(projectId);
+      }
+      await projectsCol.updateOne(
+        { $or: [{ _id: filterId }, { _id: String(projectId) }, { id: String(projectId) }] },
+        {
+          $set: {
+            supervisionStatus: "Pending Approval",
+            requestedFacultyId: String(facultyId),
+            requestedFacultyName: facultyName,
+            updatedAt: now,
+          },
+        }
+      );
+
+      const created = { ...newRequest, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+      return new Response(JSON.stringify(created), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // PUT Update Request Status (Approve / Reject)
     if (request.method === "PUT") {
       let body: any = {};
       try { body = await request.json(); } catch {}
-      const { id, status } = body;
-      if (id && ObjectId.isValid(id)) {
-        await supCol.updateOne({ _id: new ObjectId(id) }, { $set: { status, updatedAt: new Date().toISOString() } });
+
+      const reqId = body.id || body._id;
+      const newStatus = body.status; // "Approved" | "Rejected" | "Accepted" | "Declined"
+      const remarks = body.facultyRemarks || body.reason || body.rejectionReason || "";
+
+      if (!reqId || !newStatus) {
+        return new Response(JSON.stringify({ error: "Request ID and Status are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
       }
-      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+
+      let objId: any = reqId;
+      if (ObjectId.isValid(reqId)) {
+        objId = new ObjectId(reqId);
+      }
+
+      const existingReq = await supCol.findOne({ $or: [{ _id: objId }, { id: String(reqId) }] });
+      if (!existingReq) {
+        return new Response(JSON.stringify({ error: "Supervision request not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const normalizedStatus = newStatus === "Accepted" ? "Approved" : newStatus === "Declined" ? "Rejected" : newStatus;
+
+      // Section 8: Reject should require a reason before submission
+      if (normalizedStatus === "Rejected" && !remarks.trim()) {
+        return new Response(JSON.stringify({ error: "Rejection reason is required before submission." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const now = new Date().toISOString();
+      const updatePayload: Record<string, any> = {
+        status: normalizedStatus,
+        respondedAt: now,
+        updatedAt: now,
+      };
+      if (remarks.trim()) {
+        updatePayload.facultyRemarks = remarks.trim();
+      }
+
+      await supCol.updateOne({ _id: existingReq._id }, { $set: updatePayload });
+
+      // Section 9: APPROVE or REJECT project updates & Notification
+      let pId: any = existingReq.projectId;
+      if (ObjectId.isValid(existingReq.projectId)) {
+        pId = new ObjectId(existingReq.projectId);
+      }
+
+      if (normalizedStatus === "Approved") {
+        await projectsCol.updateOne(
+          { $or: [{ _id: pId }, { _id: String(existingReq.projectId) }, { id: String(existingReq.projectId) }] },
+          {
+            $set: {
+              facultyId: existingReq.facultyId,
+              faculty: existingReq.facultyName,
+              facultyEmail: existingReq.facultyEmail,
+              supervisionStatus: "Under Supervision",
+              updatedAt: now,
+            },
+          }
+        );
+
+        // Section 10: Notification on Approval
+        await notifCol.insertOne({
+          userEmail: existingReq.studentEmail.toLowerCase(),
+          title: "Supervision Request Approved",
+          content: `Great news! Dr. ${existingReq.facultyName} has approved your supervision request for project "${existingReq.projectTitle}".`,
+          category: "Supervision",
+          read: false,
+          createdAt: now,
+          projectId: existingReq.projectId,
+          facultyName: existingReq.facultyName,
+        });
+      } else if (normalizedStatus === "Rejected") {
+        await projectsCol.updateOne(
+          { $or: [{ _id: pId }, { _id: String(existingReq.projectId) }, { id: String(existingReq.projectId) }] },
+          {
+            $set: {
+              supervisionStatus: "Rejected",
+              lastRejectionReason: remarks.trim(),
+              updatedAt: now,
+            },
+          }
+        );
+
+        // Section 10: Notification on Rejection with faculty's reason
+        await notifCol.insertOne({
+          userEmail: existingReq.studentEmail.toLowerCase(),
+          title: "Supervision Request Declined",
+          content: `Your supervision request for project "${existingReq.projectTitle}" was declined by ${existingReq.facultyName}. Reason: "${remarks.trim()}".`,
+          category: "Supervision",
+          read: false,
+          createdAt: now,
+          projectId: existingReq.projectId,
+          facultyName: existingReq.facultyName,
+          reason: remarks.trim(),
+        });
+      }
+
+      const updated = await supCol.findOne({ _id: existingReq._id });
+      return new Response(JSON.stringify({ success: true, request: updated }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
-
-    const supDocs = await supCol.find({}).sort({ createdAt: -1 }).toArray();
-
-    const requests = supDocs.map((r) => ({
-      id: r._id.toString(),
-      _id: r._id.toString(),
-      studentName: r.studentName,
-      email: r.email,
-      projectTitle: r.projectTitle || r.topic,
-      topic: r.topic || r.projectTitle,
-      domain: r.domain || "Artificial Intelligence",
-      proposalSummary: r.proposalSummary || r.topic,
-      submittedAt: r.submittedAt || r.submittedDate || new Date().toISOString().split("T")[0],
-      status: r.status || "Pending",
-      gpa: r.gpa || "N/A",
-    }));
-
-    return new Response(JSON.stringify(requests), { status: 200, headers: { "content-type": "application/json" } });
   }
 
   // ── Faculty Reviews API ──
@@ -1685,13 +1895,21 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const newProject = {
         userEmail: email,
         title: body.title.trim(),
-        description: (body.description || "").trim(),
+        description: (body.description || body.abstract || "").trim(),
+        abstract: (body.abstract || body.description || "").trim(),
         domain: body.domain.trim(),
-        status: body.status,
+        status: body.status || "Planning",
         progress: Math.min(100, Math.max(0, Number(body.progress) || 0)),
         startDate: body.startDate,
         expectedCompletionDate: body.expectedCompletionDate,
-        faculty: (body.faculty || "").trim(),
+        keywords: Array.isArray(body.keywords)
+          ? body.keywords
+          : typeof body.keywords === "string" && body.keywords
+          ? body.keywords.split(",").map((s: string) => s.trim()).filter(Boolean)
+          : [],
+        facultyId: null,
+        faculty: null,
+        supervisionStatus: "Not Assigned",
         createdAt: now,
         updatedAt: now,
       };
@@ -2418,28 +2636,112 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     if (request.method === "GET") {
       try {
         const usersCollection = await getCollection<UserRecord>("users");
-        const facultyUsers = await usersCollection
+        let facultyUsers = await usersCollection
           .find({
             role: "faculty",
             status: "Active",
           })
-          .project({ name: 1, email: 1, displayName: 1, affiliation: 1, department: 1, researchInterests: 1, bio: 1, photoURL: 1 })
           .toArray();
+
+        // Seed approved faculty members if none currently exist in DB
+        if (facultyUsers.length === 0) {
+          const defaultFaculty = [
+            {
+              name: "Dr. Aris Thorne",
+              displayName: "Dr. Aris Thorne",
+              email: "aris.thorne@university.edu",
+              password: hashPassword("faculty123"),
+              role: "faculty",
+              status: "Active",
+              affiliation: "Massachusetts Institute of Technology",
+              institution: "Massachusetts Institute of Technology",
+              designation: "Professor & Lab Director",
+              department: "School of Computer Science & AI",
+              researchInterests: ["Artificial Intelligence", "Machine Learning", "Neural Networks", "Robotics"],
+              bio: "Professor of Computer Science specializing in Deep Learning and Intelligent Systems.",
+              photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250",
+              profileCompleted: true,
+              createdAt: new Date().toISOString(),
+            },
+            {
+              name: "Dr. Elena Rostova",
+              displayName: "Dr. Elena Rostova",
+              email: "elena.rostova@university.edu",
+              password: hashPassword("faculty123"),
+              role: "faculty",
+              status: "Active",
+              affiliation: "Stanford University",
+              institution: "Stanford University",
+              designation: "Associate Professor",
+              department: "Department of Data Science & Analytics",
+              researchInterests: ["Data Science & Analytics", "Big Data", "Predictive Modeling", "NLP"],
+              bio: "Associate Professor focusing on Large-scale Data Analytics and Natural Language Processing.",
+              photoURL: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=250",
+              profileCompleted: true,
+              createdAt: new Date().toISOString(),
+            },
+            {
+              name: "Dr. Marcus Vance",
+              displayName: "Dr. Marcus Vance",
+              email: "marcus.vance@university.edu",
+              password: hashPassword("faculty123"),
+              role: "faculty",
+              status: "Active",
+              affiliation: "Carnegie Mellon University",
+              institution: "Carnegie Mellon University",
+              designation: "Head of Department",
+              department: "Cybersecurity & Distributed Systems",
+              researchInterests: ["Cybersecurity & Privacy", "Cryptography", "Network Security", "Cloud Computing"],
+              bio: "Head of Cybersecurity Division with extensive research in zero-trust architectures.",
+              photoURL: "https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=250",
+              profileCompleted: true,
+              createdAt: new Date().toISOString(),
+            },
+            {
+              name: "Dr. Sophia Chen",
+              displayName: "Dr. Sophia Chen",
+              email: "sophia.chen@university.edu",
+              password: hashPassword("faculty123"),
+              role: "faculty",
+              status: "Active",
+              affiliation: "Harvard University",
+              institution: "Harvard University",
+              designation: "Professor",
+              department: "Bioengineering & Neural Systems",
+              researchInterests: ["Biomedical Engineering", "Neuroscience & Cognitive Science", "Bio-AI", "Medical Imaging"],
+              bio: "Professor in Computational Neuroscience and Brain-Computer Interfaces.",
+              photoURL: "https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=250",
+              profileCompleted: true,
+              createdAt: new Date().toISOString(),
+            },
+          ];
+
+          await usersCollection.insertMany(defaultFaculty as any);
+          facultyUsers = await usersCollection
+            .find({
+              role: "faculty",
+              status: "Active",
+            })
+            .toArray();
+        }
 
         const dbFacultyList = facultyUsers.map((f: any) => ({
           id: f._id.toString(),
           _id: f._id.toString(),
           name: f.displayName || f.name || "Faculty Advisor",
           email: f.email,
-          title: f.affiliation || f.title || "Professor & Academic Advisor",
+          designation: f.designation || f.title || f.affiliation || "Professor & Academic Advisor",
+          title: f.designation || f.title || f.affiliation || "Professor & Academic Advisor",
           department: f.department || "School of Computer Science & AI",
+          institution: f.institution || f.affiliation || "University Research Institute",
+          affiliation: f.institution || f.affiliation || "University Research Institute",
           researchInterests: Array.isArray(f.researchInterests)
             ? f.researchInterests
             : typeof f.researchInterests === "string" && f.researchInterests
-            ? f.researchInterests.split(",").map((s: string) => s.trim())
+            ? f.researchInterests.split(",").map((s: string) => s.trim()).filter(Boolean)
             : ["Artificial Intelligence", "Academic Research", "Machine Learning"],
           bio: f.bio || "",
-          photoURL: f.photoURL || "",
+          photoURL: f.photoURL || f.profileImage || "",
         }));
 
         return new Response(JSON.stringify(dbFacultyList), {
