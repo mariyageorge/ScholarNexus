@@ -50,25 +50,10 @@ function SettingsPage() {
     return null;
   });
 
-  const [activeTab, setActiveTab] = useState("profile");
+  const [activeTab, setActiveTab] = useState("security");
   const [loading, setLoading] = useState(true);
-  const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
 
-  // Profile Form State
-  const [profileForm, setProfileForm] = useState({
-    name: "",
-    displayName: "",
-    email: "",
-    affiliation: "",
-    department: "",
-    designation: "",
-    facultyId: "",
-    orcid: "",
-    bio: "",
-    phone: "",
-    researchInterests: "",
-  });
 
   // Password Form State
   const [passwordForm, setPasswordForm] = useState({
@@ -117,91 +102,16 @@ function SettingsPage() {
       const res = await fetch(`/api/user/settings?email=${encodeURIComponent(email)}`);
       if (res.ok) {
         const data = await res.json();
-        setProfileForm({
-          name: data.name || "",
-          displayName: data.displayName || data.name || "",
-          email: data.email || email, // Email read-only
-          affiliation: data.institution || data.affiliation || "",
-          department: data.department || "",
-          designation: data.designation || "",
-          facultyId: data.facultyId || "",
-          orcid: data.orcid || "",
-          bio: data.bio || "",
-          phone: data.phone || "",
-          researchInterests: Array.isArray(data.researchInterests) ? data.researchInterests.join(", ") : (data.researchInterests || ""),
-        });
         if (data.preferences) {
           setNotifications((prev) => ({ ...prev, ...data.preferences.notifications }));
           if (data.preferences.theme) setThemeMode(data.preferences.theme);
           if (data.preferences.visibility) setVisibility(data.preferences.visibility);
         }
-      } else {
-        // Fallback to session
-        setProfileForm({
-          name: email.split("@")[0],
-          displayName: email.split("@")[0],
-          email,
-          affiliation: user?.institution || "Amal Jyothi College of Engineering",
-          department: user?.department || "Computer Applications",
-          designation: user?.designation || "Associate Professor",
-          facultyId: user?.facultyId || "FAC-1011",
-          orcid: user?.orcid || "",
-          bio: "",
-          phone: "",
-          researchInterests: "Artificial Intelligence, Machine Learning",
-        });
       }
     } catch {
       toast.error("Failed to load settings.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
-
-    setSavingProfile(true);
-    try {
-      const res = await fetch("/api/user/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: user.email,
-          name: profileForm.name,
-          displayName: profileForm.displayName,
-          affiliation: profileForm.affiliation,
-          department: profileForm.department,
-          designation: profileForm.designation,
-          facultyId: profileForm.facultyId,
-          orcid: profileForm.orcid,
-          bio: profileForm.bio,
-          phone: profileForm.phone,
-          researchInterests: profileForm.researchInterests,
-        }),
-      });
-
-      if (res.ok) {
-        const updated = await res.json();
-        toast.success("Profile information updated successfully!");
-        // Update local session cache
-        if (typeof window !== "undefined") {
-          const current = getUserSession();
-          if (current) {
-            const newSession = { ...current, displayName: updated.displayName, name: updated.name };
-            localStorage.setItem("scholarnexus_session", JSON.stringify(newSession));
-            window.dispatchEvent(new Event("scholarnexus-session-updated"));
-          }
-        }
-      } else {
-        const err = await res.json();
-        toast.error(err.error || "Failed to update profile.");
-      }
-    } catch {
-      toast.error("Error updating profile.");
-    } finally {
-      setSavingProfile(false);
     }
   };
 
@@ -289,10 +199,7 @@ function SettingsPage() {
 
         {/* Settings Tabs Bar */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 bg-card border border-border p-1.5 rounded-2xl shadow-sm h-auto">
-            <TabsTrigger value="profile" className="rounded-xl py-2.5 text-xs font-semibold gap-2">
-              <User className="h-3.5 w-3.5" /> Profile
-            </TabsTrigger>
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-card border border-border p-1.5 rounded-2xl shadow-sm h-auto">
             <TabsTrigger value="security" className="rounded-xl py-2.5 text-xs font-semibold gap-2">
               <KeyRound className="h-3.5 w-3.5" /> Security
             </TabsTrigger>
@@ -307,148 +214,7 @@ function SettingsPage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: PROFILE */}
-          <TabsContent value="profile">
-            <Card className="surface-elevated rounded-2xl border-border bg-card p-6 md:p-8">
-              <CardHeader className="p-0 pb-6">
-                <CardTitle className="text-lg font-bold">Profile Information</CardTitle>
-                <CardDescription className="text-xs text-muted-foreground">
-                  Your academic identity and institutional profile displayed across project workspaces.
-                </CardDescription>
-              </CardHeader>
 
-              <form onSubmit={handleSaveProfile} className="space-y-5">
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground">
-                      Email Address <Badge variant="outline" className="ml-1 text-[0.65rem] border-muted-foreground/30 text-muted-foreground">Read-Only</Badge>
-                    </Label>
-                    <Input
-                      value={profileForm.email}
-                      disabled
-                      className="rounded-xl text-xs bg-muted/60 border-border text-muted-foreground cursor-not-allowed"
-                    />
-                    <p className="text-[0.7rem] text-muted-foreground">Primary academic email linked to account.</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground">
-                      Display Name / Preferred Name <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      value={profileForm.displayName}
-                      onChange={(e) => setProfileForm({ ...profileForm, displayName: e.target.value })}
-                      placeholder="e.g. Dr. Alex Morgan"
-                      className="rounded-xl text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground">Full Name</Label>
-                    <Input
-                      value={profileForm.name}
-                      onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                      className="rounded-xl text-xs"
-                    />
-                  </div>
-
-                  {user?.role !== "admin" && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-foreground">Institution / Affiliation</Label>
-                      <Input
-                        value={profileForm.affiliation}
-                        onChange={(e) => setProfileForm({ ...profileForm, affiliation: e.target.value })}
-                        placeholder="e.g. MIT AI Lab, Department of Computer Science"
-                        className="rounded-xl text-xs"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {user?.role === "faculty" && (
-                  <>
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-foreground">Department</Label>
-                        <Input
-                          value={profileForm.department}
-                          onChange={(e) => setProfileForm({ ...profileForm, department: e.target.value })}
-                          placeholder="e.g. Computer Applications"
-                          className="rounded-xl text-xs"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-foreground">Designation / Academic Title</Label>
-                        <Input
-                          value={profileForm.designation}
-                          onChange={(e) => setProfileForm({ ...profileForm, designation: e.target.value })}
-                          placeholder="e.g. Associate Professor"
-                          className="rounded-xl text-xs"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-foreground">Faculty Employee ID</Label>
-                        <Input
-                          value={profileForm.facultyId}
-                          onChange={(e) => setProfileForm({ ...profileForm, facultyId: e.target.value })}
-                          placeholder="e.g. FAC-1011"
-                          className="rounded-xl text-xs font-mono"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-foreground">ORCID Identifier</Label>
-                        <Input
-                          value={profileForm.orcid}
-                          onChange={(e) => setProfileForm({ ...profileForm, orcid: e.target.value })}
-                          placeholder="e.g. 0000-0002-1825-0097"
-                          className="rounded-xl text-xs font-mono"
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {user?.role !== "admin" && (
-                  <>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-foreground">Primary Research Interests</Label>
-                      <Input
-                        value={profileForm.researchInterests}
-                        onChange={(e) => setProfileForm({ ...profileForm, researchInterests: e.target.value })}
-                        placeholder="e.g. Machine Learning, Natural Language Processing, Cognitive Robotics"
-                        className="rounded-xl text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-foreground">Academic Bio & Objectives</Label>
-                      <Textarea
-                        rows={4}
-                        value={profileForm.bio}
-                        onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
-                        placeholder="Brief overview of research background, ongoing publications, and goals…"
-                        className="rounded-xl text-xs leading-relaxed"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div className="pt-2 flex justify-end">
-                  <Button type="submit" disabled={savingProfile} className="gap-2 rounded-xl bg-primary text-xs font-semibold px-6">
-                    {savingProfile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                    Save Profile Changes
-                  </Button>
-                </div>
-              </form>
-            </Card>
-          </TabsContent>
 
           {/* TAB 2: SECURITY & CHANGE PASSWORD */}
           <TabsContent value="security">

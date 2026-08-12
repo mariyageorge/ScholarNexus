@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
@@ -66,7 +66,8 @@ const facultyMenu: SidebarMenuItemType[] = [
   { title: "Reviews & Feedback", url: "/faculty/reviews", icon: Quote },
   { title: "Resources", url: "/faculty/resources", icon: Bookmark },
   { title: "Research Profile", url: "/faculty/profile", icon: UserCircle },
-  { title: "AI Assistant", url: "/faculty/assistant", icon: Sparkles },
+  { title: "AI Research Assistant", url: "/faculty/assistant", icon: Sparkles },
+  { title: "Notifications", url: "/notifications", icon: Bell },
   { title: "Settings", url: "/faculty/settings", icon: Settings },
 ];
 
@@ -100,9 +101,30 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const hash = useRouterState({ select: (s) => s.location.hash });
 
+  const [unreadCount, setUnreadCount] = useState(0);
   const user = typeof window !== "undefined" ? getUserSession() : null;
   const isCurrentAdminRoute = pathname === "/admin" || pathname.startsWith("/admin");
   const isFacultyUser = user?.role === "faculty";
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user?.email) return;
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch(`/api/notifications?email=${encodeURIComponent(user.email)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            const count = data.filter((n: any) => !n.read).length;
+            setUnreadCount(count);
+          }
+        }
+      } catch (e) {}
+    };
+
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 5000);
+    return () => clearInterval(interval);
+  }, [user?.email, pathname]);
 
   const isActive = (item: SidebarMenuItemType) => {
     if (isCurrentAdminRoute && item.url === "/admin") {
@@ -127,6 +149,8 @@ export function AppSidebar() {
           {items.map((item) => {
             const active = isActive(item);
             const targetUrl = `${item.url}${item.hash ?? ""}`;
+            const isNotifItem = item.url === "/notifications";
+
             return (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
@@ -146,7 +170,12 @@ export function AppSidebar() {
                       }`}
                     />
                     {!collapsed && <span className="truncate">{item.title}</span>}
-                    {active && !collapsed && (
+                    {isNotifItem && unreadCount > 0 && !collapsed && (
+                      <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-primary/20 px-1.5 text-[0.65rem] font-bold text-primary">
+                        {unreadCount}
+                      </span>
+                    )}
+                    {active && !collapsed && !isNotifItem && (
                       <span className="ml-auto h-1.5 w-1.5 rounded-full bg-accent" />
                     )}
                   </Link>

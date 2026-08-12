@@ -21,7 +21,7 @@ import {
   CheckCircle2,
   BookOpen,
 } from "lucide-react";
-import { getUserSession, getUserInitials, UserSession } from "@/lib/session";
+import { getUserSession, setUserSession, getUserInitials, UserSession } from "@/lib/session";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,19 +60,15 @@ function FacultyDashboardHome() {
   const [dbUserStatus, setDbUserStatus] = useState<any | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Update Application Modal States
+  // Update Profile Modal States
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [editName, setEditName] = useState("");
   const [editInstitution, setEditInstitution] = useState("");
   const [editDepartment, setEditDepartment] = useState("");
   const [editDesignation, setEditDesignation] = useState("");
   const [editFacultyId, setEditFacultyId] = useState("");
   const [editResearchInterests, setEditResearchInterests] = useState("");
-  const [editAreasOfExpertise, setEditAreasOfExpertise] = useState("");
-  const [editOrcid, setEditOrcid] = useState("");
-  const [infoResponseText, setInfoResponseText] = useState("");
-
-  const [newDocumentBase64, setNewDocumentBase64] = useState("");
-  const [newDocumentName, setNewDocumentName] = useState("");
+  const [editBio, setEditBio] = useState("");
   const [submittingResponse, setSubmittingResponse] = useState(false);
 
   useEffect(() => {
@@ -103,13 +99,13 @@ function FacultyDashboardHome() {
       .then((data) => {
         if (data) {
           setDbUserStatus(data);
+          setEditName(data.name || activeUser.name || "");
           setEditInstitution(data.institution || data.affiliation || "");
           setEditDepartment(data.department || "");
           setEditDesignation(data.designation || "");
           setEditFacultyId(data.facultyId || "");
           setEditResearchInterests(Array.isArray(data.researchInterests) ? data.researchInterests.join(", ") : (data.researchInterests || ""));
-          setEditAreasOfExpertise(Array.isArray(data.areasOfExpertise) ? data.areasOfExpertise.join(", ") : (data.areasOfExpertise || ""));
-          setEditOrcid(data.orcid || "");
+          setEditBio(data.bio || "");
         }
       })
       .catch((err) => console.error("Error loading profile status:", err));
@@ -140,23 +136,6 @@ function FacultyDashboardHome() {
     };
   }, []);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("File size exceeds 5MB limit.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setNewDocumentBase64(event.target?.result as string);
-      setNewDocumentName(file.name);
-      toast.success(`Attached verification document: ${file.name}`);
-    };
-    reader.readAsDataURL(file);
-  };
 
   const handleSubmitClarification = async () => {
     if (!session) return;
@@ -165,20 +144,10 @@ function FacultyDashboardHome() {
     try {
       const payload: any = {
         email: session.email,
-        status: "Pending",
-        approvalStatus: "Pending",
-        institution: editInstitution.trim(),
-        department: editDepartment.trim(),
-        designation: editDesignation.trim(),
-        facultyId: editFacultyId.trim(),
+        name: editName.trim(),
         researchInterests: editResearchInterests.trim(),
-        areasOfExpertise: editAreasOfExpertise.trim(),
-        orcid: editOrcid.trim(),
-        infoResponse: infoResponseText.trim(),
+        bio: editBio.trim(),
       };
-      if (newDocumentBase64) {
-        payload.verificationDocument = newDocumentBase64;
-      }
 
       const res = await fetch("/api/profile", {
         method: "PUT",
@@ -187,18 +156,29 @@ function FacultyDashboardHome() {
       });
 
       if (res.ok) {
-        toast.success("Application details updated successfully.");
+        toast.success("Profile details updated successfully.");
         setUpdateModalOpen(false);
-        setInfoResponseText("");
-        setNewDocumentBase64("");
-        setNewDocumentName("");
-        setDbUserStatus((prev: any) => ({ ...prev, status: "Pending", approvalStatus: "Pending" }));
+
+        const updatedSession = {
+          ...session,
+          name: editName.trim(),
+          researchInterests: editResearchInterests.trim(),
+          bio: editBio.trim(),
+        };
+        setUserSession(updatedSession);
+        setSession(updatedSession);
+        setDbUserStatus((prev: any) => ({
+          ...prev,
+          name: editName.trim(),
+          researchInterests: editResearchInterests.trim(),
+          bio: editBio.trim(),
+        }));
       } else {
         const data = await res.json();
-        toast.error(data.error || "Failed to submit application update.");
+        toast.error(data.error || "Failed to submit profile update.");
       }
     } catch {
-      toast.error("Network error submitting application update.");
+      toast.error("Network error submitting profile update.");
     } finally {
       setSubmittingResponse(false);
     }
@@ -500,110 +480,92 @@ function FacultyDashboardHome() {
         </div>
       </div>
 
-      {/* FOCUSED FACULTY RESUBMISSION MODAL */}
+      {/* FOCUSED FACULTY PROFILE EDIT MODAL */}
       <Dialog open={updateModalOpen} onOpenChange={setUpdateModalOpen}>
         <DialogContent className="rounded-3xl max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
-              <Edit className="h-5 w-5 text-blue-500" /> Update Faculty Application Information
+              <Edit className="h-5 w-5 text-blue-500" /> Update Faculty Profile Information
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Modify your application attributes and re-upload verification proof. Submitting returns your application to the Admin Pending queue.
+              Update your editable profile details (Name, Primary Research Interests, Academic Bio & Objectives). Institutional details are verified and read-only.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Admin Message Reminder */}
-            {isInfoRequested && dbUserStatus?.adminMessage && (
-              <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-3 text-xs space-y-1">
-                <span className="font-bold text-blue-600 flex items-center gap-1">
-                  <Mail className="h-3.5 w-3.5" /> Admin Request Instructions:
-                </span>
-                <p className="text-foreground leading-relaxed">"{dbUserStatus.adminMessage}"</p>
-              </div>
-            )}
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">Full Name</Label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Faculty Name"
+                className="rounded-xl text-xs"
+              />
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Institution Name</Label>
+                <Label className="text-xs font-semibold text-muted-foreground">Institution Name (Read Only)</Label>
                 <Input
                   value={editInstitution}
-                  onChange={(e) => setEditInstitution(e.target.value)}
-                  className="rounded-xl text-xs"
+                  readOnly
+                  disabled
+                  className="rounded-xl text-xs bg-muted/50 text-muted-foreground cursor-not-allowed"
                 />
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Department</Label>
+                <Label className="text-xs font-semibold text-muted-foreground">Department (Read Only)</Label>
                 <Input
                   value={editDepartment}
-                  onChange={(e) => setEditDepartment(e.target.value)}
-                  className="rounded-xl text-xs"
+                  readOnly
+                  disabled
+                  className="rounded-xl text-xs bg-muted/50 text-muted-foreground cursor-not-allowed"
                 />
               </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Designation / Title</Label>
+                <Label className="text-xs font-semibold text-muted-foreground">Designation / Title (Read Only)</Label>
                 <Input
                   value={editDesignation}
-                  onChange={(e) => setEditDesignation(e.target.value)}
-                  className="rounded-xl text-xs"
+                  readOnly
+                  disabled
+                  className="rounded-xl text-xs bg-muted/50 text-muted-foreground cursor-not-allowed"
                 />
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Faculty Employee ID</Label>
+                <Label className="text-xs font-semibold text-muted-foreground">Faculty Employee ID (Read Only)</Label>
                 <Input
                   value={editFacultyId}
-                  onChange={(e) => setEditFacultyId(e.target.value)}
-                  className="rounded-xl text-xs font-mono"
+                  readOnly
+                  disabled
+                  className="rounded-xl text-xs font-mono bg-muted/50 text-muted-foreground cursor-not-allowed"
                 />
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-semibold">Research Interests</Label>
+              <Label className="text-xs font-semibold">Primary Research Interests</Label>
               <Input
                 value={editResearchInterests}
                 onChange={(e) => setEditResearchInterests(e.target.value)}
-                placeholder="e.g. AI, NLP, Machine Learning"
+                placeholder="e.g. AI, NTP, ML"
                 className="rounded-xl text-xs"
               />
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-semibold">Response Message to Admin</Label>
+              <Label className="text-xs font-semibold">Academic Bio & Objectives</Label>
               <Textarea
                 rows={3}
-                value={infoResponseText}
-                onChange={(e) => setInfoResponseText(e.target.value)}
-                placeholder="Provide requested clarifications or notes for system administration..."
+                value={editBio}
+                onChange={(e) => setEditBio(e.target.value)}
+                placeholder="Provide a summary of your academic background, research objectives, and goals..."
                 className="rounded-xl text-xs leading-relaxed"
               />
-            </div>
-
-            {/* Re-upload document */}
-            <div className="space-y-2 border-t border-border pt-3">
-              <Label className="text-xs font-semibold flex items-center justify-between">
-                <span>Re-upload Verification Document</span>
-                <span className="text-[0.65rem] text-muted-foreground font-normal">PDF or Image (Max 5MB)</span>
-              </Label>
-
-              <div className="flex items-center gap-3">
-                <Input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  onChange={handleFileUpload}
-                  className="rounded-xl text-xs cursor-pointer file:rounded-lg file:border-0 file:bg-primary/10 file:text-primary file:font-semibold"
-                />
-              </div>
-              {newDocumentName && (
-                <p className="text-[0.7rem] text-emerald-600 font-semibold flex items-center gap-1">
-                  <FileText className="h-3 w-3" /> Ready: {newDocumentName}
-                </p>
-              )}
             </div>
           </div>
 
@@ -622,7 +584,7 @@ function FacultyDashboardHome() {
               disabled={submittingResponse}
               className="rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-xs gap-1.5"
             >
-              <Upload className="h-3.5 w-3.5" /> Submit Updates
+              Save Changes
             </Button>
           </div>
         </DialogContent>

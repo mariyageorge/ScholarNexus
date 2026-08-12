@@ -34,6 +34,10 @@ import {
   Plus,
   Quote,
   RefreshCcw,
+  Save,
+  ArrowUp,
+  ArrowDown,
+  FileEdit,
   ScanSearch,
   Search,
   Send,
@@ -114,6 +118,7 @@ export interface Project {
   expectedCompletionDate: string;
   facultyId?: string | null;
   faculty?: string | null;
+  facultyEmail?: string | null;
   requestedFacultyId?: string | null;
   requestedFacultyName?: string | null;
   supervisionStatus?: "Not Assigned" | "Pending Approval" | "Under Supervision" | "Rejected";
@@ -269,6 +274,27 @@ function ProjectWorkspacePage() {
 
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  // Faculty Reviews & Feedback State
+  const [projectReviews, setProjectReviews] = useState<any[]>([]);
+  const [submittingReviewRequest, setSubmittingReviewRequest] = useState<string | null>(null);
+
+  // My Research Work State
+  const [researchWorkList, setResearchWorkList] = useState<any[]>([]);
+  const [loadingWork, setLoadingWork] = useState(false);
+  const [isCreateWorkModalOpen, setIsCreateWorkModalOpen] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("Research Paper");
+  const [newWorkTitle, setNewWorkTitle] = useState("");
+  const [activeWorkDoc, setActiveWorkDoc] = useState<any | null>(null);
+  const [autoSaveTimer, setAutoSaveTimer] = useState<string>("");
+  const [savingWork, setSavingWork] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+
+  // AI Assist Drawer State
+  const [aiAssistSectionId, setAiAssistSectionId] = useState<string | null>(null);
+  const [aiAssistAction, setAiAssistAction] = useState<string>("improve_writing");
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [generatingAi, setGeneratingAi] = useState(false);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -283,7 +309,272 @@ function ProjectWorkspacePage() {
     fetchFacultyList();
     fetchSupervisionRequest(projectId);
     loadProjectPapers(projectId);
+    fetchProjectReviews(projectId);
+    loadResearchWork(projectId);
   }, [projectId]);
+
+  const loadResearchWork = async (pId: string) => {
+    setLoadingWork(true);
+    try {
+      const res = await fetch(`/api/research-work?projectId=${encodeURIComponent(pId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setResearchWorkList(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading research work:", err);
+    } finally {
+      setLoadingWork(false);
+    }
+  };
+
+  const handleCreateResearchWork = async (templateType: string) => {
+    if (!project || !user?.email) return;
+
+    try {
+      const titleStr = newWorkTitle.trim() || `${templateType} — ${new Date().toLocaleDateString()}`;
+      const res = await fetch("/api/research-work", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id || project._id || projectId,
+          studentEmail: user.email,
+          studentName: user.name,
+          title: titleStr,
+          templateType,
+        }),
+      });
+
+      if (res.ok) {
+        const createdDoc = await res.json();
+        toast.success(`Created "${createdDoc.title}".`);
+        setIsCreateWorkModalOpen(false);
+        setNewWorkTitle("");
+        await loadResearchWork(projectId);
+        setActiveWorkDoc(createdDoc);
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || "Failed to create research document.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("An error occurred while creating document.");
+    }
+  };
+
+  const handleSaveActiveWorkDoc = async (docToSave = activeWorkDoc, showToast = false) => {
+    if (!docToSave || !docToSave.id) return;
+    setSavingWork(true);
+    setJustSaved(false);
+
+    try {
+      const now = new Date();
+      const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const res = await fetch("/api/research-work", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: docToSave.id,
+          title: docToSave.title,
+          abstract: docToSave.abstract,
+          keywords: docToSave.keywords,
+          sections: docToSave.sections,
+        }),
+      });
+
+      if (res.ok) {
+        setAutoSaveTimer(`Last saved at ${formattedTime}`);
+        setJustSaved(true);
+        setTimeout(() => setJustSaved(false), 3000);
+        if (showToast) {
+          toast.success("Research work saved successfully.");
+        }
+        setResearchWorkList((prev) =>
+          prev.map((w) => (w.id === docToSave.id ? { ...w, ...docToSave, lastSaved: now.toISOString() } : w))
+        );
+      } else {
+        if (showToast) {
+          toast.error("Unable to save your research work. Please try again.");
+        }
+      }
+    } catch (err) {
+      console.error("Save failed:", err);
+      if (showToast) {
+        toast.error("Unable to save your research work. Please try again.");
+      }
+    } finally {
+      setSavingWork(false);
+    }
+  };
+
+  const handleRequestWorkReview = async (workDoc: any) => {
+    if (!project || (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail && !project.faculty)) {
+      toast.error("Cannot request review: Do not allow review requests when the project has no approved supervisor.");
+      return;
+    }
+
+    if (workDoc.reviewStatus === "Pending Review") {
+      toast.error("An active review request already exists for this document.");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id || project._id || projectId,
+          documentId: workDoc.id,
+          paperTitle: workDoc.title,
+          documentTitle: workDoc.title,
+          studentEmail: user?.email,
+          studentName: user?.name,
+          fileType: `${workDoc.templateType || "Research Paper"} Document`,
+        }),
+      });
+
+      if (res.ok) {
+        toast.success(`Review request submitted to supervisor for "${workDoc.title}".`);
+        await loadResearchWork(projectId);
+        await fetchProjectReviews(projectId);
+        if (activeWorkDoc && activeWorkDoc.id === workDoc.id) {
+          setActiveWorkDoc((prev: any) => ({ ...prev, reviewStatus: "Pending Review" }));
+        }
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || "Failed to submit review request.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("An error occurred while requesting review.");
+    }
+  };
+
+  const handleGenerateAiAssist = async () => {
+    if (!aiAssistSectionId || !activeWorkDoc) return;
+    setGeneratingAi(true);
+    setAiSuggestion(null);
+
+    let targetText = "";
+    let secTitle = "";
+    if (aiAssistSectionId === "abstract") {
+      targetText = activeWorkDoc.abstract || "";
+      secTitle = "Abstract";
+    } else {
+      const sec = activeWorkDoc.sections?.find((s: any) => s.id === aiAssistSectionId);
+      targetText = sec?.content || "";
+      secTitle = sec?.title || "Section";
+    }
+
+    try {
+      const res = await fetch("/api/ai/writing-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: aiAssistAction,
+          content: targetText,
+          sectionTitle: secTitle,
+          projectTitle: project?.title,
+          domain: project?.domain,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.suggestion) {
+          setAiSuggestion(data.suggestion);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to generate AI suggestion.");
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
+
+  const handleApplyAiSuggestion = () => {
+    if (!aiSuggestion || !aiAssistSectionId || !activeWorkDoc) return;
+
+    if (aiAssistSectionId === "abstract") {
+      const updated = { ...activeWorkDoc, abstract: aiSuggestion };
+      setActiveWorkDoc(updated);
+      handleSaveActiveWorkDoc(updated);
+    } else {
+      const updatedSections = activeWorkDoc.sections.map((s: any) =>
+        s.id === aiAssistSectionId ? { ...s, content: aiSuggestion } : s
+      );
+      const updated = { ...activeWorkDoc, sections: updatedSections };
+      setActiveWorkDoc(updated);
+      handleSaveActiveWorkDoc(updated);
+    }
+
+    toast.success("Applied AI writing suggestion to document.");
+    setAiSuggestion(null);
+    setAiAssistSectionId(null);
+  };
+
+  const fetchProjectReviews = async (pId: string) => {
+    try {
+      const res = await fetch(`/api/reviews?projectId=${encodeURIComponent(pId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setProjectReviews(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching project reviews:", err);
+    }
+  };
+
+  const handleRequestReview = async (paper: ProjectPaper) => {
+    if (!project || (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail && !project.faculty)) {
+      toast.error("Cannot request review: Do not allow review requests when the project has no approved supervisor.");
+      return;
+    }
+
+    const existingReview = projectReviews.find(
+      (r) => String(r.documentId) === String(paper.id) && r.status === "Pending Review"
+    );
+    if (existingReview) {
+      toast.error("An active review request already exists for this document.");
+      return;
+    }
+
+    setSubmittingReviewRequest(paper.id);
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id || project._id || projectId,
+          documentId: paper.id,
+          paperTitle: paper.title,
+          studentEmail: user?.email,
+          studentName: user?.name,
+          fileType: paper.url ? "External Link" : "PDF Document",
+          fileData: paper.fileData || "",
+          url: paper.url || "",
+        }),
+      });
+
+      if (res.ok) {
+        toast.success(`Review request submitted for "${paper.title}". Status: Pending Review.`);
+        await fetchProjectReviews(projectId);
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || "Failed to submit review request.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("An error occurred while submitting review request.");
+    } finally {
+      setSubmittingReviewRequest(null);
+    }
+  };
 
   const sanitizePaper = (p: ProjectPaper): ProjectPaper => ({
     ...p,
@@ -878,13 +1169,14 @@ function ProjectWorkspacePage() {
 
   const workspaceTabs = [
     { id: "overview", label: "Overview", icon: FolderKanban },
-    { id: "papers", label: "Research Papers", icon: FileText },
+    { id: "reference-papers", label: "Reference Papers", icon: BookOpen },
+    { id: "my-work", label: "My Research Work", icon: Pencil },
     { id: "assistant", label: "AI Research Assistant", icon: Bot },
-    { id: "summaries", label: "Paper Summaries", icon: BookOpen },
-    { id: "comparison", label: "Paper Comparison", icon: GitCompareArrows },
+    { id: "summaries", label: "Literature Summaries", icon: BookOpen },
+    { id: "comparison", label: "Literature Comparison", icon: GitCompareArrows },
     { id: "citations", label: "Citation Generator", icon: Quote },
     { id: "similarity", label: "Similarity Checker", icon: ScanSearch },
-    { id: "faculty", label: "Faculty Feedback", icon: GraduationCap },
+    { id: "faculty", label: "Faculty Supervision", icon: GraduationCap },
     { id: "settings", label: "Project Settings", icon: Settings },
   ];
 
@@ -1265,93 +1557,477 @@ function ProjectWorkspacePage() {
             </div>
           </TabsContent>
 
-          {/* TAB 2: RESEARCH PAPERS */}
-          <TabsContent value="papers" className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3 gap-3">
-              <div>
-                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-primary" /> Project Literature Library
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Papers uploaded specifically to "{project.title}" for AI analysis and citation generation.
-                </p>
+          {/* TAB 2: REFERENCE PAPERS */}
+          {(activeWorkspaceTab === "reference-papers" || activeWorkspaceTab === "papers") && (
+            <TabsContent value={activeWorkspaceTab} className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3 gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <BookOpen className="h-5 w-5 text-primary" /> Reference Papers
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Add papers and literature for your research reference background.
+                  </p>
+                </div>
+
+                <Button onClick={handleOpenPaperUploadModal} className="gap-2 rounded-xl bg-primary text-xs font-medium text-primary-foreground">
+                  <Plus className="h-4 w-4" /> Upload Reference Paper
+                </Button>
               </div>
 
-              <Button onClick={handleOpenPaperUploadModal} className="gap-2 rounded-xl bg-primary text-xs font-medium text-primary-foreground">
-                <Plus className="h-4 w-4" /> Upload Research Paper
-              </Button>
-            </div>
+              {papers.length === 0 ? (
+                /* REQUIRED EMPTY STATE */
+                <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-6 text-center">
+                  <div className="grid h-16 w-16 place-items-center rounded-2xl bg-accent/15 text-primary mb-4">
+                    <BookOpen className="h-8 w-8" />
+                  </div>
+                  <h3 className="text-xl font-bold text-foreground">No Reference Papers Added</h3>
+                  <p className="mt-2 max-w-lg text-sm text-muted-foreground leading-relaxed">
+                    Collect and organize papers that support your research reference and literature study.
+                  </p>
+                  <Button onClick={handleOpenPaperUploadModal} className="mt-6 gap-2 rounded-xl bg-primary font-medium text-primary-foreground shadow-md">
+                    <Plus className="h-4 w-4" /> Upload Reference Paper
+                  </Button>
+                </Card>
+              ) : (
+                /* PAPERS TABLE / GRID */
+                <div className="space-y-6">
+                  <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-muted/50 uppercase text-[0.68rem] font-semibold text-muted-foreground">
+                          <tr>
+                            <th className="px-5 py-3.5">Paper Title</th>
+                            <th className="px-5 py-3.5">Authors</th>
+                            <th className="px-5 py-3.5">Year</th>
+                            <th className="px-5 py-3.5">Journal / Conference</th>
+                            <th className="px-5 py-3.5">Upload Date</th>
+                            <th className="px-5 py-3.5 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/60">
+                          {papers.map((p) => (
+                            <tr key={p.id} className="hover:bg-muted/30 transition-colors">
+                              <td className="px-5 py-4 font-semibold text-foreground max-w-xs truncate">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="h-4 w-4 text-primary shrink-0" />
+                                  <span className="truncate">{p.title}</span>
+                                </div>
+                              </td>
+                              <td className="px-5 py-4 text-muted-foreground max-w-[180px] truncate">{p.authors}</td>
+                              <td className="px-5 py-4 font-medium text-foreground">{p.year}</td>
+                              <td className="px-5 py-4 text-muted-foreground">{p.journal}</td>
+                              <td className="px-5 py-4 text-muted-foreground">{p.uploadDate}</td>
+                              <td className="px-5 py-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button size="icon" variant="ghost" onClick={() => setViewingPaper(p)} className="h-7 w-7 rounded-lg text-primary hover:bg-primary/10">
+                                    <Eye className="h-3.5 w-3.5" />
+                                  </Button>
+                                  {p.url ? (
+                                    <Button size="icon" variant="ghost" onClick={() => window.open(p.url, "_blank")} className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-muted">
+                                      <Download className="h-3.5 w-3.5" />
+                                    </Button>
+                                  ) : (
+                                    <Button size="icon" variant="ghost" onClick={() => toast.info(`Downloading metadata for ${p.title}`)} className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-muted">
+                                      <Download className="h-3.5 w-3.5" />
+                                    </Button>
+                                  )}
+                                  <Button size="icon" variant="ghost" onClick={() => handleOpenPaperEditModal(p)} className="h-7 w-7 rounded-lg text-amber-500 hover:bg-amber-500/10">
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" onClick={() => setDeletingPaper(p)} className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              )}
+            </TabsContent>
+          )}
 
-            {papers.length === 0 ? (
-              /* REQUIRED EMPTY STATE */
-              <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-6 text-center">
-                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-accent/15 text-primary mb-4">
-                  <FileText className="h-8 w-8" />
+          {/* TAB 3: MY RESEARCH WORK */}
+          <TabsContent value="my-work" className="space-y-6">
+            {activeWorkDoc ? (
+              /* ACADEMIC RESEARCH WORK EDITOR VIEW */
+              <div className="space-y-6">
+                <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setActiveWorkDoc(null)}
+                          className="h-8 px-2 rounded-lg text-muted-foreground hover:text-foreground"
+                        >
+                          <ArrowLeft className="h-4 w-4 mr-1" /> Back to My Work
+                        </Button>
+                        <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-xs font-semibold">
+                          {activeWorkDoc.templateType || "Research Paper"}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={
+                            activeWorkDoc.reviewStatus === "Pending Review"
+                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold"
+                              : activeWorkDoc.reviewStatus === "Reviewed"
+                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold"
+                              : "text-muted-foreground text-xs border-border"
+                          }
+                        >
+                          {activeWorkDoc.reviewStatus || "Draft"}
+                        </Badge>
+                      </div>
+                      <input
+                        type="text"
+                        value={activeWorkDoc.title}
+                        onChange={(e) => setActiveWorkDoc({ ...activeWorkDoc, title: e.target.value })}
+                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                        className="text-xl font-extrabold bg-transparent text-foreground border-b border-transparent hover:border-border focus:border-primary focus:outline-none w-full transition-colors py-1"
+                        placeholder="Enter Research Paper Title..."
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {autoSaveTimer || `Created ${new Date(activeWorkDoc.createdAt).toLocaleDateString()}`}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        onClick={() => handleSaveActiveWorkDoc(activeWorkDoc, true)}
+                        disabled={savingWork}
+                        size="sm"
+                        variant="outline"
+                        className="rounded-xl text-xs font-semibold gap-1.5 border-border"
+                      >
+                        {savingWork ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
+                          </>
+                        ) : justSaved ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-emerald-500" /> Saved ✓
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-3.5 w-3.5" /> Save
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        onClick={() => handleRequestWorkReview(activeWorkDoc)}
+                        disabled={
+                          activeWorkDoc.reviewStatus === "Pending Review" ||
+                          (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail)
+                        }
+                        size="sm"
+                        className="rounded-xl text-xs font-bold gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        {activeWorkDoc.reviewStatus === "Pending Review" ? "Pending Review" : "Request Faculty Review"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Faculty Feedback Highlight if Reviewed */}
+                  {activeWorkDoc.feedback && (
+                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2 text-xs">
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 text-sm">
+                        <CheckCircle2 className="h-4 w-4" /> Faculty Supervisor Feedback:
+                      </span>
+                      <p className="text-foreground italic leading-relaxed whitespace-pre-wrap pl-6">"{activeWorkDoc.feedback}"</p>
+                    </div>
+                  )}
+
+                  {/* Abstract & Keywords Inputs */}
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="sm:col-span-2 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          Abstract
+                        </label>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setAiAssistSectionId("abstract");
+                            setAiAssistAction("generate_abstract");
+                            setAiSuggestion(null);
+                          }}
+                          className="h-6 px-2 text-[0.7rem] text-purple-400 hover:bg-purple-500/10 rounded-lg gap-1"
+                        >
+                          <Sparkles className="h-3 w-3" /> AI Assist
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={activeWorkDoc.abstract || ""}
+                        onChange={(e) => setActiveWorkDoc({ ...activeWorkDoc, abstract: e.target.value })}
+                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                        placeholder="Write a concise abstract summarizing your research problem, methodology, findings, and conclusions..."
+                        className="min-h-[100px] text-xs rounded-xl border-border bg-background/50 focus:border-primary"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-foreground">Keywords</label>
+                      <Input
+                        value={Array.isArray(activeWorkDoc.keywords) ? activeWorkDoc.keywords.join(", ") : activeWorkDoc.keywords || ""}
+                        onChange={(e) =>
+                          setActiveWorkDoc({
+                            ...activeWorkDoc,
+                            keywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
+                          })
+                        }
+                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                        placeholder="e.g. Deep Learning, NLP, Healthcare"
+                        className="text-xs rounded-xl border-border bg-background/50"
+                      />
+                      <p className="text-[0.68rem] text-muted-foreground">Comma-separated academic keywords.</p>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Section Writing List */}
+                <div className="space-y-4">
+                  {activeWorkDoc.sections?.map((sec: any, idx: number) => (
+                    <Card key={sec.id || idx} className="rounded-2xl border border-border bg-card p-5 space-y-3 shadow-sm">
+                      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                        <input
+                          type="text"
+                          value={sec.title}
+                          onChange={(e) => {
+                            const updatedSecs = activeWorkDoc.sections.map((s: any) =>
+                              s.id === sec.id ? { ...s, title: e.target.value } : s
+                            );
+                            setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
+                          }}
+                          onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                          className="font-bold text-sm bg-transparent text-foreground border-b border-transparent hover:border-border focus:border-primary focus:outline-none w-full max-w-lg transition-colors py-0.5"
+                          placeholder="Section Title..."
+                        />
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {idx > 0 && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => {
+                                const newSecs = [...activeWorkDoc.sections];
+                                const temp = newSecs[idx];
+                                newSecs[idx] = newSecs[idx - 1];
+                                newSecs[idx - 1] = temp;
+                                const updated = { ...activeWorkDoc, sections: newSecs };
+                                setActiveWorkDoc(updated);
+                                handleSaveActiveWorkDoc(updated);
+                              }}
+                              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {idx < activeWorkDoc.sections.length - 1 && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => {
+                                const newSecs = [...activeWorkDoc.sections];
+                                const temp = newSecs[idx];
+                                newSecs[idx] = newSecs[idx + 1];
+                                newSecs[idx + 1] = temp;
+                                const updated = { ...activeWorkDoc, sections: newSecs };
+                                setActiveWorkDoc(updated);
+                                handleSaveActiveWorkDoc(updated);
+                              }}
+                              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => {
+                              const filtered = activeWorkDoc.sections.filter((s: any) => s.id !== sec.id);
+                              const updated = { ...activeWorkDoc, sections: filtered };
+                              setActiveWorkDoc(updated);
+                              handleSaveActiveWorkDoc(updated);
+                            }}
+                            className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <Textarea
+                        value={sec.content || ""}
+                        onChange={(e) => {
+                          const updatedSecs = activeWorkDoc.sections.map((s: any) =>
+                            s.id === sec.id ? { ...s, content: e.target.value } : s
+                          );
+                          setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
+                        }}
+                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                        placeholder={`Write section content for "${sec.title}"...`}
+                        className="min-h-[140px] text-xs font-mono leading-relaxed rounded-xl border-border bg-background/50 focus:border-primary"
+                      />
+
+                      <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground pt-1">
+                        <span>
+                          Word Count: {sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0} words
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setAiAssistSectionId(sec.id);
+                            setAiAssistAction("improve_writing");
+                            setAiSuggestion(null);
+                          }}
+                          className="h-6 px-2 text-[0.7rem] text-purple-400 hover:bg-purple-500/10 rounded-lg gap-1 font-semibold"
+                        >
+                          <Sparkles className="h-3 w-3" /> AI Assist Section
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+
+                  <Button
+                    onClick={() => {
+                      const newSecId = `sec-${Date.now()}`;
+                      const updatedSecs = [
+                        ...(activeWorkDoc.sections || []),
+                        { id: newSecId, title: `${(activeWorkDoc.sections?.length || 0) + 1}. New Section`, content: "" },
+                      ];
+                      const updated = { ...activeWorkDoc, sections: updatedSecs };
+                      setActiveWorkDoc(updated);
+                      handleSaveActiveWorkDoc(updated);
+                    }}
+                    variant="outline"
+                    className="w-full py-6 rounded-2xl border-dashed border-border text-xs font-bold text-muted-foreground hover:text-foreground gap-2"
+                  >
+                    <Plus className="h-4 w-4" /> Add New Section
+                  </Button>
                 </div>
-                <h3 className="text-xl font-bold text-foreground">No Research Papers Added</h3>
-                <p className="mt-2 max-w-lg text-sm text-muted-foreground leading-relaxed">
-                  Start building your literature collection by uploading research papers for this project. Uploaded papers will later be available for AI analysis, citation generation, comparison, and faculty review.
-                </p>
-                <Button onClick={handleOpenPaperUploadModal} className="mt-6 gap-2 rounded-xl bg-primary font-medium text-primary-foreground shadow-md">
-                  <Plus className="h-4 w-4" /> Upload Research Paper
-                </Button>
-              </Card>
+              </div>
             ) : (
-              /* PAPERS TABLE / GRID */
-              <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-muted/50 uppercase text-[0.68rem] font-semibold text-muted-foreground">
-                      <tr>
-                        <th className="px-5 py-3.5">Paper Title</th>
-                        <th className="px-5 py-3.5">Authors</th>
-                        <th className="px-5 py-3.5">Year</th>
-                        <th className="px-5 py-3.5">Journal / Conference</th>
-                        <th className="px-5 py-3.5">Upload Date</th>
-                        <th className="px-5 py-3.5 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {papers.map((p) => (
-                        <tr key={p.id} className="hover:bg-muted/30 transition-colors">
-                          <td className="px-5 py-4 font-semibold text-foreground max-w-xs truncate">
-                            <div className="flex items-center gap-2">
-                              <FileText className="h-4 w-4 text-primary shrink-0" />
-                              <span className="truncate">{p.title}</span>
-                            </div>
-                          </td>
-                          <td className="px-5 py-4 text-muted-foreground max-w-[180px] truncate">{p.authors}</td>
-                          <td className="px-5 py-4 font-medium text-foreground">{p.year}</td>
-                          <td className="px-5 py-4 text-muted-foreground">{p.journal}</td>
-                          <td className="px-5 py-4 text-muted-foreground">{p.uploadDate}</td>
-                          <td className="px-5 py-4 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button size="icon" variant="ghost" onClick={() => setViewingPaper(p)} className="h-7 w-7 rounded-lg text-primary hover:bg-primary/10">
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              {p.url ? (
-                                <Button size="icon" variant="ghost" onClick={() => window.open(p.url, "_blank")} className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-muted">
-                                  <Download className="h-3.5 w-3.5" />
-                                </Button>
-                              ) : (
-                                <Button size="icon" variant="ghost" onClick={() => toast.info(`Downloading metadata for ${p.title}`)} className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-muted">
-                                  <Download className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              <Button size="icon" variant="ghost" onClick={() => handleOpenPaperEditModal(p)} className="h-7 w-7 rounded-lg text-amber-500 hover:bg-amber-500/10">
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" onClick={() => setDeletingPaper(p)} className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              /* MY RESEARCH WORK LIST VIEW */
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3 gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                      <Pencil className="h-5 w-5 text-purple-500" /> My Research Work
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      Write and manage your own research paper, proposal, literature review, and other research documents.
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={() => setIsCreateWorkModalOpen(true)}
+                    className="gap-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-semibold text-white shadow-md"
+                  >
+                    <Plus className="h-4 w-4" /> Create Research Work
+                  </Button>
                 </div>
-              </Card>
+
+                {researchWorkList.length === 0 ? (
+                  <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-6 text-center space-y-4">
+                    <div className="grid h-16 w-16 place-items-center rounded-2xl bg-purple-500/15 text-purple-400">
+                      <FileEdit className="h-8 w-8" />
+                    </div>
+                    <div className="space-y-1 max-w-md">
+                      <h3 className="text-lg font-bold text-foreground">No Research Work Created Yet</h3>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Start writing your own academic paper, research proposal, or literature review for this project.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => setIsCreateWorkModalOpen(true)}
+                      className="gap-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-semibold text-white shadow-md"
+                    >
+                      <Plus className="h-4 w-4" /> Create Research Work
+                    </Button>
+                  </Card>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {researchWorkList.map((doc) => (
+                      <Card key={doc.id} className="rounded-2xl border border-border bg-card p-5 space-y-4 hover:border-purple-500/40 transition-all shadow-sm">
+                        <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
+                          <div className="space-y-1">
+                            <Badge variant="outline" className="border-purple-500/30 text-purple-400 bg-purple-500/10 text-[0.65rem] font-semibold">
+                              {doc.templateType || "Research Paper"}
+                            </Badge>
+                            <h3 className="font-bold text-foreground text-sm leading-tight">{doc.title}</h3>
+                            <p className="text-[0.7rem] text-muted-foreground">
+                              Last saved: {doc.lastSaved ? new Date(doc.lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently"}
+                            </p>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={
+                              doc.reviewStatus === "Pending Review"
+                                ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-semibold shrink-0"
+                                : doc.reviewStatus === "Reviewed"
+                                ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-semibold shrink-0"
+                                : "text-muted-foreground text-[0.65rem] font-normal border-border shrink-0"
+                            }
+                          >
+                            {doc.reviewStatus || "Draft"}
+                          </Badge>
+                        </div>
+
+                        {doc.abstract && (
+                          <p className="text-xs text-muted-foreground line-clamp-2 italic">
+                            "{doc.abstract}"
+                          </p>
+                        )}
+
+                        {doc.feedback && (
+                          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[0.725rem] text-foreground italic">
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 block not-italic">Faculty Feedback:</span>
+                            "{doc.feedback}"
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-2 border-t border-border/60">
+                          <span className="text-[0.7rem] text-muted-foreground">
+                            {doc.sections?.length || 0} Sections
+                          </span>
+
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => setActiveWorkDoc(doc)}
+                              className="rounded-xl text-xs font-semibold px-3 h-7 bg-primary text-primary-foreground"
+                            >
+                              <FileEdit className="h-3 w-3 mr-1" /> Open Editor
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                doc.reviewStatus === "Pending Review" ||
+                                (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail)
+                              }
+                              onClick={() => handleRequestWorkReview(doc)}
+                              className="rounded-xl text-xs font-semibold px-2.5 h-7 border-purple-500/40 text-purple-500 hover:bg-purple-500/10"
+                            >
+                              <MessageSquare className="h-3 w-3 mr-1" />
+                              {doc.reviewStatus === "Pending Review" ? "Pending Review" : "Request Review"}
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </TabsContent>
 
@@ -2261,6 +2937,185 @@ function ProjectWorkspacePage() {
               Send Request
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Research Work Template Modal */}
+      <Dialog open={isCreateWorkModalOpen} onOpenChange={setIsCreateWorkModalOpen}>
+        <DialogContent className="max-w-2xl rounded-2xl border-border bg-card p-6 shadow-2xl">
+          <DialogHeader className="border-b border-border/60 pb-3">
+            <DialogTitle className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-purple-500" /> Create Research Work
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Select a research paper template or start with a blank document to begin academic writing.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">Document Title</Label>
+              <Input
+                placeholder="e.g. Comparative Analysis of Neural Attention Models..."
+                value={newWorkTitle}
+                onChange={(e) => setNewWorkTitle(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-foreground">Choose Template</Label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    type: "Research Paper",
+                    desc: "Standard academic paper with Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion.",
+                    icon: FileText,
+                  },
+                  {
+                    type: "Literature Review",
+                    desc: "Theoretical framework, methodological analysis, comparative synthesis, and research gaps.",
+                    icon: BookOpen,
+                  },
+                  {
+                    type: "Research Proposal",
+                    desc: "Problem statement, research objectives, preliminary literature review, proposed methodology, and timeline.",
+                    icon: FileEdit,
+                  },
+                  {
+                    type: "Project Report",
+                    desc: "Executive summary, project architecture, implementation details, and evaluation.",
+                    icon: Layers,
+                  },
+                  {
+                    type: "Conference Paper",
+                    desc: "Introduction, proposed system/model, experimental evaluation, and conclusion.",
+                    icon: Sparkles,
+                  },
+                  {
+                    type: "Blank Document",
+                    desc: "Start with a clean document and add custom sections manually.",
+                    icon: Plus,
+                  },
+                ].map((t) => {
+                  const TIcon = t.icon;
+                  const isSelected = selectedTemplate === t.type;
+                  return (
+                    <div
+                      key={t.type}
+                      onClick={() => setSelectedTemplate(t.type)}
+                      className={`cursor-pointer rounded-2xl border p-3.5 space-y-1.5 transition-all ${
+                        isSelected
+                          ? "border-primary bg-primary/10 shadow-sm"
+                          : "border-border/70 bg-background/50 hover:border-border"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                          <TIcon className="h-4 w-4 text-primary" /> {t.type}
+                        </span>
+                        {isSelected && <Badge variant="outline" className="border-primary text-primary text-[0.65rem] font-bold">Selected</Badge>}
+                      </div>
+                      <p className="text-[0.7rem] text-muted-foreground leading-snug">{t.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="border-t border-border/60 pt-3 gap-2">
+            <Button variant="outline" onClick={() => setIsCreateWorkModalOpen(false)} className="rounded-xl text-xs">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleCreateResearchWork(selectedTemplate)}
+              className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-sm gap-1.5"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Start Writing
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Optional AI Assist Drawer Dialog */}
+      <Dialog open={aiAssistSectionId !== null} onOpenChange={(open) => !open && setAiAssistSectionId(null)}>
+        <DialogContent className="max-w-xl rounded-2xl border-border bg-card p-6 shadow-2xl space-y-4">
+          <DialogHeader className="border-b border-border/60 pb-3">
+            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" /> AI Writing Assist
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Optional AI co-pilot to improve, expand, or generate structured academic content.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">Select AI Assist Action</Label>
+              <select
+                value={aiAssistAction}
+                onChange={(e) => setAiAssistAction(e.target.value)}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="improve_writing">Improve Academic Writing & Clarity</option>
+                <option value="academic_tone">Enhance Formal Scholarly Tone</option>
+                <option value="expand_section">Expand Section & Elaborate Arguments</option>
+                <option value="generate_abstract">Generate Structured Abstract</option>
+                <option value="generate_outline">Generate Section Outline</option>
+                <option value="suggest_questions">Suggest Analytical Research Questions</option>
+                <option value="summarize_notes">Synthesize Research Notes</option>
+              </select>
+            </div>
+
+            <Button
+              onClick={handleGenerateAiAssist}
+              disabled={generatingAi}
+              className="w-full rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-sm gap-2"
+            >
+              {generatingAi ? (
+                <>
+                  <RefreshCcw className="h-4 w-4 animate-spin" /> Generating AI Suggestion...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" /> Generate AI Suggestion
+                </>
+              )}
+            </Button>
+
+            {aiSuggestion && (
+              <div className="space-y-3 pt-2">
+                <div className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-4 space-y-2 text-xs">
+                  <span className="font-bold text-purple-400 flex items-center gap-1.5 text-xs">
+                    <Sparkles className="h-3.5 w-3.5" /> AI Writing Suggestion:
+                  </span>
+                  <p className="text-foreground leading-relaxed whitespace-pre-wrap font-mono text-[0.725rem]">
+                    {aiSuggestion}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setAiSuggestion(null);
+                      setAiAssistSectionId(null);
+                    }}
+                    className="rounded-xl text-xs"
+                  >
+                    Keep My Version
+                  </Button>
+                  <Button
+                    onClick={handleApplyAiSuggestion}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white gap-1.5"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Use Suggestion
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </DashboardLayout>

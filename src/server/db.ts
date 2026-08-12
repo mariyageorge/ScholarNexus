@@ -1096,8 +1096,43 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     const facultyUser = email ? await usersCol.findOne({ email }) : null;
     const facultyName = facultyUser?.name || "Faculty Member";
 
-    // 1. Supervised Students
-    const studentQuery: any = { role: "student", status: { $ne: "Deleted" } };
+    // 1. Supervised Students (Only approved supervised students)
+    const approvedSupReqs = email
+      ? await supCol.find({
+          $or: [
+            { facultyEmail: email },
+            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
+          status: "Approved",
+        }).toArray()
+      : [];
+
+    const supervisedProjects = email
+      ? await projectsCol.find({
+          $or: [
+            { facultyEmail: email },
+            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
+          supervisionStatus: "Under Supervision",
+        }).toArray()
+      : [];
+
+    const approvedStudentEmails = new Set<string>([
+      ...approvedSupReqs.map((r) => (r.studentEmail || r.email || "").toLowerCase()).filter(Boolean),
+      ...supervisedProjects.map((p) => (p.userEmail || "").toLowerCase()).filter(Boolean),
+    ]);
+
+    const studentQuery: any = email
+      ? {
+          role: "student",
+          status: { $ne: "Deleted" },
+          $or: [
+            { email: { $in: Array.from(approvedStudentEmails) } },
+            { assignedFaculty: email },
+          ],
+        }
+      : { role: "student", status: { $ne: "Deleted" } };
+
     const studentDocs = await usersCol.find(studentQuery).toArray();
     const totalStudents = studentDocs.length;
 
@@ -1159,7 +1194,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           department: s.department || "Computer Science",
           degreeProgram: (s as any).degreeProgram || s.affiliation || "Student Scholar",
           activeProject: (s as any).activeProject || "Academic Research Initiative",
-          status: s.status === "Suspended" ? "On Leave" : "Active",
+          status: "Under Supervision",
           joinedDate: s.createdAt ? new Date(s.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
         })),
       }),
@@ -1167,277 +1202,990 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     );
   }
 
-  // ── Supervision Requests & Workflow API ──
+  // ── Student-Faculty Supervision Requests API ──
   if (url.pathname === "/api/supervision-requests" || url.pathname === "/api/faculty/supervision-requests") {
+    await ensureAdminSeedData();
     const supCol = await getCollection<Document>("supervision_requests");
     const projectsCol = await getCollection<Document>("projects");
     const notifCol = await getCollection<Document>("notifications");
 
-    // GET Requests
     if (request.method === "GET") {
+      const studentEmail = (url.searchParams.get("studentEmail") || url.searchParams.get("student"))?.trim().toLowerCase();
+      const facultyEmail = (url.searchParams.get("facultyEmail") || url.searchParams.get("faculty"))?.trim().toLowerCase();
       const projectId = url.searchParams.get("projectId");
-      const studentEmail = url.searchParams.get("studentEmail") || url.searchParams.get("email");
-      const facultyEmail = url.searchParams.get("facultyEmail");
-      const status = url.searchParams.get("status");
 
       const query: Record<string, any> = {};
-      if (projectId) query.projectId = projectId;
-      if (studentEmail) query.studentEmail = studentEmail.trim().toLowerCase();
-      if (facultyEmail) query.facultyEmail = facultyEmail.trim().toLowerCase();
-      if (status && status !== "All") query.status = status;
+      if (studentEmail) query.studentEmail = studentEmail;
+      if (facultyEmail) {
+        query.$or = [
+          { facultyEmail },
+          { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+        ];
+      }
+      if (projectId) query.projectId = String(projectId);
 
-      const docs = await supCol.find(query).sort({ requestedAt: -1, createdAt: -1 }).toArray();
-
-      const requests = docs.map((r) => ({
+      const docs = await supCol.find(query).sort({ submittedAt: -1, createdAt: -1 }).toArray();
+      const formatted = docs.map((r) => ({
         id: r._id.toString(),
         _id: r._id.toString(),
         projectId: r.projectId,
-        studentId: r.studentId,
+        projectTitle: r.projectTitle || r.topic || "Research Project",
         studentName: r.studentName || "Student Scholar",
         studentEmail: r.studentEmail || r.email || "",
-        email: r.studentEmail || r.email || "",
-        facultyId: r.facultyId,
+        email: r.email || r.studentEmail || "",
+        facultyId: r.facultyId || "",
         facultyName: r.facultyName || "Faculty Supervisor",
         facultyEmail: r.facultyEmail || "",
-        message: r.message || "I would like you to supervise my research project.",
-        projectTitle: r.projectTitle || "Research Project",
-        domain: r.domain || "General",
-        abstract: r.abstract || r.proposalSummary || "",
-        proposalSummary: r.abstract || r.proposalSummary || "",
         status: r.status || "Pending",
-        requestedAt: r.requestedAt || r.createdAt || new Date().toISOString(),
+        facultyRemarks: r.facultyRemarks || "",
+        submittedDate: r.submittedDate || r.submittedAt || new Date().toISOString().split("T")[0],
+        submittedAt: r.submittedAt || r.createdAt || new Date().toISOString(),
         respondedAt: r.respondedAt || null,
-        facultyRemarks: r.facultyRemarks || r.rejectionReason || null,
-        submittedAt: r.requestedAt ? new Date(r.requestedAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
       }));
 
-      return new Response(JSON.stringify(requests), {
+      return new Response(JSON.stringify(formatted), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
 
-    // POST New Supervision Request
     if (request.method === "POST") {
       let body: any = {};
       try { body = await request.json(); } catch {}
 
-      const { projectId, studentId, studentEmail, studentName, facultyId, facultyEmail, facultyName, message, projectTitle, domain, abstract } = body;
-
-      if (!projectId || !facultyId || !studentEmail) {
-        return new Response(JSON.stringify({ error: "Project ID, Faculty ID, and Student Email are required." }), {
+      const { projectId, facultyEmail, facultyName, studentEmail, studentName, projectTitle, message } = body;
+      if (!projectId || !facultyEmail || !studentEmail) {
+        return new Response(JSON.stringify({ error: "Project ID, Faculty Email, and Student Email are required." }), {
           status: 400,
           headers: { "content-type": "application/json" },
         });
       }
 
-      // Check Rule 5: Each project can have only one active Pending supervision request.
-      const existingPending = await supCol.findOne({
-        projectId: String(projectId),
-        status: "Pending",
-      });
-
-      if (existingPending) {
-        return new Response(JSON.stringify({ error: "Waiting for faculty approval." }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
+      const fEmailNorm = facultyEmail.trim().toLowerCase();
+      const sEmailNorm = studentEmail.trim().toLowerCase();
       const now = new Date().toISOString();
-      const newRequest = {
+
+      let pFilter: any = projectId;
+      if (ObjectId.isValid(projectId)) {
+        pFilter = { $or: [{ _id: new ObjectId(projectId) }, { id: String(projectId) }] };
+      } else {
+        pFilter = { id: String(projectId) };
+      }
+      const projectDoc = await projectsCol.findOne(pFilter);
+      const pTitle = projectTitle || projectDoc?.title || "Research Project";
+
+      const newReq = {
         projectId: String(projectId),
-        studentId: studentId || studentEmail,
-        studentEmail: studentEmail.trim().toLowerCase(),
+        projectTitle: pTitle,
+        studentEmail: sEmailNorm,
+        email: sEmailNorm,
         studentName: studentName || "Student Scholar",
-        facultyId: String(facultyId),
-        facultyEmail: facultyEmail ? facultyEmail.trim().toLowerCase() : "",
+        facultyEmail: fEmailNorm,
         facultyName: facultyName || "Faculty Supervisor",
-        message: message ? message.trim() : "I would like you to supervise my research project.",
-        projectTitle: projectTitle || "Research Project",
-        domain: domain || "General",
-        abstract: abstract || "",
+        message: message || "",
         status: "Pending",
-        requestedAt: now,
-        respondedAt: null,
-        facultyRemarks: null,
+        facultyRemarks: "",
+        submittedAt: now,
+        submittedDate: now.split("T")[0],
         createdAt: now,
         updatedAt: now,
       };
 
-      const result = await supCol.insertOne(newRequest as any);
+      const result = await supCol.insertOne(newReq as any);
 
-      // Update Project Status
-      let filterId: any = projectId;
-      if (ObjectId.isValid(projectId)) {
-        filterId = new ObjectId(projectId);
-      }
+      // Update project supervision status
       await projectsCol.updateOne(
-        { $or: [{ _id: filterId }, { _id: String(projectId) }, { id: String(projectId) }] },
-        {
-          $set: {
-            supervisionStatus: "Pending Approval",
-            requestedFacultyId: String(facultyId),
-            requestedFacultyName: facultyName,
-            updatedAt: now,
-          },
-        }
+        { $or: [{ _id: projectDoc?._id }, { id: String(projectId) }] },
+        { $set: { supervisionStatus: "Pending Approval", facultyEmail: fEmailNorm, faculty: facultyName, updatedAt: now } }
       );
 
-      const created = { ...newRequest, id: result.insertedId.toString(), _id: result.insertedId.toString() };
-      return new Response(JSON.stringify(created), {
-        status: 201,
-        headers: { "content-type": "application/json" },
+      // Send Notification to Faculty: "New Supervision Request"
+      await notifCol.insertOne({
+        userEmail: fEmailNorm,
+        recipientId: fEmailNorm,
+        senderId: sEmailNorm,
+        type: "SupervisionRequest",
+        title: "New Supervision Request",
+        content: `${studentName || "Mariya George"} has requested you as a faculty supervisor for "${pTitle}".`,
+        category: "Supervision",
+        read: false,
+        createdAt: now,
+        projectId: String(projectId),
+        studentId: sEmailNorm,
+        facultyId: fEmailNorm,
       });
+
+      const created = { ...newReq, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+      return new Response(JSON.stringify(created), { status: 201, headers: { "content-type": "application/json" } });
     }
 
-    // PUT Update Request Status (Approve / Reject)
     if (request.method === "PUT") {
       let body: any = {};
       try { body = await request.json(); } catch {}
 
       const reqId = body.id || body._id;
-      const newStatus = body.status; // "Approved" | "Rejected" | "Accepted" | "Declined"
-      const remarks = body.facultyRemarks || body.reason || body.rejectionReason || "";
+      const status = body.status;
+      const remarks = (body.facultyRemarks || "").trim();
 
-      if (!reqId || !newStatus) {
-        return new Response(JSON.stringify({ error: "Request ID and Status are required." }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
+      if (!reqId || !status) {
+        return new Response(JSON.stringify({ error: "Request ID and Status are required." }), { status: 400 });
       }
 
-      let objId: any = reqId;
-      if (ObjectId.isValid(reqId)) {
-        objId = new ObjectId(reqId);
-      }
+      let rId: any = reqId;
+      if (ObjectId.isValid(reqId)) rId = new ObjectId(reqId);
+      const existingReq = await supCol.findOne({ $or: [{ _id: rId }, { id: String(reqId) }] });
 
-      const existingReq = await supCol.findOne({ $or: [{ _id: objId }, { id: String(reqId) }] });
       if (!existingReq) {
-        return new Response(JSON.stringify({ error: "Supervision request not found." }), {
-          status: 404,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      const normalizedStatus = newStatus === "Accepted" ? "Approved" : newStatus === "Declined" ? "Rejected" : newStatus;
-
-      // Section 8: Reject should require a reason before submission
-      if (normalizedStatus === "Rejected" && !remarks.trim()) {
-        return new Response(JSON.stringify({ error: "Rejection reason is required before submission." }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(JSON.stringify({ error: "Supervision request not found." }), { status: 404 });
       }
 
       const now = new Date().toISOString();
-      const updatePayload: Record<string, any> = {
-        status: normalizedStatus,
-        respondedAt: now,
-        updatedAt: now,
-      };
-      if (remarks.trim()) {
-        updatePayload.facultyRemarks = remarks.trim();
-      }
+      const newStatus = status === "Approved" ? "Approved" : "Rejected";
 
-      await supCol.updateOne({ _id: existingReq._id }, { $set: updatePayload });
+      await supCol.updateOne(
+        { _id: existingReq._id },
+        { $set: { status: newStatus, facultyRemarks: remarks, respondedAt: now, updatedAt: now } }
+      );
 
-      // Section 9: APPROVE or REJECT project updates & Notification
-      let pId: any = existingReq.projectId;
-      if (ObjectId.isValid(existingReq.projectId)) {
-        pId = new ObjectId(existingReq.projectId);
-      }
+      const sEmail = (existingReq.studentEmail || existingReq.email || "").toLowerCase();
+      const fEmail = (existingReq.facultyEmail || "").toLowerCase();
+      const fName = existingReq.facultyName || "Faculty Supervisor";
+      const pTitle = existingReq.projectTitle || "Research Project";
 
-      if (normalizedStatus === "Approved") {
+      if (newStatus === "Approved") {
+        // Sync project document to Under Supervision
+        let pId: any = existingReq.projectId;
+        if (ObjectId.isValid(existingReq.projectId)) pId = new ObjectId(existingReq.projectId);
         await projectsCol.updateOne(
-          { $or: [{ _id: pId }, { _id: String(existingReq.projectId) }, { id: String(existingReq.projectId) }] },
-          {
-            $set: {
-              facultyId: existingReq.facultyId,
-              faculty: existingReq.facultyName,
-              facultyEmail: existingReq.facultyEmail,
-              supervisionStatus: "Under Supervision",
-              updatedAt: now,
-            },
-          }
+          { $or: [{ _id: pId }, { id: String(existingReq.projectId) }] },
+          { $set: { supervisionStatus: "Under Supervision", facultyEmail: fEmail, faculty: fName, updatedAt: now } }
         );
 
-        // Section 10: Notification on Approval
-        await notifCol.insertOne({
-          userEmail: existingReq.studentEmail.toLowerCase(),
-          title: "Supervision Request Approved",
-          content: `Great news! Dr. ${existingReq.facultyName} has approved your supervision request for project "${existingReq.projectTitle}".`,
-          category: "Supervision",
-          read: false,
-          createdAt: now,
-          projectId: existingReq.projectId,
-          facultyName: existingReq.facultyName,
-        });
-      } else if (normalizedStatus === "Rejected") {
-        await projectsCol.updateOne(
-          { $or: [{ _id: pId }, { _id: String(existingReq.projectId) }, { id: String(existingReq.projectId) }] },
-          {
-            $set: {
-              supervisionStatus: "Rejected",
-              lastRejectionReason: remarks.trim(),
-              updatedAt: now,
-            },
-          }
-        );
-
-        // Section 10: Notification on Rejection with faculty's reason
-        await notifCol.insertOne({
-          userEmail: existingReq.studentEmail.toLowerCase(),
-          title: "Supervision Request Declined",
-          content: `Your supervision request for project "${existingReq.projectTitle}" was declined by ${existingReq.facultyName}. Reason: "${remarks.trim()}".`,
-          category: "Supervision",
-          read: false,
-          createdAt: now,
-          projectId: existingReq.projectId,
-          facultyName: existingReq.facultyName,
-          reason: remarks.trim(),
-        });
+        // Send Notification to Student: "Supervision request accepted"
+        if (sEmail) {
+          await notifCol.insertOne({
+            userEmail: sEmail,
+            recipientId: sEmail,
+            senderId: fEmail,
+            type: "SupervisionApproved",
+            title: "Supervision request accepted",
+            content: `${fName} has accepted your supervision request for ${pTitle}.`,
+            category: "Supervision",
+            read: false,
+            createdAt: now,
+            projectId: String(existingReq.projectId || ""),
+            studentId: sEmail,
+            facultyId: fEmail,
+          });
+        }
+      } else {
+        // Supervision Rejected
+        if (sEmail) {
+          await notifCol.insertOne({
+            userEmail: sEmail,
+            recipientId: sEmail,
+            senderId: fEmail,
+            type: "SupervisionRejected",
+            title: "Supervision request rejected",
+            content: `${fName} has rejected your supervision request for ${pTitle}.${remarks ? ' Reason: "' + remarks + '"' : ''}`,
+            category: "Supervision",
+            read: false,
+            createdAt: now,
+            projectId: String(existingReq.projectId || ""),
+            studentId: sEmail,
+            facultyId: fEmail,
+          });
+        }
       }
 
-      const updated = await supCol.findOne({ _id: existingReq._id });
-      return new Response(JSON.stringify({ success: true, request: updated }), {
+      return new Response(JSON.stringify({ success: true, message: `Supervision request ${newStatus.toLowerCase()}.` }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
   }
 
-  // ── Faculty Reviews API ──
-  if (url.pathname === "/api/faculty/reviews") {
+  // ── Faculty Supervised Students & Workspace API ──
+  if (url.pathname === "/api/faculty/students") {
     await ensureAdminSeedData();
-    const revCol = await getCollection<Document>("paper_reviews");
+    const facultyEmail = (url.searchParams.get("facultyEmail") || url.searchParams.get("email"))?.trim().toLowerCase();
+    const studentId = url.searchParams.get("studentId");
 
-    // Clean up dummy reviews
-    await revCol.deleteMany({ studentName: { $in: ["Alex Chen", "Ethan Vance"] } });
+    if (!facultyEmail) {
+      return new Response(JSON.stringify({ error: "Faculty email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+
+    const usersCol = await getCollection<UserRecord>("users");
+    const projectsCol = await getCollection<Document>("projects");
+    const papersCol = await getCollection<Document>("papers");
+    const supCol = await getCollection<Document>("supervision_requests");
+    const activityCol = await getCollection<Document>("activity_logs");
+    const revCol = await getCollection<Document>("reviews");
+    const workCol = await getCollection<Document>("research_work");
+
+    if (studentId) {
+      // FAST PATH: Targeted single student query using Promise.all
+      let sQuery: any = { role: "student", status: { $ne: "Deleted" } };
+      if (ObjectId.isValid(studentId)) {
+        sQuery.$or = [{ _id: new ObjectId(studentId) }, { id: studentId }, { email: studentId.toLowerCase() }];
+      } else {
+        sQuery.$or = [{ id: studentId }, { email: studentId.toLowerCase() }];
+      }
+
+      const targetUser = await usersCol.findOne(sQuery);
+      if (!targetUser) {
+        return new Response(JSON.stringify({ error: "Student not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+
+      const studentEmail = targetUser.email.toLowerCase();
+
+      const [projectDoc, supReq, studentPapers, studentWorkDocs, paperReviews, projectActivities] = await Promise.all([
+        projectsCol.findOne({
+          userEmail: studentEmail,
+          $or: [
+            { facultyEmail: facultyEmail },
+            { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+            { supervisionStatus: "Under Supervision" },
+          ],
+        }).then((p) => p || projectsCol.findOne({ userEmail: studentEmail })),
+        supCol.findOne({
+          studentEmail: studentEmail,
+          $or: [{ facultyEmail }, { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }],
+          status: "Approved",
+        }),
+        papersCol.find({ userEmail: studentEmail }).sort({ uploadDate: -1, createdAt: -1 }).toArray(),
+        workCol.find({ studentEmail: studentEmail }).sort({ updatedAt: -1, createdAt: -1 }).toArray(),
+        revCol.find({ studentEmail: studentEmail }).toArray(),
+        activityCol.find({ userEmail: studentEmail }).sort({ timestamp: -1 }).limit(20).toArray(),
+      ]);
+
+      const targetStudent = {
+        id: targetUser._id.toString(),
+        _id: targetUser._id.toString(),
+        name: targetUser.name,
+        email: targetUser.email,
+        department: targetUser.department || "Computer Science",
+        degreeProgram: (targetUser as any).degreeProgram || targetUser.affiliation || "B.S. Computer Science",
+        activeProject: projectDoc?.title || supReq?.projectTitle || "Academic Research Project",
+        projectId: projectDoc ? projectDoc._id.toString() : (supReq?.projectId || ""),
+        status: "Under Supervision" as const,
+        joinedDate: supReq?.respondedAt
+          ? new Date(supReq.respondedAt).toISOString().split("T")[0]
+          : targetUser.createdAt ? new Date(targetUser.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      };
+
+      const pIdStr = projectDoc ? projectDoc._id.toString() : "";
+
+      const formattedPapers = studentPapers.map((p) => {
+        const paperIdStr = p._id.toString();
+        const existingRev = paperReviews.find((r) => r.documentId === paperIdStr || r.documentId === p.id);
+        return {
+          id: paperIdStr,
+          _id: paperIdStr,
+          title: p.title || "Research Paper",
+          uploadDate: p.uploadDate || (p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]),
+          fileType: p.fileType || (p.fileData?.startsWith("data:application/pdf") ? "PDF Document" : p.url ? "External Link" : "Document"),
+          url: p.url || "",
+          fileData: p.fileData || "",
+          authors: p.authors || "",
+          summary: p.summary || "",
+          reviewStatus: existingRev ? existingRev.status : "No Review Requested",
+          reviewId: existingRev ? existingRev._id.toString() : undefined,
+          feedback: existingRev ? existingRev.feedback : undefined,
+        };
+      });
+
+      const formattedResearchWork = studentWorkDocs.map((w) => {
+        const workIdStr = w._id.toString();
+        const existingRev = paperReviews.find((r) => r.documentId === workIdStr || r.documentId === w.id);
+        return {
+          id: workIdStr,
+          _id: workIdStr,
+          projectId: w.projectId || pIdStr,
+          studentEmail: w.studentEmail,
+          title: w.title || "Research Paper",
+          templateType: w.templateType || "Research Paper",
+          abstract: w.abstract || "",
+          keywords: w.keywords || [],
+          sections: w.sections || [],
+          reviewStatus: existingRev ? existingRev.status : (w.reviewStatus || "Draft"),
+          reviewId: existingRev ? existingRev._id.toString() : undefined,
+          feedback: existingRev ? existingRev.feedback : (w.feedback || undefined),
+          lastSaved: w.lastSaved || w.updatedAt || new Date().toISOString(),
+          createdAt: w.createdAt || new Date().toISOString(),
+        };
+      });
+
+      const formattedActivities = projectActivities.map((a) => ({
+        id: a._id.toString(),
+        _id: a._id.toString(),
+        action: a.action || a.actionType || "PROJECT_ACTIVITY",
+        title: a.title || a.description || "Project update",
+        description: a.description || a.details || "",
+        timestamp: a.timestamp || new Date().toISOString(),
+        userName: a.userName || targetStudent.name,
+      }));
+
+      const workspaceData = {
+        student: targetStudent,
+        project: projectDoc ? {
+          id: projectDoc._id.toString(),
+          _id: projectDoc._id.toString(),
+          title: projectDoc.title || "Supervised Research Project",
+          description: projectDoc.description || "Supervised academic research initiative.",
+          domain: projectDoc.domain || projectDoc.category || "Artificial Intelligence",
+          keywords: projectDoc.keywords || [projectDoc.domain || "AI", "Research", "Supervision"],
+          progress: projectDoc.progress ?? 35,
+          status: projectDoc.status || "In Progress",
+          supervisionStatus: projectDoc.supervisionStatus || "Under Supervision",
+          startDate: projectDoc.startDate || (projectDoc.createdAt ? new Date(projectDoc.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]),
+          expectedCompletionDate: projectDoc.expectedCompletionDate || projectDoc.targetDate || "2026-12-31",
+          supervisionStartDate: supReq?.respondedAt ? new Date(supReq.respondedAt).toISOString().split("T")[0] : (projectDoc.createdAt ? new Date(projectDoc.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]),
+        } : null,
+        referencePapers: formattedPapers,
+        papers: formattedPapers,
+        researchWork: formattedResearchWork,
+        activities: formattedActivities,
+      };
+
+      return new Response(JSON.stringify(workspaceData), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // LIST PATH: Fetch approved supervision requests & student directory for faculty
+    const approvedSupReqs = await supCol.find({
+      $or: [
+        { facultyEmail: facultyEmail },
+        { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }
+      ],
+      status: "Approved",
+    }).toArray();
+
+    const supervisedProjects = await projectsCol.find({
+      $or: [
+        { facultyEmail: facultyEmail },
+        { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }
+      ],
+      supervisionStatus: "Under Supervision",
+    }).toArray();
+
+    const supervisedStudentEmails = new Set<string>([
+      ...approvedSupReqs.map((r) => (r.studentEmail || r.email || "").toLowerCase()).filter(Boolean),
+      ...supervisedProjects.map((p) => (p.userEmail || "").toLowerCase()).filter(Boolean),
+    ]);
+
+    const studentDocs = await usersCol.find({
+      role: "student",
+      status: { $ne: "Deleted" },
+      $or: [
+        { email: { $in: Array.from(supervisedStudentEmails) } },
+        { assignedFaculty: facultyEmail },
+      ],
+    }).toArray();
+
+    const formattedStudents = studentDocs.map((s) => {
+      const studentEmail = s.email.toLowerCase();
+      const proj = supervisedProjects.find((p) => p.userEmail?.toLowerCase() === studentEmail) ||
+        supervisedProjects[0];
+      const supReq = approvedSupReqs.find((r) => r.studentEmail?.toLowerCase() === studentEmail);
+
+      return {
+        id: s._id.toString(),
+        _id: s._id.toString(),
+        name: s.name,
+        email: s.email,
+        department: s.department || "Computer Science",
+        degreeProgram: (s as any).degreeProgram || s.affiliation || "B.S. Computer Science",
+        activeProject: proj?.title || supReq?.projectTitle || "Academic Research Project",
+        projectId: proj ? proj._id.toString() : (supReq?.projectId || ""),
+        status: "Under Supervision" as const,
+        joinedDate: supReq?.respondedAt
+          ? new Date(supReq.respondedAt).toISOString().split("T")[0]
+          : s.createdAt ? new Date(s.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      };
+    });
+
+    return new Response(JSON.stringify(formattedStudents), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  // ── My Research Work Academic Writing API ──
+  if (url.pathname === "/api/research-work") {
+    await ensureAdminSeedData();
+    const workCol = await getCollection<Document>("research_work");
+
+    if (request.method === "GET") {
+      const projectId = url.searchParams.get("projectId");
+      const studentEmail = url.searchParams.get("studentEmail")?.trim().toLowerCase();
+      const id = url.searchParams.get("id");
+
+      const query: Record<string, any> = {};
+      if (id) {
+        let objId: any = id;
+        if (ObjectId.isValid(id)) objId = new ObjectId(id);
+        query.$or = [{ _id: objId }, { id: String(id) }];
+      } else {
+        if (projectId) query.projectId = String(projectId);
+        if (studentEmail) query.studentEmail = studentEmail;
+      }
+
+      const docs = await workCol.find(query).sort({ updatedAt: -1, createdAt: -1 }).toArray();
+      const formatted = docs.map((w) => ({
+        id: w._id.toString(),
+        _id: w._id.toString(),
+        projectId: w.projectId,
+        studentId: w.studentId || w.studentEmail,
+        studentEmail: w.studentEmail,
+        studentName: w.studentName || "Student Scholar",
+        title: w.title || "Untitled Research Paper",
+        templateType: w.templateType || "Research Paper",
+        abstract: w.abstract || "",
+        keywords: w.keywords || [],
+        sections: w.sections || [],
+        reviewStatus: w.reviewStatus || "Draft",
+        feedback: w.feedback || "",
+        lastSaved: w.lastSaved || w.updatedAt || new Date().toISOString(),
+        createdAt: w.createdAt || new Date().toISOString(),
+        updatedAt: w.updatedAt || new Date().toISOString(),
+      }));
+
+      if (id && formatted.length > 0) {
+        return new Response(JSON.stringify(formatted[0]), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { projectId, studentEmail, studentName, title, templateType, abstract, keywords, sections } = body;
+      if (!projectId || !studentEmail) {
+        return new Response(JSON.stringify({ error: "Project ID and Student Email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      const tType = templateType || "Research Paper";
+      let defaultSections = sections;
+
+      if (!defaultSections || !Array.isArray(defaultSections) || defaultSections.length === 0) {
+        if (tType === "Literature Review") {
+          defaultSections = [
+            { id: "sec-1", title: "1. Introduction & Background", content: "" },
+            { id: "sec-2", title: "2. Theoretical Framework", content: "" },
+            { id: "sec-3", title: "3. Methodological Analysis", content: "" },
+            { id: "sec-4", title: "4. Comparative Synthesis", content: "" },
+            { id: "sec-5", title: "5. Research Gaps & Future Directions", content: "" },
+            { id: "sec-6", title: "References", content: "" },
+          ];
+        } else if (tType === "Research Proposal") {
+          defaultSections = [
+            { id: "sec-1", title: "1. Problem Statement & Motivation", content: "" },
+            { id: "sec-2", title: "2. Research Objectives & Questions", content: "" },
+            { id: "sec-3", title: "3. Preliminary Literature Review", content: "" },
+            { id: "sec-4", title: "4. Proposed Methodology & Design", content: "" },
+            { id: "sec-5", title: "5. Expected Outcomes & Timeline", content: "" },
+            { id: "sec-6", title: "References", content: "" },
+          ];
+        } else if (tType === "Project Report") {
+          defaultSections = [
+            { id: "sec-1", title: "Executive Summary", content: "" },
+            { id: "sec-2", title: "1. Introduction", content: "" },
+            { id: "sec-3", title: "2. Project Architecture & Requirements", content: "" },
+            { id: "sec-4", title: "3. Implementation Details & Results", content: "" },
+            { id: "sec-5", title: "4. Evaluation & Recommendations", content: "" },
+          ];
+        } else if (tType === "Conference Paper") {
+          defaultSections = [
+            { id: "sec-1", title: "1. Introduction & Background", content: "" },
+            { id: "sec-2", title: "2. Proposed System / Methodology", content: "" },
+            { id: "sec-3", title: "3. Experimental Evaluation", content: "" },
+            { id: "sec-4", title: "4. Conclusion & Future Work", content: "" },
+            { id: "sec-5", title: "References", content: "" },
+          ];
+        } else {
+          // Standard Research Paper / Blank Default
+          defaultSections = [
+            { id: "sec-1", title: "1. Introduction", content: "" },
+            { id: "sec-2", title: "2. Literature Review", content: "" },
+            { id: "sec-3", title: "3. Methodology", content: "" },
+            { id: "sec-4", title: "4. Results & Expected Findings", content: "" },
+            { id: "sec-5", title: "5. Discussion", content: "" },
+            { id: "sec-6", title: "6. Conclusion", content: "" },
+            { id: "sec-7", title: "References", content: "" },
+          ];
+        }
+      }
+
+      const now = new Date().toISOString();
+      const docTitle = title?.trim() || `${tType} — ${new Date().toLocaleDateString()}`;
+
+      const newDoc = {
+        projectId: String(projectId),
+        studentId: studentEmail.trim().toLowerCase(),
+        studentEmail: studentEmail.trim().toLowerCase(),
+        studentName: studentName || "Student Scholar",
+        title: docTitle,
+        templateType: tType,
+        abstract: abstract || "",
+        keywords: Array.isArray(keywords) ? keywords : ["Research", "Academic"],
+        sections: defaultSections,
+        reviewStatus: "Draft",
+        feedback: "",
+        lastSaved: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await workCol.insertOne(newDoc as any);
+
+      await recordUserActivity(
+        studentEmail,
+        studentName || "Student Scholar",
+        "CREATE_RESEARCH_WORK",
+        `Created Research Document: "${docTitle}"`,
+        `Template: ${tType}`,
+        "Project"
+      );
+
+      const created = { ...newDoc, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+      return new Response(JSON.stringify(created), { status: 201, headers: { "content-type": "application/json" } });
+    }
 
     if (request.method === "PUT") {
       let body: any = {};
       try { body = await request.json(); } catch {}
-      const { id, status } = body;
-      if (id && ObjectId.isValid(id)) {
-        await revCol.updateOne({ _id: new ObjectId(id) }, { $set: { status: status || "Feedback Provided", updatedAt: new Date().toISOString() } });
+
+      const workId = body.id || body._id;
+      if (!workId) {
+        return new Response(JSON.stringify({ error: "Research Work ID is required for update." }), { status: 400, headers: { "content-type": "application/json" } });
       }
-      return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+
+      let objId: any = workId;
+      if (ObjectId.isValid(workId)) objId = new ObjectId(workId);
+
+      const existingDoc = await workCol.findOne({ $or: [{ _id: objId }, { id: String(workId) }] });
+      if (!existingDoc) {
+        return new Response(JSON.stringify({ error: "Research Work document not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+
+      const now = new Date().toISOString();
+      const updateFields: Record<string, any> = {
+        lastSaved: now,
+        updatedAt: now,
+      };
+
+      if (body.title !== undefined) updateFields.title = String(body.title).trim();
+      if (body.abstract !== undefined) updateFields.abstract = String(body.abstract);
+      if (body.keywords !== undefined && Array.isArray(body.keywords)) updateFields.keywords = body.keywords;
+      if (body.sections !== undefined && Array.isArray(body.sections)) updateFields.sections = body.sections;
+      if (body.reviewStatus !== undefined) updateFields.reviewStatus = body.reviewStatus;
+      if (body.feedback !== undefined) updateFields.feedback = body.feedback;
+
+      await workCol.updateOne({ _id: existingDoc._id }, { $set: updateFields });
+
+      const updatedDoc = await workCol.findOne({ _id: existingDoc._id });
+      const formatted = updatedDoc ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() } : null;
+
+      return new Response(JSON.stringify(formatted || { success: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    const revDocs = await revCol.find({}).sort({ createdAt: -1 }).toArray();
+    if (request.method === "DELETE") {
+      const workId = url.searchParams.get("id");
+      if (!workId) {
+        return new Response(JSON.stringify({ error: "Research Work ID is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
 
-    const reviews = revDocs.map((r) => ({
-      id: r._id.toString(),
-      _id: r._id.toString(),
-      paperTitle: r.paperTitle,
-      studentName: r.studentName,
-      type: r.type,
-      submittedDate: r.submittedDate || new Date().toISOString().split("T")[0],
-      status: r.status || "Review Pending",
-    }));
+      let objId: any = workId;
+      if (ObjectId.isValid(workId)) objId = new ObjectId(workId);
 
-    return new Response(JSON.stringify(reviews), { status: 200, headers: { "content-type": "application/json" } });
+      await workCol.deleteOne({ $or: [{ _id: objId }, { id: String(workId) }] });
+      return new Response(JSON.stringify({ success: true, message: "Research document deleted." }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  }
+
+  // ── AI Writing Assistance API Endpoint ──
+  if (url.pathname === "/api/ai/writing-assist") {
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { action, content, sectionTitle, projectTitle, domain } = body;
+      const inputContent = (content || "").trim();
+      const sTitle = sectionTitle || "Research Section";
+      const pTitle = projectTitle || "Academic Research Project";
+
+      let suggestion = "";
+
+      if (action === "generate_abstract") {
+        suggestion = `This study investigates advanced methodologies in ${domain || "computer science & AI"}, focusing on ${pTitle}. We present a systematic framework to address current limitations in existing approaches. Empirical evaluations demonstrate significant improvements in scalability, precision, and performance over conventional benchmarks. The findings provide valuable insights for future academic research and practical deployment.`;
+      } else if (action === "improve_writing" || action === "academic_tone") {
+        if (!inputContent) {
+          suggestion = `In this section, we critically examine the fundamental principles underpinning ${pTitle}. The methodology relies upon empirical validation and structured analytical frameworks to ensure reproducibility and rigor.`;
+        } else {
+          suggestion = inputContent
+            .replace(/\bI think\b/gi, "It is posited that")
+            .replace(/\ba lot of\b/gi, "substantial")
+            .replace(/\bbig\b/gi, "significant")
+            .replace(/\bgood\b/gi, "advantageous")
+            .replace(/\bshow\b/gi, "demonstrate")
+            .replace(/\bfind out\b/gi, "determine");
+          if (!suggestion.endsWith(".")) suggestion += ".";
+          suggestion += ` Furthermore, these observations align with theoretical predictions and establish a robust foundation for further empirical investigation.`;
+        }
+      } else if (action === "expand_section") {
+        suggestion = `${inputContent ? inputContent + "\n\n" : ""}To elaborate further on ${sTitle}, it is crucial to recognize the operational constraints and mathematical properties governing system behavior. Specifically, comparative literature underscores the trade-offs between computational complexity and analytical precision. Incorporating robust evaluation metrics allows for a comprehensive assessment of experimental efficacy across variable operational parameters.`;
+      } else if (action === "generate_outline") {
+        suggestion = `• Overview of ${sTitle} in the context of ${pTitle}\n• Theoretical Foundations & Core Methodological Assumptions\n• Key Experimental Setup & Variables\n• Critical Comparative Analysis with Existing Benchmarks\n• Synthesis of Results & Limitations`;
+      } else if (action === "suggest_questions") {
+        suggestion = `1. What are the primary computational bottlenecks identified during experimental execution?\n2. How does the proposed model maintain accuracy when subjected to noisy data environments?\n3. What specific architectural modifications contribute to the observed efficiency gains?`;
+      } else if (action === "summarize_notes") {
+        suggestion = `Key Synthesis: The analyzed notes highlight critical operational dependencies in ${pTitle}. Methodological rigor is maintained through structured benchmarking, providing empirical validation for proposed hypotheses.`;
+      } else {
+        suggestion = `Enhanced academic draft for ${sTitle}: The proposed framework demonstrates rigorous empirical performance across key experimental benchmarks.`;
+      }
+
+      return new Response(JSON.stringify({ success: true, suggestion }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
+  // ── Faculty Reviews & Academic Feedback API ──
+  if (url.pathname === "/api/reviews" || url.pathname === "/api/faculty/reviews") {
+    await ensureAdminSeedData();
+    const revCol = await getCollection<Document>("reviews");
+    const projectsCol = await getCollection<Document>("projects");
+    const papersCol = await getCollection<Document>("papers");
+    const notifCol = await getCollection<Document>("notifications");
+
+    // GET Reviews
+    if (request.method === "GET") {
+      const facultyEmail = url.searchParams.get("facultyEmail")?.trim().toLowerCase();
+      const studentEmail = url.searchParams.get("studentEmail")?.trim().toLowerCase();
+      const projectId = url.searchParams.get("projectId");
+      const documentId = url.searchParams.get("documentId");
+      const status = url.searchParams.get("status");
+
+      const query: Record<string, any> = {};
+      if (facultyEmail) query.facultyEmail = facultyEmail;
+      if (studentEmail) query.studentEmail = studentEmail;
+      if (projectId) query.projectId = projectId;
+      if (documentId) query.documentId = documentId;
+      if (status && status !== "All") query.status = status;
+
+      const docs = await revCol.find(query).sort({ requestedAt: -1, createdAt: -1 }).toArray();
+
+      const reviews = docs.map((r) => ({
+        id: r._id.toString(),
+        _id: r._id.toString(),
+        projectId: r.projectId,
+        projectTitle: r.projectTitle || "Research Project",
+        studentId: r.studentId,
+        studentName: r.studentName || "Student Scholar",
+        studentEmail: r.studentEmail,
+        facultyId: r.facultyId,
+        facultyName: r.facultyName || "Faculty Supervisor",
+        facultyEmail: r.facultyEmail,
+        documentId: r.documentId,
+        documentTitle: r.documentTitle || r.paperTitle || "Research Paper",
+        fileType: r.fileType || "PDF Document",
+        fileData: r.fileData || "",
+        url: r.url || "",
+        feedback: r.feedback || "",
+        status: r.status || "Pending Review",
+        requestedAt: r.requestedAt || r.createdAt || new Date().toISOString(),
+        reviewedAt: r.reviewedAt || null,
+        createdAt: r.createdAt || new Date().toISOString(),
+        updatedAt: r.updatedAt || new Date().toISOString(),
+      }));
+
+      return new Response(JSON.stringify(reviews), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // POST New Review Request (Student Side)
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { projectId, documentId, paperTitle, documentTitle, studentEmail, studentName, fileType, fileData, url } = body;
+
+      if (!projectId || !documentId || !studentEmail) {
+        return new Response(JSON.stringify({ error: "Project ID, Document ID, and Student Email are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      // Check Rule: Project must have an approved supervisor
+      let pFilter: any = projectId;
+      if (ObjectId.isValid(projectId)) {
+        pFilter = { $or: [{ _id: new ObjectId(projectId) }, { _id: String(projectId) }, { id: String(projectId) }] };
+      } else {
+        pFilter = { $or: [{ _id: String(projectId) }, { id: String(projectId) }] };
+      }
+
+      const projectDoc = await projectsCol.findOne(pFilter);
+
+      if (!projectDoc || (projectDoc.supervisionStatus !== "Under Supervision" && !projectDoc.facultyEmail)) {
+        return new Response(
+          JSON.stringify({ error: "Cannot request review: Do not allow review requests when the project has no approved supervisor." }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      // Check Rule: Prevent duplicate active review requests for the same document
+      const activePending = await revCol.findOne({
+        documentId: String(documentId),
+        status: "Pending Review",
+      });
+
+      if (activePending) {
+        return new Response(
+          JSON.stringify({ error: "An active review request already exists for this document." }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const docTitleStr = paperTitle || documentTitle || "Research Document";
+      const facultyEmailNorm = (projectDoc.facultyEmail || "").trim().toLowerCase();
+      const facultyNameStr = projectDoc.faculty || "Faculty Supervisor";
+      const now = new Date().toISOString();
+
+      const newReview = {
+        projectId: String(projectId),
+        projectTitle: projectDoc.title || "Research Project",
+        studentId: studentEmail.trim().toLowerCase(),
+        studentName: studentName || "Student Scholar",
+        studentEmail: studentEmail.trim().toLowerCase(),
+        facultyId: projectDoc.facultyId || "",
+        facultyName: facultyNameStr,
+        facultyEmail: facultyEmailNorm,
+        documentId: String(documentId),
+        documentTitle: docTitleStr,
+        fileType: fileType || "PDF Document",
+        fileData: fileData || "",
+        url: url || "",
+        feedback: "",
+        status: "Pending Review",
+        requestedAt: now,
+        reviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await revCol.insertOne(newReview as any);
+
+      // Sync status with research_work document
+      const workCol = await getCollection<Document>("research_work");
+      let wId: any = documentId;
+      if (ObjectId.isValid(documentId)) wId = new ObjectId(documentId);
+      await workCol.updateOne(
+        { $or: [{ _id: wId }, { id: String(documentId) }] },
+        { $set: { reviewStatus: "Pending Review", updatedAt: now } }
+      );
+
+      // Record Activity
+      await recordUserActivity(
+        studentEmail,
+        studentName || "Student Scholar",
+        "REVIEW_REQUESTED",
+        `Review requested for paper "${docTitleStr}"`,
+        `Submitted for faculty review to Dr. ${facultyNameStr}`,
+        "Paper"
+      );
+
+      // Send Notification to Faculty
+      if (facultyEmailNorm) {
+        await notifCol.insertOne({
+          userEmail: facultyEmailNorm,
+          recipientId: facultyEmailNorm,
+          senderId: (studentEmail || "").trim().toLowerCase(),
+          type: "ReviewRequested",
+          title: "Research Work Review Requested",
+          content: `${studentName || "Student"} has requested a review of their research work for "${projectDoc.title || docTitleStr}".`,
+          category: "Review",
+          read: false,
+          createdAt: now,
+          projectId: String(projectId),
+          studentId: (studentEmail || "").trim().toLowerCase(),
+          facultyId: facultyEmailNorm,
+          researchWorkId: String(documentId),
+          reviewId: String(result.insertedId),
+        });
+      }
+
+      const created = { ...newReview, id: result.insertedId.toString(), _id: result.insertedId.toString() };
+      return new Response(JSON.stringify(created), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // PUT Submit Feedback (Faculty Side)
+    if (request.method === "PUT") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const reviewId = body.id || body._id || body.reviewId;
+      const documentId = body.documentId || body.workId;
+      const projectId = body.projectId;
+      const feedbackText = (body.feedback || "").trim();
+
+      if (!feedbackText) {
+        return new Response(JSON.stringify({ error: "Feedback text is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const now = new Date().toISOString();
+      const workCol = await getCollection<Document>("research_work");
+      let existingReview: any = null;
+
+      if (reviewId) {
+        let rId: any = reviewId;
+        if (ObjectId.isValid(reviewId)) rId = new ObjectId(reviewId);
+        existingReview = await revCol.findOne({ $or: [{ _id: rId }, { id: String(reviewId) }] });
+      }
+
+      if (!existingReview && documentId) {
+        existingReview = await revCol.findOne({ documentId: String(documentId) });
+      }
+
+      if (existingReview) {
+        // Update existing review document
+        const updatePayload = {
+          feedback: feedbackText,
+          status: "Reviewed",
+          reviewedAt: now,
+          updatedAt: now,
+        };
+        await revCol.updateOne({ _id: existingReview._id }, { $set: updatePayload });
+
+        // Sync with research_work collection
+        let wId: any = existingReview.documentId;
+        if (ObjectId.isValid(existingReview.documentId)) wId = new ObjectId(existingReview.documentId);
+        await workCol.updateOne(
+          { $or: [{ _id: wId }, { id: String(existingReview.documentId) }] },
+          { $set: { reviewStatus: "Reviewed", feedback: feedbackText, updatedAt: now } }
+        );
+
+        // Record activity & notification
+        await recordUserActivity(
+          existingReview.studentEmail || "student@scholarnexus.edu",
+          existingReview.studentName || "Student Scholar",
+          "FACULTY_FEEDBACK_SUBMITTED",
+          `Faculty feedback submitted for "${existingReview.documentTitle}"`,
+          `Feedback: "${feedbackText}"`,
+          "Paper"
+        );
+
+        if (existingReview.studentEmail) {
+          await notifCol.insertOne({
+            userEmail: existingReview.studentEmail.toLowerCase(),
+            recipientId: existingReview.studentEmail.toLowerCase(),
+            senderId: (existingReview.facultyEmail || "").toLowerCase(),
+            type: "FeedbackReceived",
+            title: "Faculty feedback received",
+            content: `${existingReview.facultyName || "Faculty"} has provided feedback on your research work for "${existingReview.projectTitle || existingReview.documentTitle}".`,
+            category: "Review",
+            read: false,
+            createdAt: now,
+            projectId: String(existingReview.projectId),
+            studentId: existingReview.studentEmail.toLowerCase(),
+            facultyId: (existingReview.facultyEmail || "").toLowerCase(),
+            researchWorkId: String(existingReview.documentId),
+            reviewId: String(existingReview._id),
+          });
+        }
+
+        return new Response(JSON.stringify({ success: true, message: "Feedback submitted successfully." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } else if (documentId) {
+        // Resolve Research Work document & Project details to insert new review record
+        let wId: any = documentId;
+        if (ObjectId.isValid(documentId)) wId = new ObjectId(documentId);
+        const workDoc = await workCol.findOne({ $or: [{ _id: wId }, { id: String(documentId) }] });
+
+        const studentEmailStr = (body.studentEmail || workDoc?.studentEmail || "student@scholarnexus.edu").toLowerCase();
+        const studentNameStr = body.studentName || workDoc?.studentName || "Student Scholar";
+        const docTitleStr = body.documentTitle || workDoc?.title || "Research Document";
+        const projIdStr = projectId || workDoc?.projectId || "";
+
+        const newReview = {
+          projectId: String(projIdStr),
+          projectTitle: body.projectTitle || "Research Project",
+          studentId: studentEmailStr,
+          studentName: studentNameStr,
+          studentEmail: studentEmailStr,
+          facultyId: body.facultyId || "",
+          facultyName: body.facultyName || "Faculty Supervisor",
+          facultyEmail: (body.facultyEmail || "").toLowerCase(),
+          documentId: String(documentId),
+          documentTitle: docTitleStr,
+          fileType: workDoc?.templateType ? `${workDoc.templateType} Document` : "Research Document",
+          feedback: feedbackText,
+          status: "Reviewed",
+          requestedAt: now,
+          reviewedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const revResult = await revCol.insertOne(newReview as any);
+        await workCol.updateOne(
+          { $or: [{ _id: wId }, { id: String(documentId) }] },
+          { $set: { reviewStatus: "Reviewed", feedback: feedbackText, updatedAt: now } }
+        );
+
+        await recordUserActivity(
+          studentEmailStr,
+          studentNameStr,
+          "FACULTY_FEEDBACK_SUBMITTED",
+          `Faculty feedback submitted for "${docTitleStr}"`,
+          `Feedback: "${feedbackText}"`,
+          "Paper"
+        );
+
+        await notifCol.insertOne({
+          userEmail: studentEmailStr,
+          recipientId: studentEmailStr,
+          senderId: (body.facultyEmail || "").toLowerCase(),
+          type: "FeedbackReceived",
+          title: "Faculty feedback received",
+          content: `${body.facultyName || "Faculty"} has provided feedback on your research work for "${body.projectTitle || docTitleStr}".`,
+          category: "Review",
+          read: false,
+          createdAt: now,
+          projectId: String(projIdStr),
+          studentId: studentEmailStr,
+          facultyId: (body.facultyEmail || "").toLowerCase(),
+          researchWorkId: String(documentId),
+          reviewId: String(revResult.insertedId),
+        });
+
+        return new Response(JSON.stringify({ success: true, message: "Feedback submitted successfully." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "Review or Document context not found." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
   }
 
   // ── Admin Faculty Approvals API ──
@@ -1657,6 +2405,122 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       return new Response(JSON.stringify({ success: true, message: "Paper deleted successfully." }), {
         status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
+  // ── Notifications System API ──
+  if (url.pathname === "/api/notifications") {
+    await ensureAdminSeedData();
+    const notifCol = await getCollection<Document>("notifications");
+
+    if (request.method === "GET") {
+      const email = (url.searchParams.get("email") || url.searchParams.get("userEmail"))?.trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      const docs = await notifCol
+        .find({
+          $or: [
+            { userEmail: email },
+            { recipientId: email },
+            { recipientEmail: email },
+          ],
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      const formatted = docs.map((n) => ({
+        id: n._id.toString(),
+        _id: n._id.toString(),
+        recipientId: n.recipientId || n.userEmail,
+        senderId: n.senderId || "",
+        type: n.type || "System",
+        title: n.title || "Notification",
+        content: n.content || n.message || "",
+        message: n.content || n.message || "",
+        category: n.category || "System",
+        read: Boolean(n.read),
+        createdAt: n.createdAt || new Date().toISOString(),
+        timestamp: n.timestamp || n.createdAt || new Date().toISOString(),
+        projectId: n.projectId,
+        studentId: n.studentId,
+        facultyId: n.facultyId,
+        researchWorkId: n.researchWorkId || n.documentId,
+        reviewId: n.reviewId,
+      }));
+
+      return new Response(JSON.stringify(formatted), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "PUT") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const email = (body.email || body.userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
+      const notifId = body.id || body._id;
+      const markAllRead = Boolean(body.markAllRead);
+
+      if (markAllRead && email) {
+        await notifCol.updateMany(
+          { $or: [{ userEmail: email }, { recipientId: email }] },
+          { $set: { read: true } }
+        );
+        return new Response(JSON.stringify({ success: true, message: "All notifications marked as read." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (notifId) {
+        let filterId: any = notifId;
+        if (ObjectId.isValid(notifId)) filterId = new ObjectId(notifId);
+        await notifCol.updateOne({ $or: [{ _id: filterId }, { id: String(notifId) }] }, { $set: { read: true } });
+        return new Response(JSON.stringify({ success: true, message: "Notification marked as read." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "Notification ID or markAllRead flag required." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "DELETE") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const email = (body.email || body.userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
+      const notifId = url.searchParams.get("id") || body.id || body._id;
+      const clearAll = Boolean(body.clearAll);
+
+      if (clearAll && email) {
+        await notifCol.deleteMany({ $or: [{ userEmail: email }, { recipientId: email }] });
+        return new Response(JSON.stringify({ success: true, message: "All notifications cleared." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (notifId) {
+        let filterId: any = notifId;
+        if (ObjectId.isValid(notifId)) filterId = new ObjectId(notifId);
+        await notifCol.deleteOne({ $or: [{ _id: filterId }, { id: String(notifId) }] });
+        return new Response(JSON.stringify({ success: true, message: "Notification deleted." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "Notification ID or clearAll flag required." }), {
+        status: 400,
         headers: { "content-type": "application/json" },
       });
     }

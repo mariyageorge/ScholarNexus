@@ -76,6 +76,7 @@ function NotificationsPage() {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [supervisionRequests, setSupervisionRequests] = useState<any[]>([]);
+  const [dbNotifs, setDbNotifs] = useState<any[]>([]);
   const [readIds, setReadIds] = useState<string[]>([]);
   const [clearedIds, setClearedIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("all");
@@ -108,10 +109,11 @@ function NotificationsPage() {
     }
 
     try {
-      const [tasksRes, projRes, supRes] = await Promise.all([
+      const [tasksRes, projRes, supRes, dbNotifRes] = await Promise.all([
         fetch(`/api/tasks?email=${encodeURIComponent(email)}`),
         fetch(`/api/projects?email=${encodeURIComponent(email)}`),
         fetch(`/api/supervision-requests?studentEmail=${encodeURIComponent(email)}`),
+        fetch(`/api/notifications?email=${encodeURIComponent(email)}`),
       ]);
 
       if (tasksRes.ok) {
@@ -127,6 +129,11 @@ function NotificationsPage() {
       if (supRes.ok) {
         const supData = await supRes.json();
         if (Array.isArray(supData)) setSupervisionRequests(supData);
+      }
+
+      if (dbNotifRes.ok) {
+        const dbNotifData = await dbNotifRes.json();
+        if (Array.isArray(dbNotifData)) setDbNotifs(dbNotifData);
       }
     } catch (err) {
       toast.error("Failed to fetch notification sources.");
@@ -158,11 +165,36 @@ function NotificationsPage() {
     return Math.round((target - today) / (1000 * 60 * 60 * 24));
   };
 
-  // Generate Dynamic Notifications logically based on tasks and projects dates
+  // Generate Dynamic Notifications logically based on tasks, projects, and database notifications
   const generatedNotifications = useMemo(() => {
     const list: NotificationItem[] = [];
 
-    // 1. Task Due Date Notifications & Alerts
+    // 1. System & Database Workflow Notifications (Supervision, Reviews, Feedback)
+    dbNotifs.forEach((n) => {
+      const nId = n.id || n._id;
+      let navLink = "/notifications";
+      if (n.type === "SupervisionRequest") {
+        navLink = "/faculty/supervision-requests";
+      } else if (n.type === "SupervisionApproved" || n.type === "SupervisionRejected") {
+        navLink = n.projectId ? `/projects/${n.projectId}` : "/projects";
+      } else if (n.type === "ReviewRequested") {
+        navLink = n.studentId ? `/faculty/students?studentId=${encodeURIComponent(n.studentId)}` : "/faculty/students";
+      } else if (n.type === "FeedbackReceived") {
+        navLink = n.projectId ? `/projects/${n.projectId}` : "/projects";
+      }
+
+      list.push({
+        id: nId,
+        title: n.title || "Notification",
+        content: n.content || n.message || "",
+        category: n.category === "Supervision" || n.category === "Review" ? "Feedback" : (n.category || "System"),
+        read: n.read || readIds.includes(nId),
+        timestamp: n.createdAt ? new Date(n.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Recent",
+        projectLink: navLink,
+      });
+    });
+
+    // 2. Task Due Date Notifications & Alerts
     tasks.forEach((task) => {
       const taskId = task.id || task._id || task.title;
       const days = getDaysDifference(task.dueDate);
@@ -235,7 +267,7 @@ function NotificationsPage() {
       }
     });
 
-    // 2. Project Target Date & Faculty Milestone Notifications
+    // 3. Project Target Date & Faculty Milestone Notifications
     projects.forEach((proj) => {
       const projId = proj.id || proj._id || proj.title;
 
@@ -295,7 +327,7 @@ function NotificationsPage() {
       }
     });
 
-    // 3. Supervision Request Notifications (Approved & Rejected with Reason)
+    // 4. Supervision Request Notifications (Approved & Rejected with Reason)
     supervisionRequests.forEach((req) => {
       const reqId = req.id || req._id;
       if (req.status === "Approved" || req.status === "Accepted") {
@@ -324,31 +356,62 @@ function NotificationsPage() {
       }
     });
 
-    // Filter out cleared notifications
-    return list.filter((item) => !clearedIds.includes(item.id));
-  }, [tasks, projects, supervisionRequests, readIds, clearedIds, todayStr]);
+    // Deduplicate by ID
+    const uniqueMap = new Map<string, NotificationItem>();
+    list.forEach((item) => {
+      if (!uniqueMap.has(item.id)) uniqueMap.set(item.id, item);
+    });
 
-  const handleMarkAllRead = () => {
+    // Filter out cleared notifications
+    return Array.from(uniqueMap.values()).filter((item) => !clearedIds.includes(item.id));
+  }, [dbNotifs, tasks, projects, supervisionRequests, readIds, clearedIds, todayStr]);
+
+  const handleMarkAllRead = async () => {
     const allIds = generatedNotifications.map((n) => n.id);
     const updatedRead = Array.from(new Set([...readIds, ...allIds]));
     saveReadIds(updatedRead);
+    if (user?.email) {
+      try {
+        await fetch("/api/notifications", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email, markAllRead: true }),
+        });
+      } catch (err) {}
+    }
     toast.success("All notifications marked as read.");
   };
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     const allIds = generatedNotifications.map((n) => n.id);
     const updatedCleared = Array.from(new Set([...clearedIds, ...allIds]));
     saveClearedIds(updatedCleared);
+    if (user?.email) {
+      try {
+        await fetch("/api/notifications", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email, clearAll: true }),
+        });
+      } catch (err) {}
+    }
     toast.success("Notification list cleared.");
   };
 
-  const handleClearNotification = (id: string) => {
+  const handleClearNotification = async (id: string) => {
     const updatedCleared = [...clearedIds, id];
     saveClearedIds(updatedCleared);
+    if (user?.email) {
+      try {
+        await fetch(`/api/notifications?id=${encodeURIComponent(id)}&email=${encodeURIComponent(user.email)}`, {
+          method: "DELETE",
+        });
+      } catch (err) {}
+    }
     toast.success("Notification removed.");
   };
 
-  const handleToggleRead = (id: string) => {
+  const handleToggleRead = async (id: string) => {
     let updatedRead: string[];
     if (readIds.includes(id)) {
       updatedRead = readIds.filter((item) => item !== id);
@@ -356,6 +419,15 @@ function NotificationsPage() {
       updatedRead = [...readIds, id];
     }
     saveReadIds(updatedRead);
+    if (user?.email) {
+      try {
+        await fetch("/api/notifications", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, email: user.email }),
+        });
+      } catch (err) {}
+    }
   };
 
   const filteredNotifications = useMemo(() => {
@@ -443,11 +515,11 @@ function NotificationsPage() {
             ) : filteredNotifications.length === 0 ? (
               <Card className="surface-elevated rounded-2xl border-dashed border-border py-16 text-center space-y-3">
                 <Bell className="h-10 w-10 text-muted-foreground mx-auto opacity-50" />
-                <h3 className="text-lg font-bold text-foreground">No Active Notifications</h3>
+                <h3 className="text-lg font-bold text-foreground">No new notifications</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                   {activeTab === "unread"
                     ? "You have read all notifications! Great job staying on top of your schedule."
-                    : "No notifications found for this category. Add tasks or project milestones to receive automated date alerts."}
+                    : "No notifications found for this category."}
                 </p>
               </Card>
             ) : (
@@ -455,6 +527,11 @@ function NotificationsPage() {
                 {filteredNotifications.map((notif) => (
                   <Card
                     key={notif.id}
+                    onClick={() => {
+                      if (notif.projectLink && notif.projectLink !== "/notifications") {
+                        window.location.href = notif.projectLink;
+                      }
+                    }}
                     className={`surface-elevated rounded-2xl border bg-card p-4 transition-all hover:border-primary/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
                       !notif.read
                         ? notif.isOverdue
@@ -463,7 +540,7 @@ function NotificationsPage() {
                           ? "border-amber-500/40 bg-amber-500/5"
                           : "border-primary/40 bg-primary/5"
                         : "border-border"
-                    }`}
+                    } ${notif.projectLink && notif.projectLink !== "/notifications" ? "cursor-pointer" : ""}`}
                   >
                     <div className="flex items-start gap-3">
                       <div
@@ -525,17 +602,7 @@ function NotificationsPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
-                      {notif.projectLink && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => (window.location.href = notif.projectLink!)}
-                          className="h-8 rounded-xl text-xs font-semibold gap-1 text-primary hover:bg-primary/10"
-                        >
-                          View Link <ExternalLink className="h-3 w-3" />
-                        </Button>
-                      )}
+                    <div className="flex items-center gap-2 shrink-0 justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60" onClick={(e) => e.stopPropagation()}>
 
                       <Button
                         variant="ghost"
