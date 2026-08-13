@@ -64,6 +64,7 @@ interface SupervisedStudent {
   degreeProgram: string;
   activeProject: string;
   projectId?: string;
+  paperCount?: number;
   status: "Under Supervision";
   joinedDate: string;
 }
@@ -142,6 +143,14 @@ function FacultyStudentsPage() {
     return null;
   });
 
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get("projectId");
+    }
+    return null;
+  });
+
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
@@ -212,9 +221,9 @@ function FacultyStudentsPage() {
 
   useEffect(() => {
     if (session?.email && selectedStudentId) {
-      fetchStudentWorkspace(session.email, selectedStudentId);
+      fetchStudentWorkspace(session.email, selectedStudentId, selectedProjectId || undefined);
     }
-  }, [session, selectedStudentId]);
+  }, [session, selectedStudentId, selectedProjectId]);
 
   const fetchSupervisedStudents = async (facultyEmail: string) => {
     setLoading(true);
@@ -234,18 +243,21 @@ function FacultyStudentsPage() {
     }
   };
 
-  const fetchStudentWorkspace = async (facultyEmail: string, studentId: string) => {
+  const fetchStudentWorkspace = async (facultyEmail: string, studentId: string, projectId?: string) => {
     setLoadingWorkspace(true);
     try {
+      const pQuery = projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
       const res = await fetch(
-        `/api/faculty/students?facultyEmail=${encodeURIComponent(facultyEmail)}&studentId=${encodeURIComponent(studentId)}`
+        `/api/faculty/students?facultyEmail=${encodeURIComponent(facultyEmail)}&studentId=${encodeURIComponent(studentId)}${pQuery}`
       );
       if (res.ok) {
         const data = await res.json();
         setWorkspaceData(data);
       } else if (res.status === 403) {
-        toast.error("Access Denied: You can only view students currently assigned to you.");
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Access Denied: You do not have approved supervision access for this specific project.");
         setSelectedStudentId(null);
+        setSelectedProjectId(null);
       }
     } catch (err) {
       console.error("Error fetching student workspace:", err);
@@ -255,21 +267,29 @@ function FacultyStudentsPage() {
     }
   };
 
-  const openStudentWorkspace = (studentId: string) => {
+  const openStudentWorkspace = (studentId: string, projectId?: string) => {
     setSelectedStudentId(studentId);
+    setSelectedProjectId(projectId || null);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("studentId", studentId);
+      if (projectId) {
+        url.searchParams.set("projectId", projectId);
+      } else {
+        url.searchParams.delete("projectId");
+      }
       window.history.pushState({}, "", url.toString());
     }
   };
 
   const closeStudentWorkspace = () => {
     setSelectedStudentId(null);
+    setSelectedProjectId(null);
     setWorkspaceData(null);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.delete("studentId");
+      url.searchParams.delete("projectId");
       window.history.pushState({}, "", url.toString());
     }
   };
@@ -909,9 +929,11 @@ function FacultyStudentsPage() {
                     </div>
 
                     <div className="flex items-center justify-between text-xs pt-1">
-                      <span className="text-[0.7rem] text-muted-foreground">Joined {student.joinedDate}</span>
+                      <span className="text-[0.7rem] text-muted-foreground font-medium flex items-center gap-1">
+                        <FileText className="h-3.5 w-3.5 text-primary" /> {student.paperCount ?? 0} Reference Papers
+                      </span>
                       <Button
-                        onClick={() => openStudentWorkspace(student.id)}
+                        onClick={() => openStudentWorkspace(student.id, student.projectId)}
                         className="rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm h-9 px-4"
                       >
                         View Student Workspace

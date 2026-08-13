@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { UserCheck, Clock, CheckCircle2, XCircle, Search, Eye, MessageSquare, AlertCircle, ExternalLink, Loader2 } from "lucide-react";
+import { UserCheck, Clock, CheckCircle2, XCircle, Search, Eye, MessageSquare, AlertCircle, ExternalLink, Loader2, FileText } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,9 @@ interface RequestItem {
   email: string;
   projectTitle: string;
   domain: string;
-  abstract: string;
+  hasResearchWork?: boolean;
+  abstract?: string | null;
+  methodology?: string | null;
   proposalSummary?: string;
   message?: string;
   submittedAt: string;
@@ -82,7 +84,9 @@ function SupervisionRequestsPage() {
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/faculty/supervision-requests");
+      const session = getUserSession();
+      const emailQuery = session?.email ? `?facultyEmail=${encodeURIComponent(session.email)}` : "";
+      const res = await fetch(`/api/faculty/supervision-requests${emailQuery}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) setRequests(data);
@@ -292,10 +296,25 @@ function SupervisionRequestsPage() {
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold text-foreground mb-0.5">Abstract / Overview:</p>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {req.abstract || req.proposalSummary || "No abstract provided."}
-                      </p>
+                      <p className="text-xs font-semibold text-foreground mb-1">Abstract & Methodology:</p>
+                      {!req.hasResearchWork ? (
+                        <p className="text-xs text-muted-foreground italic bg-muted/20 p-2.5 rounded-xl border border-border/60">
+                          No research work has been created yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5 text-xs bg-muted/20 p-3 rounded-xl border border-border/60">
+                          <p className="text-muted-foreground leading-relaxed line-clamp-2">
+                            <span className="font-semibold text-foreground">Abstract: </span>
+                            {req.abstract ? req.abstract : <span className="italic text-muted-foreground font-normal">No abstract provided yet.</span>}
+                          </p>
+                          {req.methodology && (
+                            <p className="text-muted-foreground leading-relaxed line-clamp-2">
+                              <span className="font-semibold text-foreground">Methodology: </span>
+                              {req.methodology}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {req.message && (
@@ -447,11 +466,44 @@ function SupervisionRequestsPage() {
                 <p className="text-muted-foreground">Submitted: {viewingProjectRequest.submittedAt}</p>
               </div>
 
-              <div>
-                <h4 className="font-bold text-foreground text-xs mb-1">Abstract & Methodology</h4>
-                <p className="text-muted-foreground leading-relaxed bg-background p-3 rounded-xl border border-border">
-                  {viewingProjectRequest.abstract || viewingProjectRequest.proposalSummary || "No abstract provided."}
-                </p>
+              <div className="rounded-xl border border-border p-4 space-y-3 bg-background">
+                <h4 className="font-bold text-foreground text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText className="h-4 w-4 text-primary" /> Abstract & Methodology
+                </h4>
+
+                {!viewingProjectRequest.hasResearchWork ? (
+                  <div className="rounded-lg bg-muted/40 p-3 text-muted-foreground italic">
+                    No research work has been created yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="font-bold text-foreground mb-1">Abstract:</p>
+                      {viewingProjectRequest.abstract ? (
+                        <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 p-3 rounded-lg border border-border/60">
+                          {viewingProjectRequest.abstract}
+                        </p>
+                      ) : (
+                        <p className="text-muted-foreground italic bg-muted/20 p-3 rounded-lg border border-border/60">
+                          No abstract provided yet.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <p className="font-bold text-foreground mb-1">Methodology:</p>
+                      {viewingProjectRequest.methodology ? (
+                        <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap bg-muted/20 p-3 rounded-lg border border-border/60">
+                          {viewingProjectRequest.methodology}
+                        </p>
+                      ) : (
+                        <p className="text-muted-foreground italic bg-muted/20 p-3 rounded-lg border border-border/60">
+                          No methodology section provided yet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {viewingProjectRequest.message && (

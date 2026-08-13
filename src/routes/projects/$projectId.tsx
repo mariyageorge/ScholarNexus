@@ -122,6 +122,7 @@ export interface Project {
   requestedFacultyId?: string | null;
   requestedFacultyName?: string | null;
   supervisionStatus?: "Not Assigned" | "Pending Approval" | "Under Supervision" | "Rejected";
+  lastRejectionReason?: string;
   keywords?: string[];
   createdAt: string;
   updatedAt: string;
@@ -216,11 +217,31 @@ function ProjectWorkspacePage() {
 
   // Supervision Request State
   const [supervisionRequest, setSupervisionRequest] = useState<any | null>(null);
+  const [supervisionHistory, setSupervisionHistory] = useState<any[]>([]);
   const [isRequestSupervisorModalOpen, setIsRequestSupervisorModalOpen] = useState(false);
   const [facultySearchQuery, setFacultySearchQuery] = useState("");
   const [selectedFaculty, setSelectedFaculty] = useState<any | null>(null);
   const [requestMessage, setRequestMessage] = useState("I would like you to supervise my research project.");
   const [sendingRequest, setSendingRequest] = useState(false);
+
+  // Derived Supervision State according to DB request lifecycle & project status
+  const currentSupervisionState = useMemo(() => {
+    if (supervisionRequest) {
+      if (supervisionRequest.status === "Approved" || supervisionRequest.status === "Accepted") return "Approved";
+      if (supervisionRequest.status === "Rejected" || supervisionRequest.status === "Declined") return "Rejected";
+      if (supervisionRequest.status === "Pending") return "Pending";
+    }
+    if (project?.supervisionStatus === "Under Supervision" && (project?.faculty || project?.facultyEmail || project?.facultyId)) {
+      return "Approved";
+    }
+    if (project?.supervisionStatus === "Pending Approval") {
+      return "Pending";
+    }
+    if (project?.supervisionStatus === "Rejected") {
+      return "Rejected";
+    }
+    return "No Faculty";
+  }, [supervisionRequest, project]);
 
   // Navigation state for active workspace tab
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("overview");
@@ -410,8 +431,8 @@ function ProjectWorkspacePage() {
   };
 
   const handleRequestWorkReview = async (workDoc: any) => {
-    if (!project || (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail && !project.faculty)) {
-      toast.error("Cannot request review: Do not allow review requests when the project has no approved supervisor.");
+    if (currentSupervisionState !== "Approved") {
+      toast.error("Faculty supervision required. Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.");
       return;
     }
 
@@ -425,7 +446,7 @@ function ProjectWorkspacePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId: project.id || project._id || projectId,
+          projectId: project?.id || project?._id || projectId,
           documentId: workDoc.id,
           paperTitle: workDoc.title,
           documentTitle: workDoc.title,
@@ -531,8 +552,8 @@ function ProjectWorkspacePage() {
   };
 
   const handleRequestReview = async (paper: ProjectPaper) => {
-    if (!project || (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail && !project.faculty)) {
-      toast.error("Cannot request review: Do not allow review requests when the project has no approved supervisor.");
+    if (currentSupervisionState !== "Approved") {
+      toast.error("Faculty supervision required. Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.");
       return;
     }
 
@@ -550,7 +571,7 @@ function ProjectWorkspacePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId: project.id || project._id || projectId,
+          projectId: project?.id || project?._id || projectId,
           documentId: paper.id,
           paperTitle: paper.title,
           studentEmail: user?.email,
@@ -667,8 +688,10 @@ function ProjectWorkspacePage() {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
+          setSupervisionHistory(data);
           setSupervisionRequest(data[0]);
         } else {
+          setSupervisionHistory([]);
           setSupervisionRequest(null);
         }
       }
@@ -715,6 +738,14 @@ function ProjectWorkspacePage() {
   const handleSendSupervisionRequest = async () => {
     if (!selectedFaculty || !user || !project) {
       toast.error("Please select a faculty member to send a request.");
+      return;
+    }
+    if (currentSupervisionState === "Pending") {
+      toast.error("An active supervision request is already pending faculty approval.");
+      return;
+    }
+    if (currentSupervisionState === "Approved") {
+      toast.error("This project already has an approved faculty supervisor.");
       return;
     }
     setSendingRequest(true);
@@ -1403,51 +1434,27 @@ function ProjectWorkspacePage() {
                     <Badge
                       variant="outline"
                       className={
-                        project?.supervisionStatus === "Under Supervision"
+                        currentSupervisionState === "Approved"
                           ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.7rem] font-bold"
-                          : project?.supervisionStatus === "Pending Approval" || supervisionRequest?.status === "Pending"
+                          : currentSupervisionState === "Pending"
                           ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.7rem] font-bold"
-                          : project?.supervisionStatus === "Rejected"
+                          : currentSupervisionState === "Rejected"
                           ? "border-destructive/30 text-destructive bg-destructive/10 text-[0.7rem] font-bold"
                           : "border-muted-foreground/30 text-muted-foreground bg-muted/40 text-[0.7rem] font-semibold"
                       }
                     >
-                      {project?.supervisionStatus === "Under Supervision"
+                      {currentSupervisionState === "Approved"
                         ? "Under Supervision"
-                        : project?.supervisionStatus === "Pending Approval" || supervisionRequest?.status === "Pending"
+                        : currentSupervisionState === "Pending"
                         ? "Pending Approval"
-                        : project?.supervisionStatus === "Rejected"
-                        ? "Rejected"
-                        : "Not Assigned"}
+                        : currentSupervisionState === "Rejected"
+                        ? "Request Rejected"
+                        : "No Faculty Assigned"}
                     </Badge>
                   </div>
 
-                  {/* CASE A: Not Assigned */}
-                  {(!project?.supervisionStatus || project?.supervisionStatus === "Not Assigned") &&
-                    (!supervisionRequest || supervisionRequest.status !== "Pending") && (
-                      <div className="rounded-xl border border-dashed border-border p-4 text-center space-y-3 bg-muted/20">
-                        <div>
-                          <p className="font-bold text-xs text-foreground">No supervisor assigned yet.</p>
-                          <p className="text-[0.7rem] text-muted-foreground mt-1">
-                            Request an approved faculty member to supervise your project.
-                          </p>
-                        </div>
-                        <Button
-                          onClick={() => {
-                            setSelectedFaculty(null);
-                            setRequestMessage("I would like you to supervise my research project.");
-                            setIsRequestSupervisorModalOpen(true);
-                          }}
-                          size="sm"
-                          className="w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground gap-1.5 shadow-sm"
-                        >
-                          <UserCheck className="h-3.5 w-3.5" /> Request Supervisor
-                        </Button>
-                      </div>
-                    )}
-
-                  {/* CASE B: Pending Approval */}
-                  {(project?.supervisionStatus === "Pending Approval" || (supervisionRequest && supervisionRequest.status === "Pending")) && (
+                  {/* STATE 1: Pending Approval */}
+                  {currentSupervisionState === "Pending" && (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
                       <div className="flex items-center gap-3">
                         <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-500/10 text-amber-500 font-bold shrink-0">
@@ -1458,7 +1465,7 @@ function ProjectWorkspacePage() {
                             {supervisionRequest?.facultyName || project?.requestedFacultyName || "Faculty Advisor"}
                           </h4>
                           <p className="text-[0.7rem] text-muted-foreground">
-                            Requested on {supervisionRequest?.submittedAt || (supervisionRequest?.requestedAt ? new Date(supervisionRequest.requestedAt).toLocaleDateString() : "Recently")}
+                            Requested on {supervisionRequest?.submittedAt ? new Date(supervisionRequest.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : (supervisionRequest?.submittedDate || "Recently")}
                           </p>
                         </div>
                       </div>
@@ -1470,44 +1477,50 @@ function ProjectWorkspacePage() {
                     </div>
                   )}
 
-                  {/* CASE C: Approved - Under Supervision */}
-                  {project?.supervisionStatus === "Under Supervision" && (
+                  {/* STATE 2: Approved - Under Supervision */}
+                  {currentSupervisionState === "Approved" && (
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
                       <div className="flex items-center gap-3">
                         {assignedFacultyDetails?.photoURL ? (
-                          <img src={assignedFacultyDetails.photoURL} alt={project.faculty || ""} className="h-10 w-10 rounded-xl object-cover border border-emerald-500/30" />
+                          <img src={assignedFacultyDetails.photoURL} alt={project?.faculty || ""} className="h-10 w-10 rounded-xl object-cover border border-emerald-500/30" />
                         ) : (
                           <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 font-bold text-sm">
-                            {(project.faculty || "F").charAt(0)}
+                            {(project?.faculty || supervisionRequest?.facultyName || "F").charAt(0)}
                           </div>
                         )}
                         <div>
-                          <h4 className="font-bold text-xs text-foreground">{project.faculty}</h4>
+                          <h4 className="font-bold text-xs text-foreground">{project?.faculty || supervisionRequest?.facultyName}</h4>
                           <p className="text-[0.7rem] text-muted-foreground">
                             {assignedFacultyDetails?.designation || assignedFacultyDetails?.title || "Faculty Supervisor"} • {assignedFacultyDetails?.department || "Academic Department"}
                           </p>
-                          {assignedFacultyDetails?.institution && (
-                            <p className="text-[0.68rem] text-muted-foreground">{assignedFacultyDetails.institution}</p>
-                          )}
+                          <p className="text-[0.68rem] text-muted-foreground mt-0.5">
+                            Approved on {supervisionRequest?.respondedAt ? new Date(supervisionRequest.respondedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : (project?.updatedAt ? new Date(project.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently")}
+                          </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* CASE D: Rejected */}
-                  {project?.supervisionStatus === "Rejected" && (
+                  {/* STATE 3: Request Rejected */}
+                  {currentSupervisionState === "Rejected" && (
                     <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
                       <div className="flex items-start gap-2.5">
                         <div className="grid h-8 w-8 place-items-center rounded-lg bg-destructive/10 text-destructive font-bold shrink-0 mt-0.5">
                           <X className="h-4 w-4" />
                         </div>
-                        <div className="space-y-1">
-                          <h4 className="font-bold text-xs text-foreground">Supervision Request Declined</h4>
-                          {supervisionRequest?.facultyRemarks && (
-                            <p className="text-[0.725rem] text-muted-foreground leading-relaxed">
-                              <span className="font-semibold text-foreground">Reason:</span> "{supervisionRequest.facultyRemarks}"
-                            </p>
-                          )}
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-bold text-xs text-foreground">
+                              {supervisionRequest?.facultyName || "Faculty Advisor"}
+                            </h4>
+                            <span className="text-[0.68rem] text-muted-foreground">
+                              Rejected on {supervisionRequest?.respondedAt ? new Date(supervisionRequest.respondedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently"}
+                            </span>
+                          </div>
+                          <div className="rounded-lg bg-background/80 border border-destructive/20 p-2.5 text-[0.725rem]">
+                            <p className="font-semibold text-foreground mb-0.5">Rejection Reason:</p>
+                            <p className="text-muted-foreground italic">"{supervisionRequest?.facultyRemarks || project?.lastRejectionReason || "No reason provided."}"</p>
+                          </div>
                         </div>
                       </div>
                       <Button
@@ -1517,11 +1530,75 @@ function ProjectWorkspacePage() {
                           setIsRequestSupervisorModalOpen(true);
                         }}
                         size="sm"
-                        variant="outline"
-                        className="w-full rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10 text-xs font-bold gap-1.5"
+                        className="w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground gap-1.5 shadow-sm"
                       >
-                        <RefreshCcw className="h-3.5 w-3.5" /> Request Another Faculty
+                        <RefreshCcw className="h-3.5 w-3.5" /> Request Again
                       </Button>
+                    </div>
+                  )}
+
+                  {/* STATE 4: No Faculty Assigned */}
+                  {currentSupervisionState === "No Faculty" && (
+                    <div className="rounded-xl border border-dashed border-border p-4 text-center space-y-3 bg-muted/20">
+                      <div>
+                        <h4 className="font-bold text-xs text-foreground">No Faculty Assigned</h4>
+                        <p className="text-[0.7rem] text-muted-foreground mt-1">
+                          Choose a faculty member to request supervision.
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => {
+                          setSelectedFaculty(null);
+                          setRequestMessage("I would like you to supervise my research project.");
+                          setIsRequestSupervisorModalOpen(true);
+                        }}
+                        size="sm"
+                        className="w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground gap-1.5 shadow-sm"
+                      >
+                        <UserCheck className="h-3.5 w-3.5" /> Request Supervision
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* REQUEST HISTORY SECTION */}
+                  {supervisionHistory.length > 0 && (
+                    <div className="pt-3 border-t border-border/60 space-y-2">
+                      <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Request History
+                      </h4>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {supervisionHistory.map((item: any, idx: number) => (
+                          <div key={item.id || item._id || idx} className="rounded-xl border border-border bg-background/60 p-2.5 text-xs space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-foreground">{item.facultyName || "Faculty Supervisor"}</span>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  item.status === "Approved" || item.status === "Accepted"
+                                    ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-bold"
+                                    : item.status === "Pending"
+                                    ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-bold"
+                                    : "border-destructive/30 text-destructive bg-destructive/10 text-[0.65rem] font-bold"
+                                }
+                              >
+                                {item.status}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
+                              <span>
+                                {item.submittedAt
+                                  ? new Date(item.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                                  : (item.submittedDate || "")}
+                              </span>
+                            </div>
+                            {item.status === "Rejected" && item.facultyRemarks && (
+                              <p className="text-[0.68rem] text-muted-foreground italic bg-muted/40 p-1.5 rounded-lg border border-border/50">
+                                Reason: "{item.facultyRemarks}"
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </Card>
@@ -1723,7 +1800,7 @@ function ProjectWorkspacePage() {
                         onClick={() => handleRequestWorkReview(activeWorkDoc)}
                         disabled={
                           activeWorkDoc.reviewStatus === "Pending Review" ||
-                          (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail)
+                          currentSupervisionState !== "Approved"
                         }
                         size="sm"
                         className="rounded-xl text-xs font-bold gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
@@ -1733,6 +1810,19 @@ function ProjectWorkspacePage() {
                       </Button>
                     </div>
                   </div>
+
+                  {/* Supervision Requirement Notice if not approved */}
+                  {currentSupervisionState !== "Approved" && (
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3.5 flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <h5 className="font-bold text-xs text-amber-600 dark:text-amber-400">Faculty supervision required</h5>
+                        <p className="text-[0.725rem] text-muted-foreground leading-relaxed">
+                          Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Faculty Feedback Highlight if Reviewed */}
                   {activeWorkDoc.feedback && (
