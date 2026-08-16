@@ -1,6 +1,7 @@
 import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
 import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
+import { extractPaperMetadataWithGemini } from "./services/ai";
 
 const uri = process.env.MONGODB_URI ?? import.meta?.env?.VITE_MONGODB_URI ?? "";
 
@@ -3619,6 +3620,68 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       return new Response(JSON.stringify({ success: true, message: "Calendar reminder deleted." }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
+  // ── Gemini AI Paper Metadata Extraction Endpoint ──
+  if (url.pathname === "/api/papers/extract-metadata") {
+    if (request.method === "POST") {
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      let fileData = body.fileData;
+      let fileName = body.fileName || body.name;
+
+      // If paperId is provided without fileData, fetch stored paper record from MongoDB
+      if (!fileData && body.paperId) {
+        const papersCol = await getCollection<Document>("papers");
+        let objId: any = body.paperId;
+        if (ObjectId.isValid(body.paperId)) objId = new ObjectId(body.paperId);
+        const storedDoc = await papersCol.findOne({ $or: [{ _id: objId }, { id: String(body.paperId) }] });
+        if (storedDoc) {
+          fileData = storedDoc.fileData;
+          fileName = fileName || storedDoc.title;
+        }
+      }
+
+      if (!fileData && !body.textContent) {
+        return new Response(
+          JSON.stringify({ error: "PDF file content or text content is required for extraction." }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const result = await extractPaperMetadataWithGemini({
+        fileData,
+        fileName,
+        textContent: body.textContent,
+      });
+
+      if (!result.success) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: result.error || "Could not automatically identify paper information.",
+          }),
+          { status: 500, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          metadata: result.metadata,
+          modelUsed: result.modelUsed,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
   // ── Research Papers MongoDB API ──
   if (url.pathname === "/api/papers") {
     const papersCol = await getCollection<Document>("papers");
@@ -3648,21 +3711,51 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         return new Response(JSON.stringify({ error: "Body must be an object." }), { status: 400, headers: { "content-type": "application/json" } });
       }
 
-      const { projectId, title, authors, year, journal, url: paperUrl, fileData, summary, userEmail } = body;
+      const {
+        projectId,
+        title,
+        authors,
+        year,
+        publicationYear,
+        journal,
+        journalOrConference,
+        doi,
+        abstract,
+        keywords,
+        url: paperUrl,
+        fileData,
+        summary,
+        userEmail,
+      } = body;
+
       if (!projectId || !title) {
         return new Response(JSON.stringify({ error: "Project ID and Title are required." }), { status: 400, headers: { "content-type": "application/json" } });
       }
 
+      // Format authors list into array & string representations for maximum backwards compatibility
+      const authorsStr = Array.isArray(authors) ? authors.join(", ") : authors ? String(authors).trim() : "";
+      const authorsArr = Array.isArray(authors) ? authors : authorsStr ? authorsStr.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+
+      const pubYear = publicationYear || year || "";
+      const pubVenue = journalOrConference || journal || "";
+      const paperSummary = abstract || summary || `Research paper "${title}" uploaded to project.`;
+
       const paperRecord = {
         projectId: String(projectId),
         title: String(title).trim(),
-        authors: authors ? String(authors).trim() : "",
-        year: year ? String(year).trim() : "",
-        journal: journal ? String(journal).trim() : "",
+        authors: authorsStr,
+        authorsList: authorsArr,
+        year: String(pubYear).trim(),
+        publicationYear: pubYear ? String(pubYear).trim() : null,
+        journal: String(pubVenue).trim(),
+        journalOrConference: pubVenue ? String(pubVenue).trim() : null,
+        doi: doi ? String(doi).trim() : null,
+        abstract: paperSummary,
+        keywords: Array.isArray(keywords) ? keywords : typeof keywords === "string" ? (keywords as string).split(",").map((k: string) => k.trim()).filter(Boolean) : [],
         uploadDate: new Date().toISOString().split("T")[0],
         url: paperUrl ? String(paperUrl).trim() : "",
         fileData: fileData ? String(fileData) : undefined,
-        summary: summary ? String(summary) : `Research paper "${title}" uploaded to project.`,
+        summary: paperSummary,
         userEmail: userEmail ? String(userEmail).trim().toLowerCase() : undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -3701,12 +3794,34 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       };
 
       if (body.title !== undefined) updateFields.title = String(body.title).trim();
-      if (body.authors !== undefined) updateFields.authors = String(body.authors).trim();
-      if (body.year !== undefined) updateFields.year = String(body.year).trim();
-      if (body.journal !== undefined) updateFields.journal = String(body.journal).trim();
+      if (body.authors !== undefined) {
+        const authorsStr = Array.isArray(body.authors) ? body.authors.join(", ") : String(body.authors).trim();
+        updateFields.authors = authorsStr;
+        updateFields.authorsList = Array.isArray(body.authors) ? body.authors : authorsStr.split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
+      if (body.publicationYear !== undefined || body.year !== undefined) {
+        const y = body.publicationYear || body.year || "";
+        updateFields.year = String(y).trim();
+        updateFields.publicationYear = String(y).trim();
+      }
+      if (body.journalOrConference !== undefined || body.journal !== undefined) {
+        const j = body.journalOrConference || body.journal || "";
+        updateFields.journal = String(j).trim();
+        updateFields.journalOrConference = String(j).trim();
+      }
+      if (body.doi !== undefined) updateFields.doi = body.doi ? String(body.doi).trim() : null;
+      if (body.abstract !== undefined || body.summary !== undefined) {
+        const a = body.abstract || body.summary || "";
+        updateFields.abstract = String(a).trim();
+        updateFields.summary = String(a).trim();
+      }
+      if (body.keywords !== undefined) {
+        updateFields.keywords = Array.isArray(body.keywords)
+          ? body.keywords
+          : String(body.keywords).split(",").map((k: string) => k.trim()).filter(Boolean);
+      }
       if (body.url !== undefined) updateFields.url = String(body.url).trim();
       if (body.fileData !== undefined) updateFields.fileData = body.fileData;
-      if (body.summary !== undefined) updateFields.summary = String(body.summary).trim();
 
       await papersCol.updateOne(
         { $or: [{ _id: objId }, { id: String(paperId) }] },

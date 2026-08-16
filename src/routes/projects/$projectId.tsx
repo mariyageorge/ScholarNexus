@@ -134,8 +134,14 @@ export interface ProjectPaper {
   projectId: string;
   title: string;
   authors: string;
+  authorsList?: string[];
   year: string;
+  publicationYear?: string;
   journal: string;
+  journalOrConference?: string;
+  doi?: string;
+  abstract?: string;
+  keywords?: string[];
   uploadDate: string;
   url?: string;
   fileData?: string;
@@ -252,6 +258,34 @@ function ProjectWorkspacePage() {
   const [editingPaper, setEditingPaper] = useState<ProjectPaper | null>(null);
   const [viewingPaper, setViewingPaper] = useState<ProjectPaper | null>(null);
   const [deletingPaper, setDeletingPaper] = useState<ProjectPaper | null>(null);
+
+  // Gemini AI Reference Paper Extraction State
+  const [isExtractingMetadata, setIsExtractingMetadata] = useState(false);
+  const [extractionStep, setExtractionStep] = useState<string>("");
+  const [isReviewMetadataModalOpen, setIsReviewMetadataModalOpen] = useState(false);
+  const [isSavingPaper, setIsSavingPaper] = useState(false);
+  const [reviewPaperData, setReviewPaperData] = useState<{
+    id?: string;
+    projectId: string;
+    title: string;
+    authors: string;
+    publicationYear: string;
+    journalOrConference: string;
+    doi: string;
+    abstract: string;
+    keywords: string;
+    fileData?: string;
+    fileName?: string;
+  }>({
+    projectId: "",
+    title: "",
+    authors: "",
+    publicationYear: "",
+    journalOrConference: "",
+    doi: "",
+    abstract: "",
+    keywords: "",
+  });
 
   const [selectedFile, setSelectedFile] = useState<{
     name: string;
@@ -926,30 +960,32 @@ function ProjectWorkspacePage() {
   const handleOpenPaperEditModal = (paper: ProjectPaper) => {
     setEditingPaper(paper);
     setSelectedFile(null);
-    setShowAdvancedFields(true);
-    setPaperForm({
-      title: paper.title,
+    setReviewPaperData({
+      id: paper.id || paper._id,
+      projectId,
+      title: paper.title || "",
       authors: paper.authors || "",
-      year: paper.year || "",
-      journal: paper.journal || "",
-      url: paper.url || "",
+      publicationYear: paper.publicationYear || paper.year || "",
+      journalOrConference: paper.journalOrConference || paper.journal || "",
+      doi: paper.doi || "",
+      abstract: paper.abstract || paper.summary || "",
+      keywords: Array.isArray(paper.keywords) ? paper.keywords.join(", ") : paper.keywords || "",
+      fileData: paper.fileData,
     });
-    setIsPaperUploadModalOpen(true);
+    setIsReviewMetadataModalOpen(true);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isExtractingMetadata) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const rawName = file.name.replace(/\.[^/.]+$/, "");
-    const cleanTitle = rawName
-      .replace(/[-_]/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase())
-      .trim();
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      toast.error("Invalid file format. Please upload an academic paper PDF file.");
+      return;
+    }
 
     const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
-
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
@@ -959,29 +995,25 @@ function ProjectWorkspacePage() {
         file,
         dataUrl,
       });
+
+      // Automatically trigger Gemini Metadata Extraction for PDF
+      handleRunMetadataExtraction(dataUrl, file.name);
     };
     reader.readAsDataURL(file);
-
-    setPaperForm((prev) => ({
-      ...prev,
-      title: prev.title || cleanTitle,
-    }));
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    if (isExtractingMetadata) return;
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
 
-    const rawName = file.name.replace(/\.[^/.]+$/, "");
-    const cleanTitle = rawName
-      .replace(/[-_]/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase())
-      .trim();
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      toast.error("Invalid file format. Please upload an academic paper PDF file.");
+      return;
+    }
 
     const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
-
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
@@ -991,76 +1023,180 @@ function ProjectWorkspacePage() {
         file,
         dataUrl,
       });
+
+      // Automatically trigger Gemini Metadata Extraction for PDF
+      handleRunMetadataExtraction(dataUrl, file.name);
     };
     reader.readAsDataURL(file);
-
-    setPaperForm((prev) => ({
-      ...prev,
-      title: prev.title || cleanTitle,
-    }));
   };
 
-  const handleSavePaper = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleRunMetadataExtraction = async (fileData?: string, fileName?: string, paperId?: string) => {
+    if (isExtractingMetadata) return;
+    setIsExtractingMetadata(true);
+    setExtractionStep("Reading paper...");
 
-    const finalTitle =
-      paperForm.title.trim() ||
-      (selectedFile ? selectedFile.name.replace(/\.[^/.]+$/, "") : "") ||
-      "Untitled Research Paper";
-    const finalAuthors = paperForm.authors.trim();
-    const finalYear = paperForm.year.trim();
-    const finalJournal = paperForm.journal.trim();
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      setExtractionStep("Extracting paper information...");
 
-    if (editingPaper) {
-      const updatedPaper: ProjectPaper = {
-        ...editingPaper,
-        title: finalTitle,
-        authors: finalAuthors,
-        year: finalYear,
-        journal: finalJournal,
-        url: paperForm.url.trim() || (selectedFile ? `file://${selectedFile.name}` : editingPaper.url),
-        fileData: selectedFile?.dataUrl || editingPaper.fileData,
-      };
+      await new Promise((r) => setTimeout(r, 500));
+      setExtractionStep("Identifying paper information with Gemini AI...");
 
-      const updated = papers.map((p) => (p.id === editingPaper.id ? updatedPaper : p));
-      saveProjectPapers(projectId, updated);
-
-      // Persist update directly to MongoDB database collection 'papers'
-      fetch("/api/papers", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...updatedPaper, userEmail: user?.email }),
-      }).catch((e) => console.error("MongoDB paper update sync failed:", e));
-
-      toast.success("Paper metadata updated successfully!");
-    } else {
-      const newPaper: ProjectPaper = {
-        id: `paper-${Date.now()}`,
-        projectId,
-        title: finalTitle,
-        authors: finalAuthors,
-        year: finalYear,
-        journal: finalJournal,
-        uploadDate: new Date().toISOString().split("T")[0],
-        url: paperForm.url.trim() || (selectedFile ? `file://${selectedFile.name}` : ""),
-        fileData: selectedFile?.dataUrl,
-        summary: `Research paper "${finalTitle}" uploaded to project literature collection.`,
-      };
-      saveProjectPapers(projectId, [newPaper, ...papers]);
-
-      // Save directly to MongoDB 'papers' collection
-      fetch("/api/papers", {
+      const res = await fetch("/api/papers/extract-metadata", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...newPaper, userEmail: user?.email }),
-      }).catch((e) => console.error("MongoDB paper sync failed:", e));
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileData, fileName, paperId }),
+      });
 
-      toast.success(`Research paper "${finalTitle}" uploaded to project!`);
+      const data = await res.json();
+
+      if (res.ok && data.success && data.metadata) {
+        const m = data.metadata;
+        setReviewPaperData({
+          id: paperId,
+          projectId,
+          title: m.title || fileName?.replace(/\.[^/.]+$/, "") || "Untitled Research Paper",
+          authors: Array.isArray(m.authors) ? m.authors.join(", ") : m.authors || "",
+          publicationYear: m.publicationYear ? String(m.publicationYear) : "",
+          journalOrConference: m.journalOrConference || "",
+          doi: m.doi || "",
+          abstract: m.abstract || "",
+          keywords: Array.isArray(m.keywords) ? m.keywords.join(", ") : m.keywords || "",
+          fileData: fileData,
+          fileName: fileName,
+        });
+
+        toast.success("Metadata detected successfully!");
+        setIsPaperUploadModalOpen(false);
+        setIsReviewMetadataModalOpen(true);
+      } else {
+        toast.warning("Some paper information could not be identified automatically. Please review and complete the details manually.");
+        setReviewPaperData({
+          id: paperId,
+          projectId,
+          title: fileName?.replace(/\.[^/.]+$/, "") || "Untitled Research Paper",
+          authors: "",
+          publicationYear: "",
+          journalOrConference: "",
+          doi: "",
+          abstract: "",
+          keywords: "",
+          fileData: fileData,
+          fileName: fileName,
+        });
+        setIsPaperUploadModalOpen(false);
+        setIsReviewMetadataModalOpen(true);
+      }
+    } catch (err) {
+      console.error("Extraction failed:", err);
+      toast.warning("Some paper information could not be identified automatically. Please review and complete the details manually.");
+      setReviewPaperData({
+        id: paperId,
+        projectId,
+        title: fileName?.replace(/\.[^/.]+$/, "") || "Untitled Research Paper",
+        authors: "",
+        publicationYear: "",
+        journalOrConference: "",
+        doi: "",
+        abstract: "",
+        keywords: "",
+        fileData: fileData,
+        fileName: fileName,
+      });
+      setIsPaperUploadModalOpen(false);
+      setIsReviewMetadataModalOpen(true);
+    } finally {
+      setIsExtractingMetadata(false);
+      setExtractionStep("");
     }
+  };
 
-    setIsPaperUploadModalOpen(false);
-    setSelectedFile(null);
-    setShowAdvancedFields(false);
+  const handleConfirmAndSaveReviewMetadata = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSavingPaper) return;
+    setIsSavingPaper(true);
+
+    try {
+      const finalTitle = reviewPaperData.title.trim() || "Untitled Research Paper";
+      const finalAuthors = reviewPaperData.authors.trim();
+      const finalYear = reviewPaperData.publicationYear.trim();
+      const finalJournal = reviewPaperData.journalOrConference.trim();
+      const finalDoi = reviewPaperData.doi.trim();
+      const finalAbstract = reviewPaperData.abstract.trim();
+      const finalKeywords = reviewPaperData.keywords
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
+
+      if (reviewPaperData.id) {
+        const targetPaper = papers.find((p) => (p.id || p._id) === reviewPaperData.id);
+        const updatedPaper: ProjectPaper = {
+          ...targetPaper,
+          id: reviewPaperData.id,
+          projectId,
+          title: finalTitle,
+          authors: finalAuthors,
+          year: finalYear,
+          publicationYear: finalYear,
+          journal: finalJournal,
+          journalOrConference: finalJournal,
+          doi: finalDoi,
+          abstract: finalAbstract,
+          summary: finalAbstract || targetPaper?.summary,
+          keywords: finalKeywords,
+          fileData: reviewPaperData.fileData || targetPaper?.fileData,
+          uploadDate: targetPaper?.uploadDate || new Date().toISOString().split("T")[0],
+        };
+
+        const updated = papers.map((p) => ((p.id || p._id) === reviewPaperData.id ? updatedPaper : p));
+        saveProjectPapers(projectId, updated);
+
+        await fetch("/api/papers", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...updatedPaper, userEmail: user?.email }),
+        }).catch((e) => console.error("MongoDB paper update sync failed:", e));
+
+        toast.success("Reference Paper metadata confirmed & saved!");
+      } else {
+        const newPaper: ProjectPaper = {
+          id: `paper-${Date.now()}`,
+          projectId,
+          title: finalTitle,
+          authors: finalAuthors,
+          year: finalYear,
+          publicationYear: finalYear,
+          journal: finalJournal,
+          journalOrConference: finalJournal,
+          doi: finalDoi,
+          abstract: finalAbstract,
+          summary: finalAbstract || `Research paper "${finalTitle}" uploaded to project.`,
+          keywords: finalKeywords,
+          uploadDate: new Date().toISOString().split("T")[0],
+          url: selectedFile ? `file://${selectedFile.name}` : "",
+          fileData: reviewPaperData.fileData || selectedFile?.dataUrl,
+        };
+
+        saveProjectPapers(projectId, [newPaper, ...papers]);
+
+        await fetch("/api/papers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...newPaper, userEmail: user?.email }),
+        }).catch((e) => console.error("MongoDB paper sync failed:", e));
+
+        toast.success(`Reference Paper "${finalTitle}" confirmed & saved to project!`);
+      }
+
+      setIsReviewMetadataModalOpen(false);
+      setSelectedFile(null);
+      setEditingPaper(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to save paper metadata.");
+    } finally {
+      setIsSavingPaper(false);
+    }
   };
 
   const handleDeletePaper = async () => {
@@ -1697,6 +1833,15 @@ function ProjectWorkspacePage() {
                               <td className="px-5 py-4 text-muted-foreground">{p.uploadDate}</td>
                               <td className="px-5 py-4 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleRunMetadataExtraction(p.fileData, p.title, p.id || p._id)}
+                                    title="Extract metadata with Gemini AI"
+                                    className="h-7 px-2 text-[0.7rem] font-bold border-primary/40 text-primary hover:bg-primary/10 rounded-lg gap-1"
+                                  >
+                                    <Sparkles className="h-3 w-3" /> Extract Metadata
+                                  </Button>
                                   <Button size="icon" variant="ghost" onClick={() => setViewingPaper(p)} className="h-7 w-7 rounded-lg text-primary hover:bg-primary/10">
                                     <Eye className="h-3.5 w-3.5" />
                                   </Button>
@@ -2462,145 +2607,64 @@ function ProjectWorkspacePage() {
         </Tabs>
       </div>
 
-      {/* Upload/Edit Paper Dialog */}
-      <Dialog open={isPaperUploadModalOpen} onOpenChange={setIsPaperUploadModalOpen}>
-        <DialogContent className="max-w-lg rounded-2xl border-border bg-card p-6 shadow-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
-              <FileText className="h-5 w-5 text-primary" />
-              {editingPaper ? "Edit Research Paper" : "Upload Research Paper"}
+      {/* Upload Reference Paper Dialog: Strictly Upload PDF Only */}
+      <Dialog open={isPaperUploadModalOpen} onOpenChange={(open) => !isExtractingMetadata && setIsPaperUploadModalOpen(open)}>
+        <DialogContent className="max-w-md rounded-3xl border-border bg-card p-6 shadow-2xl space-y-4">
+          <DialogHeader className="border-b border-border/60 pb-3">
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-foreground">
+              <FileUp className="h-5 w-5 text-primary" /> Reference Paper
             </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Select or drop your paper to add it directly to "{project?.title || "Research Project"}".
+            <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
+              Upload an academic paper PDF to add it to your project's reference collection.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSavePaper} className="space-y-4 py-2">
-            {/* Hidden File Input */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".pdf,.doc,.docx,.txt,.epub"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
+          {/* Hidden File Input: Single PDF Only */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept=".pdf"
+            multiple={false}
+            onChange={handleFileSelect}
+            disabled={isExtractingMetadata}
+            className="hidden"
+          />
 
-            {/* Dropzone / Selected File Banner */}
-            {!selectedFile ? (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleDrop}
-                className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/20 p-6 text-center transition-all cursor-pointer hover:border-primary/60 hover:bg-primary/5"
-              >
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-primary/10 text-primary group-hover:scale-110 transition-transform mb-2">
-                  <UploadCloud className="h-6 w-6" />
-                </div>
-                <p className="text-xs font-bold text-foreground">Click to upload or drag & drop research paper</p>
-                <p className="text-[0.7rem] text-muted-foreground mt-0.5">Supports PDF, DOCX, TXT (Up to 50MB)</p>
+          {isExtractingMetadata ? (
+            <div className="rounded-2xl border border-primary/30 bg-primary/5 p-6 text-center space-y-3">
+              <Loader2 className="h-8 w-8 text-primary animate-spin mx-auto" />
+              <div className="space-y-1">
+                <h4 className="font-bold text-xs text-foreground">Processing Reference Paper...</h4>
+                <p className="text-[0.7rem] text-primary font-semibold animate-pulse">{extractionStep || "Extracting metadata with Gemini AI..."}</p>
               </div>
-            ) : (
-              <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/10 p-3.5 text-xs">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
-                    <FileCheck className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="font-bold text-foreground truncate">{selectedFile.name}</p>
-                    <p className="text-[0.7rem] text-muted-foreground">{selectedFile.size} • Ready for Project</p>
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setSelectedFile(null)}
-                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+              <p className="text-[0.65rem] text-muted-foreground">Reading title, authors, abstract, and publication details...</p>
+            </div>
+          ) : (
+            <div
+              onClick={() => !isExtractingMetadata && fileInputRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/20 p-8 text-center transition-all cursor-pointer hover:border-primary/60 hover:bg-primary/5"
+            >
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-primary/10 text-primary group-hover:scale-110 transition-transform mb-3">
+                <UploadCloud className="h-6 w-6" />
               </div>
-            )}
-
-            {/* Paper Title (Auto-prefilled from filename) */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Paper Title</Label>
-              <Input
-                placeholder="Title auto-filled from uploaded document..."
-                value={paperForm.title}
-                onChange={(e) => setPaperForm({ ...paperForm, title: e.target.value })}
-                className="rounded-xl text-xs"
-              />
+              <p className="text-xs font-bold text-foreground">Click to upload or drag & drop PDF paper</p>
+              <p className="text-[0.7rem] text-muted-foreground mt-1">Accepted format: PDF • One paper at a time</p>
             </div>
+          )}
 
-            {/* Optional Advanced Details Toggle */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedFields(!showAdvancedFields)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-              >
-                {showAdvancedFields ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                {showAdvancedFields ? "Hide Optional Details" : "Edit Optional Details (Authors, Year, Journal)"}
-              </button>
-
-              {showAdvancedFields && (
-                <div className="mt-3 space-y-3 rounded-2xl border border-border bg-muted/20 p-3.5 text-xs animate-in fade-in slide-in-from-top-1">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">Authors</Label>
-                    <Input
-                      placeholder="e.g. K. He, X. Zhang, S. Ren"
-                      value={paperForm.authors}
-                      onChange={(e) => setPaperForm({ ...paperForm, authors: e.target.value })}
-                      className="rounded-xl text-xs bg-background"
-                    />
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-muted-foreground">Publication Year</Label>
-                      <Input
-                        type="number"
-                        placeholder="2024"
-                        value={paperForm.year}
-                        onChange={(e) => setPaperForm({ ...paperForm, year: e.target.value })}
-                        className="rounded-xl text-xs bg-background"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-muted-foreground">Journal / Conference</Label>
-                      <Input
-                        placeholder="e.g. IEEE CVPR, Nature"
-                        value={paperForm.journal}
-                        onChange={(e) => setPaperForm({ ...paperForm, journal: e.target.value })}
-                        className="rounded-xl text-xs bg-background"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">Document URL / ArXiv Link</Label>
-                    <Input
-                      placeholder="https://arxiv.org/pdf/…"
-                      value={paperForm.url}
-                      onChange={(e) => setPaperForm({ ...paperForm, url: e.target.value })}
-                      className="rounded-xl text-xs bg-background"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <DialogFooter className="pt-3 gap-2">
-              <Button type="button" variant="outline" onClick={() => setIsPaperUploadModalOpen(false)} className="rounded-xl text-xs">
-                Cancel
-              </Button>
-              <Button type="submit" className="rounded-xl bg-primary text-xs font-semibold text-primary-foreground shadow-sm">
-                {editingPaper ? "Save Changes" : "Upload Paper to Project"}
-              </Button>
-            </DialogFooter>
-          </form>
+          <DialogFooter className="border-t border-border/60 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isExtractingMetadata}
+              onClick={() => setIsPaperUploadModalOpen(false)}
+              className="rounded-xl text-xs w-full"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -3208,6 +3272,142 @@ function ProjectWorkspacePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Student Review Extracted Metadata Confirmation Modal */}
+      <Dialog open={isReviewMetadataModalOpen} onOpenChange={setIsReviewMetadataModalOpen}>
+        <DialogContent className="max-w-2xl rounded-3xl border-border bg-card p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="border-b border-border/60 pb-3">
+            <DialogTitle className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" /> Review Extracted Paper Information
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Review the information detected from your uploaded reference paper. You can edit any field before saving.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleConfirmAndSaveReviewMetadata} className="space-y-4 py-1">
+            {/* Title */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">
+                Title <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                placeholder="Paper Title..."
+                value={reviewPaperData.title}
+                onChange={(e) => setReviewPaperData({ ...reviewPaperData, title: e.target.value })}
+                required
+                className="rounded-xl text-xs bg-background border-border"
+              />
+            </div>
+
+            {/* Authors */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">Authors</Label>
+              <Input
+                placeholder="e.g. John Doe, Jane Smith, Alan Turing"
+                value={reviewPaperData.authors}
+                onChange={(e) => setReviewPaperData({ ...reviewPaperData, authors: e.target.value })}
+                className="rounded-xl text-xs bg-background border-border"
+              />
+              <p className="text-[0.68rem] text-muted-foreground">Comma-separated names of human authors.</p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              {/* Publication Year */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">Publication Year</Label>
+                <Input
+                  placeholder="e.g. 2025"
+                  value={reviewPaperData.publicationYear}
+                  onChange={(e) => setReviewPaperData({ ...reviewPaperData, publicationYear: e.target.value })}
+                  className="rounded-xl text-xs bg-background border-border"
+                />
+              </div>
+
+              {/* Journal / Conference */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">Journal / Conference</Label>
+                <Input
+                  placeholder="e.g. IEEE / Nature"
+                  value={reviewPaperData.journalOrConference}
+                  onChange={(e) => setReviewPaperData({ ...reviewPaperData, journalOrConference: e.target.value })}
+                  className="rounded-xl text-xs bg-background border-border"
+                />
+              </div>
+
+              {/* DOI */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">DOI</Label>
+                <Input
+                  placeholder="e.g. 10.1000/182"
+                  value={reviewPaperData.doi}
+                  onChange={(e) => setReviewPaperData({ ...reviewPaperData, doi: e.target.value })}
+                  className="rounded-xl text-xs bg-background border-border"
+                />
+              </div>
+            </div>
+
+            {/* Abstract */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">Abstract</Label>
+              <Textarea
+                placeholder="Extracted abstract text..."
+                rows={4}
+                value={reviewPaperData.abstract}
+                onChange={(e) => setReviewPaperData({ ...reviewPaperData, abstract: e.target.value })}
+                className="rounded-2xl text-xs bg-background border-border leading-relaxed"
+              />
+            </div>
+
+            {/* Keywords */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground">Keywords</Label>
+              <Input
+                placeholder="e.g. Artificial Intelligence, Neural Networks, Computer Vision"
+                value={reviewPaperData.keywords}
+                onChange={(e) => setReviewPaperData({ ...reviewPaperData, keywords: e.target.value })}
+                className="rounded-xl text-xs bg-background border-border"
+              />
+              <p className="text-[0.68rem] text-muted-foreground">Comma-separated academic keywords.</p>
+            </div>
+
+            <DialogFooter className="border-t border-border/60 pt-3 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsReviewMetadataModalOpen(false)}
+                className="rounded-xl text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSavingPaper}
+                className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-sm gap-1.5"
+              >
+                {isSavingPaper ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                {isSavingPaper ? "Saving Paper..." : "Confirm & Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Loading Overlay when Gemini AI is extracting metadata */}
+      {isExtractingMetadata && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm p-4 text-center">
+          <div className="rounded-3xl border border-primary/30 bg-card p-8 shadow-2xl max-w-sm w-full space-y-4 text-center">
+            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/15 text-primary mx-auto">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-foreground">Processing Reference Paper...</h3>
+              <p className="text-xs text-primary font-semibold animate-pulse">{extractionStep || "Extracting metadata with Gemini AI..."}</p>
+            </div>
+            <p className="text-[0.725rem] text-muted-foreground">Reading title, authors, abstract, and publication details...</p>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }
