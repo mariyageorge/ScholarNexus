@@ -45,7 +45,7 @@ function FacultyProfilePage() {
               Faculty Research Profile
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Manage your verified academic profile, research interests, and lab info
+              Manage your verified academic profile and research interests
             </p>
           </div>
 

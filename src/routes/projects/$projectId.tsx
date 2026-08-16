@@ -162,7 +162,7 @@ const STATUS_VARIANTS: Record<string, { label: string; className: string; icon: 
   },
   "Under Review": {
     label: "Under Review",
-    className: "bg-purple-500/10 text-purple-600 border-purple-500/20 dark:bg-purple-500/15 dark:text-purple-400",
+    className: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/15 dark:text-primary",
     icon: AlertCircle,
   },
   Completed: {
@@ -1356,7 +1356,7 @@ function ProjectWorkspacePage() {
                     <p className="text-3xl font-bold tracking-tight text-foreground">{papers.length > 0 ? 6 : 0}</p>
                     <p className="text-[0.725rem] text-muted-foreground pt-1">Queries in project workspace</p>
                   </div>
-                  <div className="grid h-11 w-11 place-items-center rounded-2xl border border-purple-500/20 bg-purple-500/10 text-purple-400">
+                  <div className="grid h-11 w-11 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
                     <Sparkles className="h-5 w-5" />
                   </div>
                 </div>
@@ -1849,7 +1849,7 @@ function ProjectWorkspacePage() {
                             setAiAssistAction("generate_abstract");
                             setAiSuggestion(null);
                           }}
-                          className="h-6 px-2 text-[0.7rem] text-purple-400 hover:bg-purple-500/10 rounded-lg gap-1"
+                          className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1"
                         >
                           <Sparkles className="h-3 w-3" /> AI Assist
                         </Button>
@@ -1979,7 +1979,7 @@ function ProjectWorkspacePage() {
                             setAiAssistAction("improve_writing");
                             setAiSuggestion(null);
                           }}
-                          className="h-6 px-2 text-[0.7rem] text-purple-400 hover:bg-purple-500/10 rounded-lg gap-1 font-semibold"
+                          className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
                         >
                           <Sparkles className="h-3 w-3" /> AI Assist Section
                         </Button>
@@ -2011,7 +2011,7 @@ function ProjectWorkspacePage() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3 gap-3">
                   <div>
                     <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-                      <Pencil className="h-5 w-5 text-purple-500" /> My Research Work
+                      <Pencil className="h-5 w-5 text-primary" /> My Research Work
                     </h2>
                     <p className="text-xs text-muted-foreground">
                       Write and manage your own research paper, proposal, literature review, and other research documents.
@@ -2020,7 +2020,7 @@ function ProjectWorkspacePage() {
 
                   <Button
                     onClick={() => setIsCreateWorkModalOpen(true)}
-                    className="gap-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-semibold text-white shadow-md"
+                    className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold shadow-md"
                   >
                     <Plus className="h-4 w-4" /> Create Research Work
                   </Button>
@@ -2028,7 +2028,7 @@ function ProjectWorkspacePage() {
 
                 {researchWorkList.length === 0 ? (
                   <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-6 text-center space-y-4">
-                    <div className="grid h-16 w-16 place-items-center rounded-2xl bg-purple-500/15 text-purple-400">
+                    <div className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/15 text-primary">
                       <FileEdit className="h-8 w-8" />
                     </div>
                     <div className="space-y-1 max-w-md">
@@ -2039,7 +2039,7 @@ function ProjectWorkspacePage() {
                     </div>
                     <Button
                       onClick={() => setIsCreateWorkModalOpen(true)}
-                      className="gap-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-semibold text-white shadow-md"
+                      className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold shadow-md"
                     >
                       <Plus className="h-4 w-4" /> Create Research Work
                     </Button>
@@ -2047,10 +2047,10 @@ function ProjectWorkspacePage() {
                 ) : (
                   <div className="grid gap-4 sm:grid-cols-2">
                     {researchWorkList.map((doc) => (
-                      <Card key={doc.id} className="rounded-2xl border border-border bg-card p-5 space-y-4 hover:border-purple-500/40 transition-all shadow-sm">
+                      <Card key={doc.id} className="rounded-2xl border border-border bg-card p-5 space-y-4 hover:border-primary/40 transition-all shadow-sm">
                         <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
                           <div className="space-y-1">
-                            <Badge variant="outline" className="border-purple-500/30 text-purple-400 bg-purple-500/10 text-[0.65rem] font-semibold">
+                            <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.65rem] font-semibold">
                               {doc.templateType || "Research Paper"}
                             </Badge>
                             <h3 className="font-bold text-foreground text-sm leading-tight">{doc.title}</h3>
@@ -2106,7 +2106,7 @@ function ProjectWorkspacePage() {
                                 (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail)
                               }
                               onClick={() => handleRequestWorkReview(doc)}
-                              className="rounded-xl text-xs font-semibold px-2.5 h-7 border-purple-500/40 text-purple-500 hover:bg-purple-500/10"
+                              className="rounded-xl text-xs font-semibold px-2.5 h-7 border-primary/40 text-primary hover:bg-primary/10"
                             >
                               <MessageSquare className="h-3 w-3 mr-1" />
                               {doc.reviewStatus === "Pending Review" ? "Pending Review" : "Request Review"}
@@ -2141,7 +2141,7 @@ function ProjectWorkspacePage() {
 
               {papers.length === 0 ? (
                 <div className="p-12 text-center flex flex-col items-center justify-center min-h-[300px]">
-                  <div className="grid h-14 w-14 place-items-center rounded-2xl bg-purple-500/10 text-purple-400 mb-3">
+                  <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary mb-3">
                     <Sparkles className="h-7 w-7" />
                   </div>
                   <h4 className="text-base font-bold text-foreground">Upload Research Papers to Enable AI Assistant</h4>
@@ -2155,7 +2155,7 @@ function ProjectWorkspacePage() {
               ) : (
                 <div className="p-6 space-y-4 min-h-[300px]">
                   <div className="flex gap-3">
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-purple-500/15 text-purple-400">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
                       <Sparkles className="h-4 w-4" />
                     </div>
                     <div className="rounded-2xl border border-border/80 bg-muted/40 p-4 text-xs text-foreground space-y-2 max-w-2xl">
@@ -3035,7 +3035,7 @@ function ProjectWorkspacePage() {
         <DialogContent className="max-w-2xl rounded-2xl border-border bg-card p-6 shadow-2xl">
           <DialogHeader className="border-b border-border/60 pb-3">
             <DialogTitle className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <Pencil className="h-5 w-5 text-purple-500" /> Create Research Work
+              <Pencil className="h-5 w-5 text-primary" /> Create Research Work
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               Select a research paper template or start with a blank document to begin academic writing.
@@ -3176,8 +3176,8 @@ function ProjectWorkspacePage() {
 
             {aiSuggestion && (
               <div className="space-y-3 pt-2">
-                <div className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-4 space-y-2 text-xs">
-                  <span className="font-bold text-purple-400 flex items-center gap-1.5 text-xs">
+                <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 space-y-2 text-xs">
+                  <span className="font-bold text-primary flex items-center gap-1.5 text-xs">
                     <Sparkles className="h-3.5 w-3.5" /> AI Writing Suggestion:
                   </span>
                   <p className="text-foreground leading-relaxed whitespace-pre-wrap font-mono text-[0.725rem]">

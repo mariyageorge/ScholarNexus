@@ -2,24 +2,22 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   Users,
-  FolderKanban,
   FileCheck,
   Clock,
   ShieldCheck,
   Building,
   Calendar,
   ArrowRight,
-  FileText,
   UserCheck,
-  AlertCircle,
-  Sparkles,
-  HelpCircle,
-  Upload,
-  Mail,
-  Edit,
-  Plus,
   CheckCircle2,
   BookOpen,
+  GraduationCap,
+  Sparkles,
+  HelpCircle,
+  Mail,
+  Edit,
+  ExternalLink,
+  MessageSquare,
 } from "lucide-react";
 import { getUserSession, setUserSession, getUserInitials, UserSession } from "@/lib/session";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -27,6 +25,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,12 +35,29 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/faculty-dashboard")({
   head: () => ({
     meta: [
-      { title: "Faculty Research Dashboard — ScholarNexus AI" },
-      { name: "description", content: "Academic faculty research portal and student supervision manager." },
+      { title: "Faculty Supervisor Dashboard — ScholarNexus AI" },
+      { name: "description", content: "Academic faculty research portal and student supervision workspace." },
     ],
   }),
   component: FacultyDashboardHome,
 });
+
+interface SupervisedStudentItem {
+  id: string;
+  _id?: string;
+  name: string;
+  email: string;
+  department: string;
+  degreeProgram: string;
+  activeProject: string;
+  projectId: string;
+  domain: string;
+  progress: number;
+  status: "Under Supervision";
+  projectStatus: string;
+  lastActivity: string;
+  joinedDate: string;
+}
 
 function FacultyDashboardHome() {
   const [session, setSession] = useState<UserSession | null>(null);
@@ -49,12 +65,12 @@ function FacultyDashboardHome() {
 
   // Dynamic DB States
   const [requests, setRequests] = useState<any[]>([]);
-  const [activeProjects, setActiveProjects] = useState<any[]>([]);
+  const [myStudentsList, setMyStudentsList] = useState<SupervisedStudentItem[]>([]);
   const [dashboardStats, setDashboardStats] = useState({
     myStudents: 0,
-    activeProjects: 0,
+    pendingRequests: 0,
     pendingReviews: 0,
-    publications: 0,
+    reviewedWork: 0,
   });
 
   const [dbUserStatus, setDbUserStatus] = useState<any | null>(null);
@@ -110,14 +126,14 @@ function FacultyDashboardHome() {
       })
       .catch((err) => console.error("Error loading profile status:", err));
 
-    // Fetch dynamic dashboard data from MongoDB
+    // Fetch dynamic supervisor dashboard data from MongoDB
     fetch(`/api/faculty/dashboard?email=${encodeURIComponent(activeUser.email)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
           if (data.stats) setDashboardStats(data.stats);
           if (data.requests) setRequests(data.requests);
-          if (data.projects) setActiveProjects(data.projects);
+          if (data.myStudentsList) setMyStudentsList(data.myStudentsList);
         }
       })
       .catch((err) => console.error("Error loading faculty dashboard DB data:", err));
@@ -127,7 +143,6 @@ function FacultyDashboardHome() {
       setUpdateModalOpen(true);
     }
 
-    // Event listener to open modal when triggered from top right profile dropdown
     const handleOpenEditModal = () => setUpdateModalOpen(true);
     window.addEventListener("open-edit-profile-modal", handleOpenEditModal);
 
@@ -135,7 +150,6 @@ function FacultyDashboardHome() {
       window.removeEventListener("open-edit-profile-modal", handleOpenEditModal);
     };
   }, []);
-
 
   const handleSubmitClarification = async () => {
     if (!session) return;
@@ -186,48 +200,44 @@ function FacultyDashboardHome() {
 
   const summaryCards = [
     {
-      title: "Students Supervising",
+      title: "Supervised Students",
       value: dashboardStats.myStudents.toString(),
-      subText: "Active Scholars",
+      subText: "Active Supervised Scholars",
       icon: Users,
       color: "text-emerald-500",
       bg: "bg-emerald-500/10",
       border: "border-emerald-500/20",
     },
     {
-      title: "Active Projects",
-      value: dashboardStats.activeProjects.toString(),
-      subText: "Research Labs & Grants",
-      icon: FolderKanban,
-      color: "text-blue-500",
-      bg: "bg-blue-500/10",
-      border: "border-blue-500/20",
-    },
-    {
-      title: "Pending Supervision Requests",
-      value: requests.filter((r) => r.status === "Pending").length.toString(),
-      subText: "Student Applications",
+      title: "Pending Requests",
+      value: dashboardStats.pendingRequests.toString(),
+      subText: "Supervision Applications",
       icon: Clock,
       color: "text-amber-500",
       bg: "bg-amber-500/10",
       border: "border-amber-500/20",
     },
     {
-      title: "Reviews Pending",
+      title: "Research Work to Review",
       value: dashboardStats.pendingReviews.toString(),
-      subText: "Manuscripts & Chapters",
+      subText: "Awaiting Faculty Feedback",
       icon: FileCheck,
-      color: "text-purple-500",
-      bg: "bg-purple-500/10",
-      border: "border-purple-500/20",
+      color: "text-primary",
+      bg: "bg-primary/10",
+      border: "border-primary/20",
+    },
+    {
+      title: "Reviewed Work",
+      value: dashboardStats.reviewedWork.toString(),
+      subText: "Feedback Published",
+      icon: CheckCircle2,
+      color: "text-blue-500",
+      bg: "bg-blue-500/10",
+      border: "border-blue-500/20",
     },
   ];
 
-  // Recent Activity Feed (Empty by default, populated dynamically from user activity)
-  const recentActivities: any[] = [];
-
-  // Upcoming Review Deadlines (Empty by default, populated dynamically from student submissions)
-  const upcomingDeadlines: any[] = [];
+  const pendingRequestsList = requests.filter((r) => r.status === "Pending");
 
   const isApproved = dbUserStatus
     ? dbUserStatus.approvalStatus === "Approved" || dbUserStatus.status === "Active" || dbUserStatus.status === undefined
@@ -272,7 +282,7 @@ function FacultyDashboardHome() {
                     variant="outline"
                     className="rounded-full border-emerald-500/40 text-emerald-600 bg-emerald-500/10 px-3 py-1 font-bold text-xs gap-1"
                   >
-                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Verified Faculty
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Academic Supervisor
                   </Badge>
                 </div>
 
@@ -301,7 +311,7 @@ function FacultyDashboardHome() {
                   className="rounded-xl text-xs font-semibold gap-1.5 hover:border-primary/50"
                 >
                   <Link to="/faculty/students">
-                    <Users className="h-3.5 w-3.5 text-emerald-500" /> View Students
+                    <Users className="h-3.5 w-3.5 text-emerald-500" /> My Students
                   </Link>
                 </Button>
 
@@ -312,17 +322,17 @@ function FacultyDashboardHome() {
                   className="rounded-xl text-xs font-semibold gap-1.5 hover:border-primary/50"
                 >
                   <Link to="/faculty/supervision-requests">
-                    <Clock className="h-3.5 w-3.5 text-amber-500" /> Review Requests
+                    <Clock className="h-3.5 w-3.5 text-amber-500" /> Supervision Requests
                   </Link>
                 </Button>
 
                 <Button
                   asChild
                   size="sm"
-                  className="rounded-xl bg-primary text-primary-foreground text-xs font-semibold gap-1.5 shadow-xs hover:bg-primary/90"
+                  className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold gap-1.5 shadow-xs"
                 >
-                  <Link to="/faculty/projects">
-                    <FolderKanban className="h-3.5 w-3.5" /> Research Projects
+                  <Link to="/faculty/reviews">
+                    <MessageSquare className="h-3.5 w-3.5" /> Reviews & Feedback
                   </Link>
                 </Button>
               </div>
@@ -386,82 +396,144 @@ function FacultyDashboardHome() {
           ))}
         </div>
 
-        {/* RECENT ACTIVITY & UPCOMING DEADLINES GRID */}
+        {/* MAIN SUPERVISOR SECTIONS */}
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* Left 2 Cols: Recent Activity Feed */}
+          {/* Left 2 Cols: My Supervised Students */}
           <div className="lg:col-span-2 space-y-4">
             <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between border-b border-border pb-4">
                 <div>
                   <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-emerald-500" /> Recent Activity
+                    <Users className="h-5 w-5 text-emerald-500" /> My Supervised Students
                   </h3>
-                  <p className="text-xs text-muted-foreground">Track recent student submissions, reviews, and supervision updates.</p>
+                  <p className="text-xs text-muted-foreground">Scholars currently under your academic supervision.</p>
                 </div>
-                <Badge variant="outline" className="rounded-full text-[0.65rem] font-semibold border-muted-foreground/30">
-                  Live Feed
+                <Button asChild variant="ghost" size="sm" className="rounded-xl text-xs font-bold text-primary gap-1">
+                  <Link to="/faculty/students">
+                    View All ({myStudentsList.length}) <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </div>
+
+              {myStudentsList.length === 0 ? (
+                <div className="py-12 text-center border border-dashed border-border rounded-2xl space-y-3">
+                  <GraduationCap className="h-10 w-10 text-muted-foreground mx-auto opacity-40" />
+                  <p className="text-sm font-bold text-foreground">No Supervised Students Assigned Yet</p>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                    Students will appear here once you approve their supervision requests under Supervision Requests.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {myStudentsList.map((student) => (
+                    <div
+                      key={student.id}
+                      className="rounded-2xl border border-border bg-background p-4 space-y-3 hover:border-emerald-500/40 transition-all shadow-xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600 font-bold text-base border border-emerald-500/20 shrink-0">
+                            {student.name.charAt(0)}
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-foreground text-sm leading-snug">{student.name}</h4>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                              <Mail className="h-3 w-3" /> {student.email}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[0.68rem] font-bold w-fit">
+                          Under Supervision
+                        </Badge>
+                      </div>
+
+                      <div className="rounded-xl border border-border/70 bg-card p-3 space-y-2 text-xs">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Research Project:</span>
+                          <span className="font-semibold text-foreground truncate max-w-[250px]">{student.activeProject}</span>
+                        </div>
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Domain:</span>
+                          <span className="font-medium text-foreground">{student.domain}</span>
+                        </div>
+                        <div className="space-y-1 pt-1">
+                          <div className="flex justify-between text-[0.7rem] font-semibold text-muted-foreground">
+                            <span>Project Progress</span>
+                            <span className="text-foreground">{student.progress}%</span>
+                          </div>
+                          <Progress value={student.progress} className="h-2 rounded-full" />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 text-xs">
+                        <span className="text-[0.68rem] text-muted-foreground">
+                          Last Activity: <strong className="text-foreground">{student.lastActivity}</strong>
+                        </span>
+
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            window.location.href = `/faculty/students?studentId=${student.id}&projectId=${student.projectId}`;
+                          }}
+                          className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 h-8 px-4"
+                        >
+                          <BookOpen className="h-3.5 w-3.5" /> View Student Workspace
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Right 1 Col: Pending Supervision Requests */}
+          <div className="space-y-4">
+            <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-5">
+              <div className="flex items-center justify-between border-b border-border pb-4">
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-amber-500" /> Pending Requests
+                </h3>
+                <Badge variant="outline" className="border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold">
+                  {pendingRequestsList.length}
                 </Badge>
               </div>
 
               <div className="space-y-3">
-                {recentActivities.length === 0 ? (
-                  <div className="py-12 text-center border border-dashed border-border rounded-2xl space-y-2">
-                    <Clock className="h-8 w-8 text-muted-foreground mx-auto opacity-40" />
-                    <p className="text-xs font-semibold text-foreground">No recent activity recorded</p>
-                    <p className="text-[0.7rem] text-muted-foreground">Activity logs will update as scholars submit proposals and papers.</p>
-                  </div>
-                ) : (
-                  recentActivities.map((act) => (
-                    <div
-                      key={act.id}
-                      className="rounded-2xl border border-border bg-background p-4 flex items-start gap-4 transition hover:border-primary/40"
-                    >
-                      <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl font-bold ${act.color}`}>
-                        <act.icon className="h-5 w-5" />
-                      </div>
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <h4 className="font-bold text-xs text-foreground truncate">{act.title}</h4>
-                          <span className="text-[0.65rem] text-muted-foreground shrink-0">{act.timestamp}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{act.description}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* Right 1 Col: Upcoming Review Deadlines */}
-          <div className="space-y-4">
-            <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-amber-500" /> Upcoming Review Deadlines
-                </h3>
-              </div>
-
-              <div className="space-y-3">
-                {upcomingDeadlines.length === 0 ? (
+                {pendingRequestsList.length === 0 ? (
                   <div className="py-8 text-center border border-dashed border-border rounded-2xl space-y-1">
                     <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto opacity-50" />
-                    <p className="text-xs font-semibold text-foreground">All caught up!</p>
-                    <p className="text-[0.68rem] text-muted-foreground">No pending review deadlines.</p>
+                    <p className="text-xs font-semibold text-foreground">No Pending Requests</p>
+                    <p className="text-[0.68rem] text-muted-foreground">All supervision requests have been processed.</p>
                   </div>
                 ) : (
-                  upcomingDeadlines.map((dl) => (
-                    <div key={dl.id} className="rounded-2xl border border-border bg-background p-4 space-y-2">
+                  pendingRequestsList.map((req) => (
+                    <div key={req.id} className="rounded-2xl border border-border bg-background p-4 space-y-2 text-xs">
                       <div className="flex items-start justify-between gap-2">
-                        <h4 className="font-bold text-xs text-foreground leading-snug">{dl.title}</h4>
-                        <Badge variant="outline" className={`text-[0.65rem] font-bold px-2 py-0.5 rounded-full shrink-0 ${dl.tagColor}`}>
-                          {dl.tag}
+                        <div>
+                          <h4 className="font-bold text-foreground text-xs">{req.studentName}</h4>
+                          <p className="text-[0.7rem] text-muted-foreground">{req.studentEmail}</p>
+                        </div>
+                        <Badge variant="outline" className="border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-bold shrink-0">
+                          Pending
                         </Badge>
                       </div>
 
-                      <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
-                        <span>Scholar: <span className="font-semibold text-foreground">{dl.scholar}</span></span>
-                        <span className="font-medium text-amber-600 dark:text-amber-400">Due {dl.dueDate}</span>
+                      <div className="rounded-lg bg-card p-2.5 border border-border/60 space-y-1">
+                        <span className="font-semibold text-foreground block truncate">{req.projectTitle}</span>
+                        <span className="text-[0.68rem] text-muted-foreground block">Domain: {req.domain}</span>
+                      </div>
+
+                      <div className="pt-1 flex justify-end">
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="rounded-xl text-xs font-semibold text-amber-600 border-amber-500/30 h-7"
+                        >
+                          <Link to="/faculty/supervision-requests">Review Request →</Link>
+                        </Button>
                       </div>
                     </div>
                   ))
@@ -470,8 +542,8 @@ function FacultyDashboardHome() {
 
               <div className="pt-2 border-t border-border">
                 <Button asChild variant="ghost" className="w-full text-xs font-semibold justify-between rounded-xl">
-                  <Link to="/faculty/reviews">
-                    View All Manuscript Reviews <ArrowRight className="h-3.5 w-3.5" />
+                  <Link to="/faculty/supervision-requests">
+                    Manage Supervision Queue <ArrowRight className="h-3.5 w-3.5" />
                   </Link>
                 </Button>
               </div>
@@ -488,7 +560,7 @@ function FacultyDashboardHome() {
               <Edit className="h-5 w-5 text-blue-500" /> Update Faculty Profile Information
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Update your editable profile details (Name, Primary Research Interests, Academic Bio & Objectives). Institutional details are verified and read-only.
+              Update your editable profile details (Name, Primary Research Interests, Academic Bio). Institutional details are verified and read-only.
             </DialogDescription>
           </DialogHeader>
 
@@ -552,7 +624,7 @@ function FacultyDashboardHome() {
               <Input
                 value={editResearchInterests}
                 onChange={(e) => setEditResearchInterests(e.target.value)}
-                placeholder="e.g. AI, NTP, ML"
+                placeholder="e.g. AI, Machine Learning, Computer Vision"
                 className="rounded-xl text-xs"
               />
             </div>
@@ -563,7 +635,7 @@ function FacultyDashboardHome() {
                 rows={3}
                 value={editBio}
                 onChange={(e) => setEditBio(e.target.value)}
-                placeholder="Provide a summary of your academic background, research objectives, and goals..."
+                placeholder="Provide a summary of your academic background, research objectives..."
                 className="rounded-xl text-xs leading-relaxed"
               />
             </div>

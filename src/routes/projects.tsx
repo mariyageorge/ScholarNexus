@@ -142,7 +142,7 @@ const STATUS_VARIANTS: Record<string, { label: string; className: string; icon: 
   },
   "Under Review": {
     label: "Under Review",
-    className: "bg-purple-500/10 text-purple-600 border-purple-500/20 dark:bg-purple-500/15 dark:text-purple-400",
+    className: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/15 dark:text-primary",
     icon: AlertCircle,
   },
   Completed: {
@@ -653,7 +653,7 @@ function ResearchProjectsPage() {
             </div>
             <div className="rounded-xl border border-border/80 bg-background/50 p-3.5 backdrop-blur">
               <p className="text-xs font-medium text-muted-foreground">Under Review</p>
-              <p className="mt-1 text-2xl font-bold text-purple-500">{stats.underReview}</p>
+              <p className="mt-1 text-2xl font-bold text-primary">{stats.underReview}</p>
             </div>
             <div className="rounded-xl border border-border/80 bg-background/50 p-3.5 backdrop-blur">
               <p className="text-xs font-medium text-muted-foreground">Completed</p>

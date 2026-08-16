@@ -63,15 +63,46 @@ export function clearUserSession(): void {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+export function getUserDisplayName(user: UserSession | null): string {
+  if (!user) return "Researcher";
+
+  const displayName = (user.displayName || "").trim();
+  if (displayName.length > 0) {
+    return displayName;
+  }
+
+  const name = (user.name || "").trim();
+  if (name.length > 0) {
+    return name;
+  }
+
+  if (user.email && user.email.includes("@")) {
+    const localPart = user.email.split("@")[0];
+    if (localPart) {
+      const formatted = localPart
+        .replace(/[._-]/g, " ")
+        .split(" ")
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      if (formatted.trim().length > 0) {
+        return formatted.trim();
+      }
+    }
+  }
+
+  return "Researcher";
+}
+
 export function getUserInitials(user: UserSession | null): string {
-  const name = user?.displayName ?? user?.name ?? "Guest";
+  const name = getUserDisplayName(user);
   return name
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0].toUpperCase())
     .join("")
-    .slice(0, 2) || "G";
+    .slice(0, 2) || "R";
 }
 
 export function getHomePathForRole(role?: string, email?: string, status?: string): string {

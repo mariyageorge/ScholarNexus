@@ -33,7 +33,7 @@ import {
   Users,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { getHomePathForRole, getUserSession, UserSession } from "@/lib/session";
+import { getHomePathForRole, getUserSession, getUserDisplayName, UserSession } from "@/lib/session";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -367,7 +367,7 @@ function DashboardPage() {
                 <Sparkles className="h-3.5 w-3.5 text-primary" /> ScholarNexus Academic Command Center
               </Badge>
               <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl lg:text-4xl">
-                Welcome back, {user?.displayName || user?.name || "Researcher"}! 👋
+                Welcome back, {getUserDisplayName(user)}! 👋
               </h1>
               <p className="text-sm leading-relaxed text-muted-foreground md:text-base">
                 Advance your academic journey. Synthesize literature insights, track project milestones, and collaborate with faculty advisors in one intelligent workspace.

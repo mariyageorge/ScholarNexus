@@ -62,11 +62,8 @@ const facultyMenu: SidebarMenuItemType[] = [
   { title: "Dashboard", url: "/faculty-dashboard", icon: LayoutDashboard },
   { title: "My Students", url: "/faculty/students", icon: Users },
   { title: "Supervision Requests", url: "/faculty/supervision-requests", icon: UserCheck },
-  { title: "Research Projects", url: "/faculty/projects", icon: FolderKanban },
   { title: "Reviews & Feedback", url: "/faculty/reviews", icon: Quote },
-  { title: "Resources", url: "/faculty/resources", icon: Bookmark },
   { title: "Research Profile", url: "/faculty/profile", icon: UserCircle },
-  { title: "AI Research Assistant", url: "/faculty/assistant", icon: Sparkles },
   { title: "Notifications", url: "/notifications", icon: Bell },
   { title: "Settings", url: "/faculty/settings", icon: Settings },
 ];

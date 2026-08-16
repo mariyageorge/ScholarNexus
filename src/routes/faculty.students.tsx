@@ -64,6 +64,8 @@ interface SupervisedStudent {
   degreeProgram: string;
   activeProject: string;
   projectId?: string;
+  domain?: string;
+  progress?: number;
   paperCount?: number;
   status: "Under Supervision";
   joinedDate: string;
@@ -618,14 +620,14 @@ function FacultyStudentsPage() {
                 ) : (
                   <div className="grid gap-4">
                     {workspaceData.researchWork.map((work) => (
-                      <Card key={work.id} className="rounded-3xl border border-border bg-card p-5 shadow-sm space-y-4 hover:border-purple-500/30 transition-all">
+                      <Card key={work.id} className="rounded-3xl border border-border bg-card p-5 shadow-sm space-y-4 hover:border-primary/30 transition-all">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex items-start gap-3">
-                            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-purple-500/10 text-purple-500 font-bold shrink-0">
+                            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary font-bold shrink-0">
                               <Pencil className="h-5 w-5" />
                             </div>
                             <div className="space-y-1">
-                              <Badge variant="outline" className="border-purple-500/30 text-purple-400 bg-purple-500/10 text-[0.65rem] font-semibold">
+                              <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.65rem] font-semibold">
                                 {work.templateType || "Research Paper"}
                               </Badge>
                               <h4 className="font-bold text-foreground text-sm leading-snug">{work.title}</h4>
@@ -898,39 +900,58 @@ function FacultyStudentsPage() {
               /* Student Cards Grid */
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
                 {filteredStudents.map((student) => (
-                  <Card key={student.id} className="rounded-3xl border border-border bg-card p-5 shadow-sm space-y-4 hover:border-emerald-500/40 transition-all">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600 font-bold text-lg border border-emerald-500/20">
-                          {student.name.charAt(0)}
+                  <Card key={student.id} className="rounded-3xl border border-border bg-card p-5 shadow-sm space-y-4 hover:border-emerald-500/40 transition-all flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600 font-bold text-lg border border-emerald-500/20 shrink-0">
+                            {student.name.charAt(0)}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-foreground text-sm">{student.name}</h3>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Mail className="h-3 w-3 text-muted-foreground" /> {student.email}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <h3 className="font-bold text-foreground text-sm">{student.name}</h3>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Mail className="h-3 w-3 text-muted-foreground" /> {student.email}
-                          </p>
-                        </div>
+
+                        <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[0.68rem] font-bold shrink-0">
+                          Under Supervision
+                        </Badge>
                       </div>
 
-                      <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-semibold">
-                        Under Supervision
-                      </Badge>
+                      <div className="rounded-2xl border border-border bg-background p-3.5 space-y-2 text-xs">
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span className="flex items-center gap-1 font-medium"><Award className="h-3.5 w-3.5 text-indigo-500" /> Program</span>
+                          <span className="font-bold text-foreground">{student.degreeProgram}</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[0.68rem] text-muted-foreground flex items-center gap-1 font-medium">
+                            <BookOpen className="h-3.5 w-3.5 text-emerald-500" /> Supervised Project
+                          </span>
+                          <p className="font-semibold text-foreground truncate">{student.activeProject}</p>
+                        </div>
+                        {student.domain && (
+                          <div className="flex items-center justify-between text-muted-foreground pt-0.5">
+                            <span>Domain:</span>
+                            <span className="font-medium text-foreground">{student.domain}</span>
+                          </div>
+                        )}
+                        {typeof student.progress === "number" && (
+                          <div className="space-y-1 pt-1">
+                            <div className="flex justify-between text-[0.68rem] font-semibold text-muted-foreground">
+                              <span>Project Progress</span>
+                              <span className="text-foreground">{student.progress}%</span>
+                            </div>
+                            <Progress value={student.progress} className="h-1.5 rounded-full" />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="rounded-2xl border border-border bg-background p-3.5 space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between text-muted-foreground">
-                        <span className="flex items-center gap-1 font-medium"><Award className="h-3.5 w-3.5 text-indigo-500" /> Program</span>
-                        <span className="font-bold text-foreground">{student.degreeProgram}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-muted-foreground">
-                        <span className="flex items-center gap-1 font-medium"><BookOpen className="h-3.5 w-3.5 text-emerald-500" /> Supervised Project</span>
-                      </div>
-                      <p className="font-semibold text-foreground truncate">{student.activeProject}</p>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs pt-1">
-                      <span className="text-[0.7rem] text-muted-foreground font-medium flex items-center gap-1">
-                        <FileText className="h-3.5 w-3.5 text-primary" /> {student.paperCount ?? 0} Reference Papers
+                    <div className="flex items-center justify-between text-xs pt-2 border-t border-border/60">
+                      <span className="text-[0.68rem] text-muted-foreground font-medium">
+                        Supervised since: <strong className="text-foreground">{student.joinedDate}</strong>
                       </span>
                       <Button
                         onClick={() => openStudentWorkspace(student.id, student.projectId)}

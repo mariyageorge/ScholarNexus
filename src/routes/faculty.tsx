@@ -6,17 +6,10 @@ import {
   Copy,
   Send,
   Building,
-  Calendar,
   FolderKanban,
   CheckCircle2,
   Clock,
-  MessageSquare,
-  Sparkles,
-  Loader2,
-  AlertCircle,
-  Tag,
   UserX,
-  UserCheck,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { getUserSession, UserSession } from "@/lib/session";
@@ -30,13 +23,13 @@ export const Route = createFileRoute("/faculty")({
   head: () => ({
     meta: [
       { title: "My Faculty Guide — ScholarNexus AI" },
-      { name: "description", content: "Assigned faculty guide and supervision status for your research projects." },
+      { name: "description", content: "View your assigned faculty supervisor and project supervision status." },
     ],
   }),
   component: MyFacultyPage,
 });
 
-interface AssignedFaculty {
+interface FacultyMember {
   id?: string;
   _id?: string;
   name: string;
@@ -49,7 +42,7 @@ interface AssignedFaculty {
   researchInterests?: string[];
   bio?: string;
   photoURL?: string;
-  supervisionStatus?: string;
+  profileImage?: string;
 }
 
 interface StudentProject {
@@ -59,10 +52,27 @@ interface StudentProject {
   domain?: string;
   status?: string;
   faculty?: string;
+  facultyEmail?: string;
   supervisionStatus?: string;
   startDate?: string;
   expectedCompletionDate?: string;
   createdAt: string;
+}
+
+interface SupervisionRequest {
+  id?: string;
+  _id?: string;
+  projectId: string;
+  projectTitle: string;
+  studentEmail: string;
+  studentName: string;
+  facultyId: string;
+  facultyEmail: string;
+  facultyName: string;
+  message?: string;
+  status: "Pending" | "Approved" | "Rejected";
+  submittedAt?: string;
+  requestedAt?: string;
 }
 
 function MyFacultyPage() {
@@ -78,9 +88,9 @@ function MyFacultyPage() {
   });
 
   const [loading, setLoading] = useState(true);
-  const [activeProject, setActiveProject] = useState<StudentProject | null>(null);
-  const [assignedFaculty, setAssignedFaculty] = useState<AssignedFaculty | null>(null);
-  const [pendingRequest, setPendingRequest] = useState<any | null>(null);
+  const [facultyList, setFacultyList] = useState<FacultyMember[]>([]);
+  const [myProjects, setMyProjects] = useState<StudentProject[]>([]);
+  const [supervisionRequests, setSupervisionRequests] = useState<SupervisionRequest[]>([]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -100,134 +110,80 @@ function MyFacultyPage() {
   const fetchMyFacultyData = async (email: string) => {
     setLoading(true);
     try {
-      // 1. Fetch Student Projects from MongoDB
-      const projRes = await fetch(`/api/projects?email=${encodeURIComponent(email)}`);
-      let projects: StudentProject[] = [];
-      if (projRes.ok) {
-        projects = await projRes.json();
+      const [facultyRes, projectsRes, requestsRes] = await Promise.all([
+        fetch("/api/faculty-list"),
+        fetch(`/api/projects?email=${encodeURIComponent(email)}`),
+        fetch(`/api/supervision-requests?studentEmail=${encodeURIComponent(email)}`),
+      ]);
+
+      if (facultyRes.ok) {
+        const list = await facultyRes.json();
+        if (Array.isArray(list)) setFacultyList(list);
       }
 
-      // 2. Fetch Supervision Requests for Student
-      const reqRes = await fetch(`/api/supervision-requests?studentEmail=${encodeURIComponent(email)}`);
-      let requests: any[] = [];
-      if (reqRes.ok) {
-        requests = await reqRes.json();
+      if (projectsRes.ok) {
+        const projs = await projectsRes.json();
+        if (Array.isArray(projs)) setMyProjects(projs);
       }
 
-      const pending = requests.find((r) => r.status === "Pending");
-      setPendingRequest(pending || null);
-
-      // Check if any project is Under Supervision
-      const supervisedProject = projects.find(
-        (p) => p.supervisionStatus === "Under Supervision" || (p.faculty && p.faculty.trim())
-      );
-
-      if (supervisedProject) {
-        setActiveProject(supervisedProject);
-        const facultyNameStr = supervisedProject.faculty?.trim() || "";
-
-        // Fetch Faculty Directory
-        const facultyListRes = await fetch("/api/faculty-list");
-        if (facultyListRes.ok) {
-          const facultyList: AssignedFaculty[] = await facultyListRes.json();
-          const matched = facultyList.find(
-            (f) =>
-              (f.email && f.email.toLowerCase() === facultyNameStr.toLowerCase()) ||
-              f.name.toLowerCase().includes(facultyNameStr.toLowerCase()) ||
-              facultyNameStr.toLowerCase().includes(f.name.toLowerCase())
-          );
-
-          if (matched) {
-            setAssignedFaculty({ ...matched, supervisionStatus: "Under Supervision" });
-          } else {
-            setAssignedFaculty({
-              name: facultyNameStr || "Faculty Guide",
-              email: `${(facultyNameStr || "faculty").toLowerCase().replace(/\s+/g, ".")}@university.edu`,
-              title: "Professor & Academic Advisor",
-              designation: "Professor & Academic Advisor",
-              department: "School of Computer Science & AI",
-              institution: "University Institute of Technology",
-              researchInterests: ["Academic Research", "Artificial Intelligence"],
-              supervisionStatus: "Under Supervision",
-            });
-          }
-        }
-      } else if (pending) {
-        setActiveProject(projects.find((p) => (p._id || p.id) === pending.projectId) || projects[0] || null);
-
-        // Fetch details of requested faculty
-        const facultyListRes = await fetch("/api/faculty-list");
-        if (facultyListRes.ok) {
-          const facultyList: AssignedFaculty[] = await facultyListRes.json();
-          const matched = facultyList.find(
-            (f) =>
-              (f.id && f.id === pending.facultyId) ||
-              (f._id && f._id === pending.facultyId) ||
-              f.name.toLowerCase().includes((pending.facultyName || "").toLowerCase())
-          );
-          if (matched) {
-            setAssignedFaculty({ ...matched, supervisionStatus: "Pending Approval" });
-          } else {
-            setAssignedFaculty({
-              name: pending.facultyName || "Requested Faculty Guide",
-              email: pending.facultyEmail || "faculty@university.edu",
-              title: "Requested Advisor",
-              designation: "Requested Advisor",
-              department: "Academic Department",
-              institution: "University Research Institute",
-              supervisionStatus: "Pending Approval",
-            });
-          }
-        }
-      } else {
-        setActiveProject(projects[0] || null);
-        setAssignedFaculty(null);
+      if (requestsRes.ok) {
+        const reqs = await requestsRes.json();
+        if (Array.isArray(reqs)) setSupervisionRequests(reqs);
       }
-    } catch {
-      toast.error("Failed to load faculty information.");
+    } catch (err) {
+      console.error("Error loading faculty data:", err);
+      toast.error("Failed to load supervision data.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCopyEmail = () => {
-    if (!assignedFaculty?.email) return;
-    navigator.clipboard.writeText(assignedFaculty.email);
+  const handleCopyEmail = (email: string) => {
+    if (!email) return;
+    navigator.clipboard.writeText(email);
     toast.success("Faculty email copied to clipboard!");
   };
 
-  const handleSendEmail = () => {
-    if (!assignedFaculty?.email) return;
-    const subject = encodeURIComponent(`Research Project Guidance: ${activeProject?.title || "Academic Query"}`);
-    window.location.href = `mailto:${assignedFaculty.email}?subject=${subject}`;
+  const handleSendEmail = (email: string) => {
+    if (!email) return;
+    const subject = encodeURIComponent("Academic Guidance / Project Query");
+    window.location.href = `mailto:${email}?subject=${subject}`;
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "N/A";
-    try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-    } catch {
-      return dateStr;
-    }
-  };
+  // Assigned Supervisors across all projects
+  const assignedProjects = myProjects.filter(
+    (p) => p.supervisionStatus === "Under Supervision" || (p.faculty && p.faculty.trim())
+  );
+
+  // Active Pending Requests
+  const pendingRequests = supervisionRequests.filter((r) => r.status === "Pending");
 
   if (typeof window !== "undefined" && !user) return null;
 
   return (
     <DashboardLayout>
       <div className="mx-auto flex max-w-[1100px] flex-col gap-6 pb-12">
-        {/* Header */}
-        <div className="space-y-1">
-          <Badge variant="outline" className="rounded-full border-primary/30 text-primary text-xs font-semibold">
-            Academic Supervision & Mentorship
-          </Badge>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl flex items-center gap-2">
-            <GraduationCap className="h-7 w-7 text-primary" /> My Faculty
-          </h1>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            Overview of your assigned faculty guide and active supervision request status.
-          </p>
+        {/* Page Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
+          <div className="space-y-1">
+            <Badge variant="outline" className="rounded-full border-primary/30 text-primary text-xs font-semibold">
+              Academic Mentorship & Guidance
+            </Badge>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl flex items-center gap-2">
+              <GraduationCap className="h-7 w-7 text-primary" /> My Faculty Guide
+            </h1>
+            <p className="text-xs text-muted-foreground sm:text-sm">
+              Overview of your assigned faculty guide and active project supervision status.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {assignedProjects.length > 0 && (
+              <Badge variant="outline" className="rounded-xl border-emerald-500/30 text-emerald-600 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold">
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {assignedProjects.length} Supervised Project(s)
+              </Badge>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -241,191 +197,17 @@ function MyFacultyPage() {
               </div>
             </div>
           </Card>
-        ) : assignedFaculty && assignedFaculty.supervisionStatus === "Under Supervision" ? (
-          /* STATE 1: ASSIGNED SUPERVISOR DISPLAY */
-          <div className="space-y-6">
-            <Card className="surface-elevated overflow-hidden rounded-2xl border border-border bg-card p-6 md:p-8 shadow-sm space-y-6">
-              <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 text-center sm:text-left">
-                  {/* Photo */}
-                  <div className="relative shrink-0">
-                    {assignedFaculty.photoURL ? (
-                      <img
-                        src={assignedFaculty.photoURL}
-                        alt={assignedFaculty.name}
-                        className="h-20 w-20 rounded-2xl object-cover border-2 border-emerald-500/40 shadow-sm"
-                      />
-                    ) : (
-                      <div className="grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-emerald-500/20 via-emerald-500/10 to-card border-2 border-emerald-500/40 text-emerald-600 font-bold text-2xl shadow-sm">
-                        {(assignedFaculty.name || "Faculty")
-                          .split(" ")
-                          .filter(Boolean)
-                          .map((n) => n[0])
-                          .join("")}
-                      </div>
-                    )}
-                    <div className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-emerald-500 text-white shadow-md">
-                      <CheckCircle2 className="h-4 w-4" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                      <h2 className="text-xl font-bold text-foreground">{assignedFaculty.name}</h2>
-                      <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-[0.65rem] font-bold rounded-full px-2.5 py-0.5">
-                        Under Supervision
-                      </Badge>
-                    </div>
-
-                    <p className="text-xs font-semibold text-primary">
-                      {assignedFaculty.designation || assignedFaculty.title || "Faculty Supervisor"}
-                    </p>
-
-                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-muted-foreground pt-1">
-                      <span className="flex items-center gap-1.5">
-                        <Building className="h-3.5 w-3.5 text-primary shrink-0" />
-                        {assignedFaculty.department || "Academic Department"}
-                      </span>
-                      {assignedFaculty.institution && (
-                        <span className="flex items-center gap-1.5 font-medium text-foreground">
-                          {assignedFaculty.institution}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1.5">
-                        <Mail className="h-3.5 w-3.5 text-primary shrink-0" />
-                        {assignedFaculty.email}
-                      </span>
-                    </div>
-
-                    {assignedFaculty.bio && (
-                      <p className="text-xs text-muted-foreground leading-relaxed pt-1 max-w-xl">
-                        {assignedFaculty.bio}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 justify-center md:justify-end">
-                  <Button
-                    onClick={handleCopyEmail}
-                    variant="outline"
-                    className="gap-2 rounded-xl text-xs font-semibold border-border hover:bg-muted"
-                  >
-                    <Copy className="h-3.5 w-3.5 text-primary" /> Copy Email
-                  </Button>
-                  <Button
-                    onClick={handleSendEmail}
-                    className="gap-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-sm"
-                  >
-                    <Send className="h-3.5 w-3.5" /> Send Email
-                  </Button>
-                </div>
-              </div>
-
-              {assignedFaculty.researchInterests && assignedFaculty.researchInterests.length > 0 && (
-                <div className="pt-4 border-t border-border/60 space-y-2">
-                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <Tag className="h-3.5 w-3.5 text-primary" /> Research Specializations & Interests
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {assignedFaculty.researchInterests.map((interest) => (
-                      <Badge
-                        key={interest}
-                        variant="outline"
-                        className="rounded-lg text-[0.7rem] border-primary/20 bg-primary/5 text-foreground font-medium px-2.5 py-1"
-                      >
-                        {interest}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </Card>
-
-            {activeProject && (
-              <Card className="surface-elevated rounded-2xl border border-border bg-card p-6 space-y-4 shadow-sm">
-                <div className="flex items-center justify-between border-b border-border/60 pb-3">
-                  <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                    <FolderKanban className="h-4 w-4 text-primary" /> Supervised Research Project
-                  </h3>
-                  <Button
-                    variant="ghost"
-                    onClick={() => (window.location.href = `/projects/${activeProject.id || activeProject._id}`)}
-                    className="text-xs text-primary font-bold hover:bg-primary/10 rounded-xl"
-                  >
-                    Open Workspace →
-                  </Button>
-                </div>
-
-                <div className="space-y-1">
-                  <p className="text-base font-bold text-foreground">{activeProject.title}</p>
-                  <p className="text-xs text-muted-foreground">Domain: <span className="font-semibold text-foreground">{activeProject.domain || "General"}</span></p>
-                </div>
-              </Card>
-            )}
-          </div>
-        ) : pendingRequest || (assignedFaculty && assignedFaculty.supervisionStatus === "Pending Approval") ? (
-          /* STATE 2: PENDING SUPERVISION REQUEST DISPLAY */
-          <div className="space-y-6">
-            <Card className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6 md:p-8 space-y-6 shadow-sm">
-              <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-5 text-center md:text-left">
-                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
-                  <div className="grid h-16 w-16 place-items-center rounded-2xl bg-amber-500/10 text-amber-500 font-bold shrink-0">
-                    <Clock className="h-8 w-8" />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                      <h2 className="text-xl font-bold text-foreground">Supervisor Request Pending</h2>
-                      <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/30 text-[0.65rem] font-bold rounded-full px-2.5 py-0.5">
-                        Pending Approval
-                      </Badge>
-                    </div>
-
-                    <p className="text-sm font-semibold text-foreground">
-                      Requested Faculty: <span className="text-primary font-bold">{pendingRequest?.facultyName || assignedFaculty?.name}</span>
-                    </p>
-
-                    <p className="text-xs text-muted-foreground">
-                      Requested on {pendingRequest?.submittedAt || (pendingRequest?.requestedAt ? new Date(pendingRequest.requestedAt).toLocaleDateString() : "Recently")}
-                    </p>
-                  </div>
-                </div>
-
-                <Button
-                  onClick={() => {
-                    if (pendingRequest?.projectId) {
-                      window.location.href = `/projects/${pendingRequest.projectId}`;
-                    } else if (activeProject) {
-                      window.location.href = `/projects/${activeProject.id || activeProject._id}`;
-                    }
-                  }}
-                  variant="outline"
-                  className="rounded-xl border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-bold gap-1.5"
-                >
-                  <FolderKanban className="h-4 w-4" /> View Project Workspace
-                </Button>
-              </div>
-
-              {pendingRequest && (
-                <div className="rounded-xl border border-amber-500/20 bg-background/80 p-4 space-y-2 text-xs">
-                  <p className="font-semibold text-foreground">Project: <span className="text-primary">{pendingRequest.projectTitle}</span></p>
-                  <p className="text-muted-foreground italic">"{pendingRequest.message || "I would like you to supervise my research project."}"</p>
-                </div>
-              )}
-            </Card>
-          </div>
-        ) : (
-          /* STATE 3: NO SUPERVISOR ASSIGNED OR REQUESTED */
-          <Card className="surface-elevated rounded-2xl border-dashed border-border py-16 px-6 text-center space-y-5">
-            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-muted/40 text-muted-foreground mx-auto">
+        ) : assignedProjects.length === 0 && pendingRequests.length === 0 ? (
+          /* EMPTY STATE */
+          <Card className="surface-elevated rounded-3xl border-dashed border-border py-16 px-6 text-center space-y-5">
+            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary mx-auto">
               <UserX className="h-8 w-8" />
             </div>
 
             <div className="space-y-2 max-w-md mx-auto">
-              <h2 className="text-xl font-bold text-foreground">No supervisor assigned yet.</h2>
+              <h2 className="text-xl font-bold text-foreground">No supervisor assigned yet</h2>
               <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                Request a supervisor for one of your research projects.
+                You currently have no faculty supervisor assigned to your research project.
               </p>
             </div>
 
@@ -438,6 +220,188 @@ function MyFacultyPage() {
               </Button>
             </div>
           </Card>
+        ) : (
+          <div className="space-y-8">
+            {/* ASSIGNED FACULTY SUPERVISORS SECTION */}
+            {assignedProjects.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-border/80 pb-2">
+                  <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Active Faculty Supervisors ({assignedProjects.length})
+                  </h3>
+                  <Badge variant="outline" className="rounded-full border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-xs font-semibold">
+                    Supervision Active
+                  </Badge>
+                </div>
+
+                <div className="grid gap-6">
+                  {assignedProjects.map((project) => {
+                    const matchedFaculty = facultyList.find(
+                      (f) =>
+                        (project.facultyEmail && f.email.toLowerCase() === project.facultyEmail.toLowerCase()) ||
+                        (project.faculty && f.name.toLowerCase().includes(project.faculty.toLowerCase()))
+                    );
+
+                    const facultyName = project.faculty || matchedFaculty?.name || "Faculty Supervisor";
+                    const facultyEmail = project.facultyEmail || matchedFaculty?.email || "faculty@university.edu";
+                    const facultyDept = matchedFaculty?.department || "Academic Department";
+                    const photo = matchedFaculty?.photoURL || matchedFaculty?.profileImage;
+
+                    return (
+                      <Card key={project.id || project._id} className="surface-elevated rounded-3xl border border-border bg-card p-6 shadow-sm space-y-6">
+                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
+                          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 text-center sm:text-left">
+                            {photo ? (
+                              <img
+                                src={photo}
+                                alt={facultyName}
+                                className="h-16 w-16 rounded-2xl object-cover border-2 border-emerald-500/40 shrink-0 shadow-sm"
+                              />
+                            ) : (
+                              <div className="grid h-16 w-16 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600 font-bold text-xl shrink-0 border border-emerald-500/30">
+                                {facultyName
+                                  .split(" ")
+                                  .filter(Boolean)
+                                  .slice(0, 2)
+                                  .map((n) => n[0])
+                                  .join("")}
+                              </div>
+                            )}
+
+                            <div className="space-y-1.5">
+                              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                                <h3 className="text-lg font-bold text-foreground">{facultyName}</h3>
+                                <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30 text-[0.65rem] font-bold rounded-full px-2.5 py-0.5">
+                                  Under Supervision
+                                </Badge>
+                              </div>
+
+                              <p className="text-xs font-semibold text-primary">
+                                {matchedFaculty?.designation || matchedFaculty?.title || "Professor & Academic Supervisor"}
+                              </p>
+
+                              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-muted-foreground pt-0.5">
+                                <span className="flex items-center gap-1.5">
+                                  <Building className="h-3.5 w-3.5 text-primary shrink-0" />
+                                  {facultyDept}
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  <Mail className="h-3.5 w-3.5 text-primary shrink-0" />
+                                  {facultyEmail}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-center md:justify-end gap-2 shrink-0">
+                            <Button
+                              onClick={() => handleCopyEmail(facultyEmail)}
+                              variant="outline"
+                              className="gap-1.5 rounded-xl text-xs font-semibold border-border hover:bg-muted h-9"
+                            >
+                              <Copy className="h-3.5 w-3.5 text-primary" /> Copy Email
+                            </Button>
+                            <Button
+                              onClick={() => handleSendEmail(facultyEmail)}
+                              className="gap-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-sm h-9"
+                            >
+                              <Send className="h-3.5 w-3.5" /> Email Guide
+                            </Button>
+                          </div>
+                        </div>
+
+                        {matchedFaculty?.researchInterests && matchedFaculty.researchInterests.length > 0 && (
+                          <div className="pt-3 border-t border-border/60 space-y-1.5">
+                            <span className="text-[0.68rem] font-bold text-muted-foreground uppercase tracking-wider block">Specializations:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {matchedFaculty.researchInterests.map((interest) => (
+                                <Badge
+                                  key={interest}
+                                  variant="secondary"
+                                  className="rounded-lg text-[0.65rem] px-2.5 py-0.5 font-medium border border-border/60"
+                                >
+                                  #{interest}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-1.5 text-xs">
+                          <span className="text-muted-foreground font-semibold block">Supervised Project:</span>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-foreground text-sm leading-snug">{project.title}</span>
+                              <p className="text-[0.7rem] text-muted-foreground pt-0.5">Domain: {project.domain || "General Academic Research"}</p>
+                            </div>
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => (window.location.href = `/projects/${project.id || project._id}`)}
+                              className="text-xs font-bold rounded-xl h-8 gap-1 self-start sm:self-auto hover:bg-primary/10 text-primary border-primary/30"
+                            >
+                              <FolderKanban className="h-3.5 w-3.5" /> Open Workspace →
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* PENDING SUPERVISION REQUESTS SECTION */}
+            {pendingRequests.length > 0 && (
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between border-b border-border/80 pb-2">
+                  <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-amber-500" /> Pending Supervision Requests ({pendingRequests.length})
+                  </h3>
+                  <Badge variant="outline" className="rounded-full border-amber-500/30 text-amber-600 bg-amber-500/10 text-xs font-semibold">
+                    Awaiting Faculty Review
+                  </Badge>
+                </div>
+
+                <div className="grid gap-4">
+                  {pendingRequests.map((req) => (
+                    <Card key={req.id || req._id} className="rounded-3xl border border-amber-500/30 bg-amber-500/5 p-6 shadow-sm space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-foreground text-base leading-tight">Requested Faculty: {req.facultyName}</h4>
+                            <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/30 text-[0.65rem] font-bold rounded-full px-2.5">
+                              Pending Approval
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Requested for Project: <strong className="text-foreground">{req.projectTitle}</strong> • Email: <strong className="text-foreground">{req.facultyEmail}</strong>
+                          </p>
+                        </div>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => (window.location.href = `/projects/${req.projectId}`)}
+                          className="rounded-xl border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-bold h-8 gap-1.5"
+                        >
+                          <FolderKanban className="h-3.5 w-3.5" /> View Project
+                        </Button>
+                      </div>
+
+                      {req.message && (
+                        <div className="rounded-2xl border border-amber-500/20 bg-background/80 p-3.5 text-xs">
+                          <span className="font-semibold text-foreground block mb-0.5">Submitted Message:</span>
+                          <p className="text-muted-foreground italic">"{req.message}"</p>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </DashboardLayout>

@@ -1089,114 +1089,143 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     const usersCol = await getCollection<UserRecord>("users");
     const projectsCol = await getCollection<Document>("projects");
-    const papersCol = await getCollection<Document>("papers");
     const supCol = await getCollection<Document>("supervision_requests");
+    const revCol = await getCollection<Document>("reviews");
+    const workCol = await getCollection<Document>("research_work");
+    const activityCol = await getCollection<Document>("activity_logs");
 
     // Fetch user profile
     const facultyUser = email ? await usersCol.findOne({ email }) : null;
     const facultyName = facultyUser?.name || "Faculty Member";
 
-    // 1. Supervised Students (Only approved supervised students)
-    const approvedSupReqs = email
+    // 1. Pending Supervision Requests for THIS faculty
+    const supDocs = email
       ? await supCol.find({
           $or: [
             { facultyEmail: email },
             { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
           ],
-          status: "Approved",
-        }).toArray()
+        }).sort({ createdAt: -1 }).toArray()
       : [];
 
+    const pendingSupRequests = supDocs.filter((r: any) => r.status === "Pending");
+    const approvedSupReqs = supDocs.filter((r: any) => r.status === "Approved");
+
+    // 2. Supervised Projects for THIS faculty
     const supervisedProjects = email
       ? await projectsCol.find({
           $or: [
             { facultyEmail: email },
+            { facultyId: email },
             { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
           ],
           supervisionStatus: "Under Supervision",
+        }).sort({ updatedAt: -1 }).toArray()
+      : [];
+
+    // Map projects with student details
+    const approvedProjectEntries: any[] = [];
+    const seenProjectIds = new Set<string>();
+
+    for (const proj of supervisedProjects) {
+      const pIdStr = proj._id.toString();
+      if (!seenProjectIds.has(pIdStr)) {
+        seenProjectIds.add(pIdStr);
+        approvedProjectEntries.push({
+          studentEmail: (proj.userEmail || "").toLowerCase(),
+          project: proj,
+          supReq: approvedSupReqs.find((r: any) => String(r.projectId) === pIdStr || String(r.projectId) === proj.id),
+        });
+      }
+    }
+
+    for (const req of approvedSupReqs) {
+      const pIdStr = String(req.projectId);
+      if (pIdStr && !seenProjectIds.has(pIdStr)) {
+        seenProjectIds.add(pIdStr);
+        let pFilterId: any = pIdStr;
+        if (ObjectId.isValid(pIdStr)) pFilterId = new ObjectId(pIdStr);
+        const proj = await projectsCol.findOne({ $or: [{ _id: pFilterId }, { id: pIdStr }] });
+        if (proj) {
+          approvedProjectEntries.push({
+            studentEmail: (proj.userEmail || req.studentEmail || "").toLowerCase(),
+            project: proj,
+            supReq: req,
+          });
+        }
+      }
+    }
+
+    const studentEmails = Array.from(new Set(approvedProjectEntries.map((e) => e.studentEmail).filter(Boolean)));
+    const studentUsers = studentEmails.length > 0
+      ? await usersCol.find({ email: { $in: studentEmails } }).toArray()
+      : [];
+    const studentUserMap = new Map<string, any>();
+    for (const u of studentUsers) {
+      studentUserMap.set(u.email.toLowerCase(), u);
+    }
+
+    const myStudentsList = approvedProjectEntries.map((entry) => {
+      const sUser = studentUserMap.get(entry.studentEmail);
+      const pIdStr = entry.project._id.toString();
+      return {
+        id: sUser ? sUser._id.toString() : entry.project._id.toString(),
+        _id: sUser ? sUser._id.toString() : entry.project._id.toString(),
+        name: sUser?.name || entry.supReq?.studentName || "Student Scholar",
+        email: entry.studentEmail,
+        department: sUser?.department || "Computer Science",
+        degreeProgram: (sUser as any)?.degreeProgram || sUser?.affiliation || "Student Scholar",
+        activeProject: entry.project.title || entry.supReq?.projectTitle || "Academic Research Project",
+        projectId: pIdStr,
+        domain: entry.project.domain || entry.project.category || "Artificial Intelligence",
+        progress: entry.project.progress ?? 0,
+        status: "Under Supervision" as const,
+        projectStatus: entry.project.status || "In Progress",
+        lastActivity: entry.project.updatedAt ? new Date(entry.project.updatedAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+        joinedDate: entry.supReq?.respondedAt
+          ? new Date(entry.supReq.respondedAt).toISOString().split("T")[0]
+          : entry.project.createdAt ? new Date(entry.project.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      };
+    });
+
+    // 3. Reviews for THIS faculty
+    const reviewDocs = email
+      ? await revCol.find({
+          $or: [
+            { facultyEmail: email },
+            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
         }).toArray()
       : [];
 
-    const approvedStudentEmails = new Set<string>([
-      ...approvedSupReqs.map((r) => (r.studentEmail || r.email || "").toLowerCase()).filter(Boolean),
-      ...supervisedProjects.map((p) => (p.userEmail || "").toLowerCase()).filter(Boolean),
-    ]);
+    const pendingReviewsCount = reviewDocs.filter((r: any) => r.status === "Pending Review").length;
+    const reviewedWorkCount = reviewDocs.filter((r: any) => r.status === "Reviewed").length;
 
-    const studentQuery: any = email
-      ? {
-          role: "student",
-          status: { $ne: "Deleted" },
-          $or: [
-            { email: { $in: Array.from(approvedStudentEmails) } },
-            { assignedFaculty: email },
-          ],
-        }
-      : { role: "student", status: { $ne: "Deleted" } };
-
-    const studentDocs = await usersCol.find(studentQuery).toArray();
-    const totalStudents = studentDocs.length;
-
-    // 2. Active Projects
-    const projectDocs = await projectsCol.find({}).sort({ updatedAt: -1 }).toArray();
-    const activeProjects = projectDocs.map((p) => ({
-      id: p._id.toString(),
-      _id: p._id.toString(),
-      title: p.title || p.name || "Research Project",
-      studentsCount: p.studentsCount || (p.members?.length) || 0,
-      progress: p.progress ?? 0,
-      status: p.status || "Active",
-      domain: p.domain || p.category || "Research",
-      leadStudent: p.userEmail || p.leadStudent || "",
-      milestone: p.milestone || "",
-      lastUpdated: p.updatedAt ? new Date(p.updatedAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-    }));
-
-    // Clean up any old dummy seed requests
-    await supCol.deleteMany({ email: { $in: ["alex.rivera@student.edu", "sophia.chen@student.edu", "david.kim@student.edu"] } });
-
-    // 3. Supervision Requests
-    const supDocs = await supCol.find({}).sort({ createdAt: -1 }).toArray();
-
-    const requests = supDocs.map((r) => ({
+    // 4. Formatted requests for UI
+    const requests = supDocs.map((r: any) => ({
       id: r._id.toString(),
       _id: r._id.toString(),
-      studentName: r.studentName,
-      email: r.email,
-      projectTitle: r.projectTitle || r.topic,
-      topic: r.topic || r.projectTitle,
-      domain: r.domain || "AI & ML",
-      proposalSummary: r.proposalSummary || r.topic,
-      submittedDate: r.submittedDate || r.submittedAt || new Date().toISOString().split("T")[0],
-      submittedAt: r.submittedAt || r.submittedDate || new Date().toISOString().split("T")[0],
+      projectId: r.projectId,
+      studentName: r.studentName || "Student Scholar",
+      studentEmail: r.studentEmail || r.email || "",
+      email: r.email || r.studentEmail || "",
+      projectTitle: r.projectTitle || r.topic || "Research Project",
+      domain: r.domain || "Artificial Intelligence",
+      message: r.message || "",
+      submittedAt: r.submittedAt || r.createdAt || new Date().toISOString().split("T")[0],
       status: r.status || "Pending",
-      gpa: r.gpa || "N/A",
     }));
-
-    // 4. Publications
-    const paperDocs = await papersCol.find({}).toArray();
-    const totalPapers = paperDocs.length;
 
     return new Response(
       JSON.stringify({
         stats: {
-          myStudents: totalStudents,
-          activeProjects: activeProjects.length,
-          pendingReviews: requests.filter((r) => r.status === "Pending").length,
-          publications: totalPapers,
+          myStudents: myStudentsList.length,
+          pendingRequests: pendingSupRequests.length,
+          pendingReviews: pendingReviewsCount,
+          reviewedWork: reviewedWorkCount,
         },
         requests,
-        projects: activeProjects,
-        students: studentDocs.map((s) => ({
-          id: s._id.toString(),
-          _id: s._id.toString(),
-          name: s.name,
-          email: s.email,
-          department: s.department || "Computer Science",
-          degreeProgram: (s as any).degreeProgram || s.affiliation || "Student Scholar",
-          activeProject: (s as any).activeProject || "Academic Research Initiative",
-          status: "Under Supervision",
-          joinedDate: s.createdAt ? new Date(s.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-        })),
+        myStudentsList,
       }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
