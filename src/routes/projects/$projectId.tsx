@@ -208,6 +208,13 @@ function getMinCompletionDateString(startDateStr: string) {
   return d.toISOString().split("T")[0];
 }
 
+function formatDisplayDate(dateStr?: string) {
+  if (!dateStr) return "N/A";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
 function ProjectWorkspacePage() {
   const { projectId } = Route.useParams();
   const [user, setUser] = useState<UserSession | null>(() => {
@@ -834,32 +841,33 @@ function ProjectWorkspacePage() {
     });
   };
 
-  // Field Errors & Validation for Edit Project
+  // Field Errors & Validation for Edit Project Parameters
   const fieldErrors = useMemo(() => {
     const errors: Record<string, string> = {};
-
-    const titleTrim = (formData.title || "").trim();
-    if (!titleTrim) {
-      errors.title = "Project Title is required.";
-    } else if (titleTrim.length < 5) {
-      errors.title = "Project Title must be at least 5 characters long.";
-    }
-
-    if (!formData.domain || !formData.domain.trim()) {
-      errors.domain = "Research Domain is required.";
-    }
 
     if (!formData.status) {
       errors.status = "Project Status is required.";
     }
 
-    const descTrim = (formData.description || "").trim();
-    if (!descTrim) {
-      errors.description = "Description is required.";
+    const prog = Number(formData.progress);
+    if (isNaN(prog) || prog < 0 || prog > 100) {
+      errors.progress = "Progress completion must be between 0% and 100%.";
+    }
+
+    if (!formData.expectedCompletionDate) {
+      errors.expectedCompletionDate = "Expected Completion Date is required.";
+    } else if (project?.startDate) {
+      const startMs = new Date(project.startDate).getTime();
+      const completionMs = new Date(formData.expectedCompletionDate).getTime();
+      if (isNaN(completionMs)) {
+        errors.expectedCompletionDate = "Invalid completion date.";
+      } else if (completionMs <= startMs) {
+        errors.expectedCompletionDate = "Expected Completion Date must be after the project start date.";
+      }
     }
 
     return errors;
-  }, [formData]);
+  }, [formData, project]);
 
   const isFormValid = useMemo(() => Object.keys(fieldErrors).length === 0, [fieldErrors]);
 
@@ -890,15 +898,18 @@ function ProjectWorkspacePage() {
         body: JSON.stringify({
           id: projId,
           userEmail: user.email,
-          ...formData,
+          status: formData.status,
+          progress: formData.progress,
+          expectedCompletionDate: formData.expectedCompletionDate,
         }),
       });
 
       if (res.ok) {
         const updated = await res.json();
-        setProject(updated);
-        populateForm(updated);
-        toast.success("Project workspace updated successfully!");
+        const fullUpdated = { ...project, ...updated };
+        setProject(fullUpdated);
+        populateForm(fullUpdated);
+        toast.success("Project parameters updated successfully!");
         setIsEditModalOpen(false);
       } else {
         const err = await res.json();
@@ -2827,98 +2838,101 @@ function ProjectWorkspacePage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Edit Project Dialog */}
+      {/* Edit Project Parameters Dialog */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="max-w-lg rounded-2xl border-border bg-card p-6 shadow-xl sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
-              <Pencil className="h-5 w-5 text-primary" /> Edit Research Project
+        <DialogContent className="max-w-lg rounded-3xl border-border bg-card p-6 shadow-2xl space-y-4 sm:max-w-md">
+          <DialogHeader className="border-b border-border/60 pb-3">
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-foreground">
+              <Pencil className="h-5 w-5 text-primary" /> Edit Project Parameters
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Update project parameters, status, or milestone progress.
+              Update project status, milestone progress, or expected completion date.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleUpdateProject} className="space-y-4 py-2">
+          <form onSubmit={handleUpdateProject} className="space-y-4 py-1">
+            {/* Project Status */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-foreground">
-                Project Title <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                value={formData.title}
-                onChange={(e) => handleFieldChange("title", e.target.value)}
-                className="rounded-xl text-sm"
-              />
+              <Label className="text-xs font-semibold text-foreground">Project Status</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(val: ProjectStatus) => handleFieldChange("status", val)}
+              >
+                <SelectTrigger className="rounded-xl text-xs bg-background border-border">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="Planning" className="text-xs">Planning</SelectItem>
+                  <SelectItem value="In Progress" className="text-xs">In Progress</SelectItem>
+                  <SelectItem value="Under Review" className="text-xs">Under Review</SelectItem>
+                  <SelectItem value="Completed" className="text-xs">Completed</SelectItem>
+                  <SelectItem value="On Hold" className="text-xs">On Hold</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-foreground">Domain <span className="text-destructive">*</span></Label>
-                <Select
-                  value={formData.domain}
-                  onValueChange={(val) => handleFieldChange("domain", val)}
-                >
-                  <SelectTrigger className="rounded-xl text-xs">
-                    <SelectValue placeholder="Select domain" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-60 rounded-xl">
-                    {DOMAIN_OPTIONS.map((opt) => (
-                      <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-foreground">Status <span className="text-destructive">*</span></Label>
-                <Select
-                  value={formData.status}
-                  onValueChange={(val: ProjectStatus) => handleFieldChange("status", val)}
-                >
-                  <SelectTrigger className="rounded-xl text-xs">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    <SelectItem value="Planning" className="text-xs">Planning</SelectItem>
-                    <SelectItem value="In Progress" className="text-xs">In Progress</SelectItem>
-                    <SelectItem value="Under Review" className="text-xs">Under Review</SelectItem>
-                    <SelectItem value="Completed" className="text-xs">Completed</SelectItem>
-                    <SelectItem value="On Hold" className="text-xs">On Hold</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex justify-between">
-                <Label className="text-xs font-semibold text-foreground">Progress Completion (%)</Label>
+            {/* Progress Completion Slider */}
+            <div className="space-y-2 pt-1">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs font-semibold text-foreground">Progress Completion</Label>
                 <span className="text-xs font-bold text-primary">{formData.progress}%</span>
               </div>
-              <Input
-                type="number"
+              <input
+                type="range"
                 min={0}
                 max={100}
+                tabIndex={0}
                 value={formData.progress}
-                onChange={(e) => handleFieldChange("progress", Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
-                className="rounded-xl text-sm"
+                onChange={(e) => handleFieldChange("progress", Number(e.target.value))}
+                className="w-full h-2 rounded-lg bg-muted accent-primary cursor-pointer"
               />
             </div>
 
+            {/* Start Date (Read-only) */}
+            <div className="space-y-1.5 pt-1">
+              <Label className="text-xs font-semibold text-foreground">Start Date</Label>
+              <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2.5 text-xs">
+                <span className="font-medium text-foreground">
+                  {formatDisplayDate(project?.startDate)}
+                </span>
+                <Badge variant="outline" className="rounded-md border-border/80 text-[0.65rem] font-semibold text-muted-foreground bg-background">
+                  Read-only
+                </Badge>
+              </div>
+            </div>
+
+            {/* Expected Completion Date */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-foreground">Description & Objectives <span className="text-destructive">*</span></Label>
-              <Textarea
-                rows={3}
-                value={formData.description}
-                onChange={(e) => handleFieldChange("description", e.target.value)}
-                className="rounded-xl text-xs"
+              <Label className="text-xs font-semibold text-foreground">Expected Completion Date</Label>
+              <Input
+                type="date"
+                value={formData.expectedCompletionDate || ""}
+                onChange={(e) => handleFieldChange("expectedCompletionDate", e.target.value)}
+                className={`rounded-xl text-xs bg-background border-border ${
+                  fieldErrors.expectedCompletionDate ? "border-destructive" : ""
+                }`}
               />
+              {fieldErrors.expectedCompletionDate && (
+                <p className="text-[0.75rem] text-destructive font-medium mt-1">
+                  {fieldErrors.expectedCompletionDate}
+                </p>
+              )}
             </div>
 
-            <DialogFooter className="pt-3 gap-2">
-              <Button type="button" variant="outline" onClick={() => setIsEditModalOpen(false)} className="rounded-xl">
+            <DialogFooter className="border-t border-border/60 pt-3 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditModalOpen(false)}
+                className="rounded-xl text-xs"
+              >
                 Cancel
               </Button>
-              <Button type="submit" disabled={!isFormValid || submitting} className="rounded-xl bg-primary text-primary-foreground">
+              <Button
+                type="submit"
+                disabled={!isFormValid || submitting}
+                className="rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-sm"
+              >
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                 Save Changes
               </Button>

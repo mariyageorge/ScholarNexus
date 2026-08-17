@@ -491,7 +491,7 @@ export async function updateProject(id: string, userEmail: string, updates: Part
     throw new Error("Unauthorized to modify this project.");
   }
 
-  const { _id, id: _ignoreId, ...cleanUpdates } = updates as any;
+  const { _id, id: _ignoreId, startDate: _ignoreStartDate, ...cleanUpdates } = updates as any;
   cleanUpdates.updatedAt = new Date().toISOString();
 
   await collection.updateOne(
@@ -534,64 +534,88 @@ export async function deleteProject(id: string, userEmail: string) {
   return res.deletedCount > 0;
 }
 
-function validateProjectPayload(body: any) {
-  const title = (body.title || "").trim();
-  if (!title) {
-    return "Project Title is required.";
-  }
-  if (title.length < 3) {
-    return "Project Title must be at least 3 characters long.";
-  }
-  if (title.length > 150) {
-    return "Project Title cannot exceed 150 characters.";
+function validateProjectPayload(body: any, isEdit = false) {
+  if (!isEdit) {
+    const title = (body.title || "").trim();
+    if (!title) {
+      return "Project Title is required.";
+    }
+    if (title.length < 3) {
+      return "Project Title must be at least 3 characters long.";
+    }
+    if (title.length > 150) {
+      return "Project Title cannot exceed 150 characters.";
+    }
+
+    const description = (body.description || "").trim();
+    if (description.length > 1000) {
+      return "Description cannot exceed 1000 characters.";
+    }
+
+    const domain = (body.domain || "").trim();
+    if (!domain) {
+      return "Research Domain is required.";
+    }
   }
 
-  const description = (body.description || "").trim();
-  if (description.length > 1000) {
-    return "Description cannot exceed 1000 characters.";
+  if (body.status !== undefined) {
+    const status = body.status;
+    const validStatuses = ["Planning", "In Progress", "Under Review", "Completed", "On Hold"];
+    if (!status || !validStatuses.includes(status)) {
+      return "Please select a valid Project Status.";
+    }
   }
 
-  const domain = (body.domain || "").trim();
-  if (!domain) {
-    return "Research Domain is required.";
-  }
-
-  const status = body.status;
-  const validStatuses = ["Planning", "In Progress", "Under Review", "Completed", "On Hold"];
-  if (!status || !validStatuses.includes(status)) {
-    return "Please select a valid Project Status.";
-  }
-
-  const progress = Number(body.progress);
-  if (isNaN(progress) || progress < 0 || progress > 100) {
-    return "Progress completion must be between 0% and 100%.";
+  if (body.progress !== undefined) {
+    const progress = Number(body.progress);
+    if (isNaN(progress) || progress < 0 || progress > 100) {
+      return "Progress completion must be between 0% and 100%.";
+    }
   }
 
   const startDateStr = body.startDate;
-  if (!startDateStr) {
-    return "Start Date is required.";
-  }
-
-  const todayStr = new Date().toISOString().split("T")[0];
-  if (startDateStr < todayStr) {
-    return "Start Date cannot be a prior date (before today).";
-  }
-
   const expectedCompletionDateStr = body.expectedCompletionDate;
-  if (!expectedCompletionDateStr) {
-    return "Expected Completion Date is required.";
-  }
 
-  const startMs = new Date(startDateStr).getTime();
-  const completionMs = new Date(expectedCompletionDateStr).getTime();
+  if (!isEdit) {
+    if (!startDateStr) {
+      return "Start Date is required.";
+    }
 
-  if (isNaN(startMs) || isNaN(completionMs)) {
-    return "Invalid date format.";
-  }
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const twoMonthsAgoStr = twoMonthsAgo.toISOString().split("T")[0];
 
-  const diffDays = (completionMs - startMs) / (1000 * 60 * 60 * 24);
-  if (diffDays < 7) {
-    return "Expected Completion Date must be at least 1 week (7 days) after the Start Date.";
+    if (startDateStr < twoMonthsAgoStr) {
+      return "Start Date cannot be more than 2 months before today.";
+    }
+
+    if (!expectedCompletionDateStr) {
+      return "Expected Completion Date is required.";
+    }
+
+    const startMs = new Date(startDateStr).getTime();
+    const completionMs = new Date(expectedCompletionDateStr).getTime();
+
+    if (isNaN(startMs) || isNaN(completionMs)) {
+      return "Invalid date format.";
+    }
+
+    if (completionMs <= startMs) {
+      return "Expected Completion Date must be after the project start date.";
+    }
+  } else {
+    if (expectedCompletionDateStr && startDateStr) {
+      const startMs = new Date(startDateStr).getTime();
+      const completionMs = new Date(expectedCompletionDateStr).getTime();
+
+      if (isNaN(completionMs)) {
+        return "Invalid date format.";
+      }
+
+      if (completionMs <= startMs) {
+        return "Expected Completion Date must be after the project start date.";
+      }
+    }
   }
 
   return null;
@@ -3046,7 +3070,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         });
       }
 
-      const validationError = validateProjectPayload(body);
+      const validationError = validateProjectPayload(body, true);
       if (validationError) {
         return new Response(JSON.stringify({ error: validationError }), {
           status: 400,

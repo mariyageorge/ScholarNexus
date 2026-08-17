@@ -308,33 +308,49 @@ function ResearchProjectsPage() {
       errors.progress = "Progress must be between 0 and 100.";
     }
 
-    // Start Date: Required, cannot be a past date
-    if (!formData.startDate) {
-      errors.startDate = "Start Date is required.";
-    } else if (formData.startDate < todayStr) {
-      errors.startDate = "Start Date cannot be a past date.";
-    }
-
-    // Expected Completion Date: Required, >= startDate, >= startDate + 7 days
-    if (!formData.expectedCompletionDate) {
-      errors.expectedCompletionDate = "Expected Completion Date is required.";
-    } else if (formData.startDate) {
-      const startMs = new Date(formData.startDate).getTime();
-      const completionMs = new Date(formData.expectedCompletionDate).getTime();
-      if (isNaN(completionMs)) {
-        errors.expectedCompletionDate = "Invalid completion date.";
-      } else if (completionMs < startMs) {
-        errors.expectedCompletionDate = "Expected Completion Date cannot be before the Start Date.";
+    // Start Date & Expected Completion Date Validation
+    if (!editingProject) {
+      // NEW PROJECT CREATION RULES:
+      if (!formData.startDate) {
+        errors.startDate = "Start Date is required.";
       } else {
-        const diffDays = (completionMs - startMs) / (1000 * 60 * 60 * 24);
-        if (diffDays < 7) {
-          errors.expectedCompletionDate = "Expected Completion Date must be at least 7 days after the Start Date.";
+        const twoMonthsAgo = new Date();
+        twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+        const twoMonthsAgoStr = twoMonthsAgo.toISOString().split("T")[0];
+
+        if (formData.startDate < twoMonthsAgoStr) {
+          errors.startDate = "Start Date cannot be more than 2 months before today.";
+        }
+      }
+
+      if (!formData.expectedCompletionDate) {
+        errors.expectedCompletionDate = "Expected Completion Date is required.";
+      } else if (formData.startDate) {
+        const startMs = new Date(formData.startDate).getTime();
+        const completionMs = new Date(formData.expectedCompletionDate).getTime();
+        if (isNaN(completionMs)) {
+          errors.expectedCompletionDate = "Invalid completion date.";
+        } else if (completionMs <= startMs) {
+          errors.expectedCompletionDate = "Expected Completion Date must be after the project start date.";
+        }
+      }
+    } else {
+      // EDIT EXISTING PROJECT RULES:
+      if (!formData.expectedCompletionDate) {
+        errors.expectedCompletionDate = "Expected Completion Date is required.";
+      } else if (editingProject.startDate) {
+        const startMs = new Date(editingProject.startDate).getTime();
+        const completionMs = new Date(formData.expectedCompletionDate).getTime();
+        if (isNaN(completionMs)) {
+          errors.expectedCompletionDate = "Invalid completion date.";
+        } else if (completionMs <= startMs) {
+          errors.expectedCompletionDate = "Expected Completion Date must be after the project start date.";
         }
       }
     }
 
     return errors;
-  }, [formData, todayStr]);
+  }, [formData, editingProject]);
 
   const isFormValid = useMemo(() => {
     return Object.keys(fieldErrors).length === 0;
@@ -1049,36 +1065,53 @@ function ResearchProjectsPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold text-foreground">
-                  Start Date <span className="text-destructive">*</span>
+                  Start Date {editingProject ? null : <span className="text-destructive">*</span>}
                 </Label>
-                <Input
-                  type="date"
-                  min={todayStr}
-                  value={formData.startDate}
-                  onChange={(e) => {
-                    const newStart = e.target.value;
-                    const minCompletion = getMinCompletionDateString(newStart);
-                    const newCompletion =
-                      formData.expectedCompletionDate && formData.expectedCompletionDate >= minCompletion
-                        ? formData.expectedCompletionDate
-                        : minCompletion;
-                    setFormData((prev) => ({
-                      ...prev,
-                      startDate: newStart,
-                      expectedCompletionDate: newCompletion,
-                    }));
-                    setTouched((prev) => ({ ...prev, startDate: true, expectedCompletionDate: true }));
-                  }}
-                  onBlur={() => handleBlur("startDate")}
-                  className={`rounded-xl text-xs ${touched.startDate && fieldErrors.startDate
-                      ? "border-destructive focus-visible:ring-destructive"
-                      : ""
-                    }`}
-                />
-                {touched.startDate && fieldErrors.startDate && (
-                  <p className="text-[0.75rem] text-destructive font-medium mt-1">
-                    {fieldErrors.startDate}
-                  </p>
+                {editingProject ? (
+                  <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3.5 py-2 text-xs">
+                    <span className="font-medium text-foreground">
+                      {editingProject.startDate}
+                    </span>
+                    <Badge variant="outline" className="rounded-md border-border/80 text-[0.65rem] font-semibold text-muted-foreground bg-background">
+                      Read-only
+                    </Badge>
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      type="date"
+                      min={(() => {
+                        const d = new Date();
+                        d.setMonth(d.getMonth() - 2);
+                        return d.toISOString().split("T")[0];
+                      })()}
+                      value={formData.startDate}
+                      onChange={(e) => {
+                        const newStart = e.target.value;
+                        const minCompletion = getMinCompletionDateString(newStart);
+                        const newCompletion =
+                          formData.expectedCompletionDate && formData.expectedCompletionDate >= minCompletion
+                            ? formData.expectedCompletionDate
+                            : minCompletion;
+                        setFormData((prev) => ({
+                          ...prev,
+                          startDate: newStart,
+                          expectedCompletionDate: newCompletion,
+                        }));
+                        setTouched((prev) => ({ ...prev, startDate: true, expectedCompletionDate: true }));
+                      }}
+                      onBlur={() => handleBlur("startDate")}
+                      className={`rounded-xl text-xs ${touched.startDate && fieldErrors.startDate
+                          ? "border-destructive focus-visible:ring-destructive"
+                          : ""
+                        }`}
+                    />
+                    {touched.startDate && fieldErrors.startDate && (
+                      <p className="text-[0.75rem] text-destructive font-medium mt-1">
+                        {fieldErrors.startDate}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
