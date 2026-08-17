@@ -1,7 +1,7 @@
 import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
 import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
-import { extractPaperMetadataWithGemini } from "./services/ai";
+import { extractPaperMetadataWithGemini, generatePaperSummaryWithGemini } from "./services/ai";
 
 const uri = process.env.MONGODB_URI ?? import.meta?.env?.VITE_MONGODB_URI ?? "";
 
@@ -13,6 +13,7 @@ if (!uri) {
 
 const globalWithMongo = globalThis as typeof globalThis & {
   _mongoClientPromise?: Promise<MongoClient>;
+  _summarizationInFlight?: Set<string>;
 };
 
 const clientPromise =
@@ -3703,6 +3704,112 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
+    }
+  }
+
+  // ── Gemini AI Paper Academic Summarization Endpoint ──
+  if (url.pathname === "/api/papers/generate-summary") {
+    if (request.method === "POST") {
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const paperId = body.paperId || body.id || body._id;
+      if (!paperId) {
+        return new Response(JSON.stringify({ error: "Paper ID is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const papersCol = await getCollection<Document>("papers");
+      let objId: any = paperId;
+      if (ObjectId.isValid(paperId)) objId = new ObjectId(paperId);
+      const storedDoc = await papersCol.findOne({ $or: [{ _id: objId }, { id: String(paperId) }] });
+
+      if (!storedDoc) {
+        return new Response(JSON.stringify({ error: "Reference paper not found in project library." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const paperKey = String(storedDoc._id);
+      if (globalWithMongo._summarizationInFlight?.has(paperKey)) {
+        return new Response(
+          JSON.stringify({ error: "Summary generation is already in progress for this paper. Please wait." }),
+          { status: 429, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (!globalWithMongo._summarizationInFlight) {
+        globalWithMongo._summarizationInFlight = new Set<string>();
+      }
+      globalWithMongo._summarizationInFlight.add(paperKey);
+
+      try {
+        // Perform AI summarization using existing fileData or paper context
+        const result = await generatePaperSummaryWithGemini({
+          fileData: storedDoc.fileData,
+          title: storedDoc.title,
+          authors: Array.isArray(storedDoc.authorsList)
+            ? storedDoc.authorsList.join(", ")
+            : storedDoc.authors,
+          year: storedDoc.publicationYear || storedDoc.year,
+          journal: storedDoc.journalOrConference || storedDoc.journal,
+          abstract: storedDoc.abstract || storedDoc.summary,
+        });
+
+        if (!result.success || !result.summary) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: result.error || "Failed to generate academic summary with Gemini AI.",
+            }),
+            { status: 500, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const aiSummaryPayload = {
+          ...result.summary,
+          generatedAt: new Date().toISOString(),
+          modelUsed: result.modelUsed || "Gemini AI",
+        };
+
+        // Save summary against the SAME paper document without overwriting metadata or original PDF
+        await papersCol.updateOne(
+          { $or: [{ _id: storedDoc._id }, { id: String(paperId) }] },
+          {
+            $set: {
+              aiSummary: aiSummaryPayload,
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+
+        const updatedDoc = await papersCol.findOne({ _id: storedDoc._id });
+        const formatted = updatedDoc
+          ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+          : null;
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            paper: formatted,
+            summary: aiSummaryPayload,
+            modelUsed: result.modelUsed,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      } finally {
+        globalWithMongo._summarizationInFlight?.delete(paperKey);
+      }
     }
   }
 

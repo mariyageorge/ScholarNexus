@@ -49,6 +49,12 @@ import {
   UserCheck,
   Users,
   X,
+  Target,
+  Cpu,
+  Database,
+  ShieldAlert,
+  Compass,
+  Award,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { getUserSession, UserSession } from "@/lib/session";
@@ -128,6 +134,22 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface AISummaryData {
+  overview: string;
+  researchObjective: string;
+  problemStatement: string;
+  methodology: string;
+  dataset: string;
+  algorithms: string;
+  keyFindings: string;
+  advantages: string;
+  limitations: string;
+  futureWork: string;
+  keyTakeaway: string;
+  generatedAt?: string;
+  modelUsed?: string;
+}
+
 export interface ProjectPaper {
   id: string;
   _id?: string;
@@ -146,6 +168,7 @@ export interface ProjectPaper {
   url?: string;
   fileData?: string;
   summary?: string;
+  aiSummary?: AISummaryData;
 }
 
 interface FacultyMember {
@@ -356,6 +379,139 @@ function ProjectWorkspacePage() {
   const [aiAssistAction, setAiAssistAction] = useState<string>("improve_writing");
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [generatingAi, setGeneratingAi] = useState(false);
+
+  // Gemini AI Literature Summaries State
+  const [selectedPaperIdForSummary, setSelectedPaperIdForSummary] = useState<string>("");
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [summaryProgressStep, setSummaryProgressStep] = useState<number>(0);
+  const [summaryProgressMessage, setSummaryProgressMessage] = useState<string>("");
+  const [viewSummaryModalPaper, setViewSummaryModalPaper] = useState<ProjectPaper | null>(null);
+  const [copiedSummaryState, setCopiedSummaryState] = useState(false);
+
+  const selectedPaperForSummaryPreview = useMemo(() => {
+    if (!selectedPaperIdForSummary) return null;
+    return papers.find((p) => String(p.id || p._id) === String(selectedPaperIdForSummary)) || null;
+  }, [papers, selectedPaperIdForSummary]);
+
+  const handleGeneratePaperSummary = async (targetPaper?: ProjectPaper) => {
+    const paperToProcess = targetPaper || selectedPaperForSummaryPreview;
+    if (!paperToProcess) {
+      toast.error("Please select a reference paper first.");
+      return;
+    }
+
+    const paperId = paperToProcess.id || paperToProcess._id;
+    if (!paperId) {
+      toast.error("Invalid paper selected.");
+      return;
+    }
+
+    if (isGeneratingSummary) return;
+
+    setIsGeneratingSummary(true);
+    setSummaryProgressStep(1);
+    setSummaryProgressMessage("Reading stored paper...");
+
+    try {
+      setSummaryProgressStep(2);
+      setSummaryProgressMessage("Extracting academic text...");
+
+      const fetchPromise = fetch("/api/papers/generate-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paperId }),
+      });
+
+      const stepTimer = setTimeout(() => {
+        setSummaryProgressStep(3);
+        setSummaryProgressMessage("Analyzing methodology and results...");
+      }, 600);
+
+      const stepTimer2 = setTimeout(() => {
+        setSummaryProgressStep(4);
+        setSummaryProgressMessage("Structuring academic summary...");
+      }, 2000);
+
+      const res = await fetchPromise;
+      clearTimeout(stepTimer);
+      clearTimeout(stepTimer2);
+
+      const data = await res.json();
+
+      if (res.ok && data.success && data.paper) {
+        setSummaryProgressStep(5);
+        setSummaryProgressMessage("Saving summary...");
+
+        const updatedPaper = sanitizePaper(data.paper);
+
+        // Update papers in local state & storage
+        const updatedPapersList = papers.map((p) =>
+          String(p.id || p._id) === String(paperId) ? updatedPaper : p
+        );
+        saveProjectPapers(projectId, updatedPapersList);
+
+        toast.success(`Academic summary generated for "${updatedPaper.title}".`);
+        setViewSummaryModalPaper(updatedPaper);
+      } else {
+        toast.error(data.error || "Failed to generate academic summary.");
+      }
+    } catch (err) {
+      console.error("Error generating paper summary:", err);
+      toast.error("Network error while generating AI summary.");
+    } finally {
+      setIsGeneratingSummary(false);
+      setSummaryProgressStep(0);
+      setSummaryProgressMessage("");
+    }
+  };
+
+  const handleCopySummaryContent = (paper: ProjectPaper) => {
+    if (!paper.aiSummary) return;
+    const s = paper.aiSummary;
+    const text = `
+ACADEMIC SUMMARY: ${paper.title}
+Authors: ${paper.authors}
+Venue/Year: ${paper.journal || paper.journalOrConference || "N/A"} (${paper.year || paper.publicationYear || "N/A"})
+
+01 — OVERVIEW
+${s.overview}
+
+02 — RESEARCH OBJECTIVE
+${s.researchObjective}
+
+03 — PROBLEM STATEMENT
+${s.problemStatement}
+
+04 — METHODOLOGY
+${s.methodology}
+
+05 — DATASET / DATA USED
+${s.dataset}
+
+06 — ALGORITHMS / MODELS / TECHNIQUES
+${s.algorithms}
+
+07 — KEY FINDINGS
+${s.keyFindings}
+
+08 — ADVANTAGES / CONTRIBUTIONS
+${s.advantages}
+
+09 — LIMITATIONS
+${s.limitations}
+
+10 — FUTURE WORK
+${s.futureWork}
+
+11 — KEY TAKEAWAY
+${s.keyTakeaway}
+    `.trim();
+
+    navigator.clipboard.writeText(text);
+    setCopiedSummaryState(true);
+    toast.success("Academic summary copied to clipboard!");
+    setTimeout(() => setCopiedSummaryState(false), 3000);
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2337,42 +2493,327 @@ function ProjectWorkspacePage() {
             </Card>
           </TabsContent>
 
-          {/* TAB 4: PAPER SUMMARIES */}
-          <TabsContent value="summaries" className="space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-primary" /> AI Paper Summaries
-              </h2>
-              <p className="text-xs text-muted-foreground">Key findings, abstract breakdowns, and methodologies for project papers.</p>
+          {/* TAB 4: LITERATURE SUMMARIES (AI Literature Analysis Workspace) */}
+          <TabsContent value="summaries" className="space-y-8">
+            {/* Header Section */}
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-border/60 pb-5 gap-4">
+              <div className="space-y-1.5 max-w-3xl">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
+                    <BookOpen className="h-5 w-5 text-primary" /> AI Literature Analysis
+                  </h2>
+                  <Badge variant="outline" className="gap-1 rounded-full border-primary/30 bg-primary/10 text-primary text-[0.65rem] font-bold px-2.5 py-0.5">
+                    <Sparkles className="h-3 w-3" /> Gemini AI
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Use Gemini AI to analyze your saved reference papers and generate structured academic summaries.
+                </p>
+                <p className="text-[0.725rem] text-muted-foreground/80 italic">
+                  Select a paper from your project library to generate an AI-assisted academic analysis. No re-upload is required.
+                </p>
+              </div>
+
+              {papers.length > 0 && (
+                <div className="flex items-center gap-2 self-start md:self-auto">
+                  <Badge variant="outline" className="rounded-xl border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground gap-1.5 shadow-sm">
+                    <FileText className="h-3.5 w-3.5 text-primary" />
+                    <span>{papers.length} Paper{papers.length === 1 ? "" : "s"} in Library</span>
+                  </Badge>
+                </div>
+              )}
             </div>
 
+            {/* If NO Reference Papers Exist in Project */}
             {papers.length === 0 ? (
-              <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-4 text-center">
-                <BookOpen className="h-8 w-8 text-muted-foreground mb-3" />
-                <h3 className="text-lg font-bold text-foreground">No Summaries Available</h3>
-                <p className="mt-1.5 max-w-md text-xs text-muted-foreground">
-                  Upload research papers to generate AI paper summaries for this project.
-                </p>
+              <Card className="surface-elevated flex flex-col items-center justify-center rounded-3xl border-dashed border-border py-16 px-6 text-center space-y-4 max-w-2xl mx-auto shadow-sm">
+                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-muted/80 text-muted-foreground">
+                  <BookOpen className="h-8 w-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-foreground">No Reference Papers</h3>
+                  <p className="text-xs text-muted-foreground max-w-md leading-relaxed">
+                    Add an academic reference paper to your project first. Once it is available, you can generate an AI-powered academic summary without uploading the paper again.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setActiveWorkspaceTab("reference-papers")}
+                  className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold px-5 py-2.5 shadow-sm"
+                >
+                  <Plus className="h-4 w-4" /> Go to Reference Papers
+                </Button>
               </Card>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                {papers.map((p) => (
-                  <Card key={p.id} className="surface-elevated rounded-2xl border-border p-5 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-1">
-                        <Badge variant="outline" className="text-[0.65rem] rounded-full">{p.journal || "Unspecified Journal"}</Badge>
-                        <h3 className="text-sm font-bold text-foreground line-clamp-1">{p.title}</h3>
-                        <p className="text-[0.725rem] text-muted-foreground">
-                          {p.authors || "Not specified"} {p.year ? `(${p.year})` : ""}
+              <div className="space-y-8">
+                {/* PAPER SELECTION CARD */}
+                <Card className="surface-elevated rounded-3xl border-border bg-card p-6 md:p-8 space-y-6 shadow-sm">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-primary" /> Generate New Summary
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Select one of your existing reference papers. ScholarNexus will analyze the stored paper and generate a structured academic summary.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-6 md:grid-cols-12 items-end">
+                    <div className="space-y-2 md:col-span-8">
+                      <Label className="text-xs font-bold text-foreground">Select Reference Paper</Label>
+                      <Select
+                        value={selectedPaperIdForSummary}
+                        onValueChange={setSelectedPaperIdForSummary}
+                        disabled={isGeneratingSummary}
+                      >
+                        <SelectTrigger className="w-full rounded-2xl border-border bg-background/60 px-4 py-3 text-xs font-medium text-foreground focus:ring-1 focus:ring-primary shadow-xs">
+                          <SelectValue placeholder="Choose a paper from project library..." />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-border bg-card max-h-72">
+                          {papers.map((p) => {
+                            const pId = p.id || p._id || "";
+                            const hasSummary = Boolean(p.aiSummary);
+                            const authorShort = p.authors ? (p.authors.length > 35 ? p.authors.slice(0, 35) + "..." : p.authors) : "Unknown Authors";
+                            const yearStr = p.year || p.publicationYear || "N/A";
+
+                            return (
+                              <SelectItem key={pId} value={pId} className="rounded-xl my-1 cursor-pointer">
+                                <div className="flex items-center justify-between gap-4 w-full py-0.5">
+                                  <div className="truncate text-left max-w-md">
+                                    <p className="font-bold text-xs text-foreground truncate">{p.title}</p>
+                                    <p className="text-[0.7rem] text-muted-foreground truncate">{authorShort} · {yearStr}</p>
+                                  </div>
+                                  <Badge
+                                    variant="outline"
+                                    className={`shrink-0 text-[0.65rem] font-semibold rounded-full px-2 py-0.5 ${
+                                      hasSummary
+                                        ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10"
+                                        : "border-muted-foreground/30 text-muted-foreground bg-muted/40"
+                                    }`}
+                                  >
+                                    {hasSummary ? "Summary available" : "Not analyzed"}
+                                  </Badge>
+                                </div>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 md:col-span-4">
+                      {selectedPaperForSummaryPreview?.aiSummary ? (
+                        <>
+                          <Button
+                            onClick={() => setViewSummaryModalPaper(selectedPaperForSummaryPreview)}
+                            disabled={isGeneratingSummary}
+                            className="flex-1 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold py-3 shadow-md gap-2"
+                          >
+                            <Eye className="h-4 w-4" /> View AI Summary
+                          </Button>
+                          <Button
+                            onClick={() => handleGeneratePaperSummary()}
+                            disabled={isGeneratingSummary}
+                            variant="outline"
+                            className="rounded-2xl border-border text-xs font-semibold py-3 gap-2 hover:bg-muted"
+                          >
+                            <RefreshCcw className="h-3.5 w-3.5" /> Regenerate
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          onClick={() => handleGeneratePaperSummary()}
+                          disabled={!selectedPaperIdForSummary || isGeneratingSummary}
+                          className="w-full rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold py-3 shadow-md gap-2"
+                        >
+                          <Sparkles className="h-4 w-4" /> ✨ Generate AI Summary
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SELECTED PAPER PREVIEW CARD */}
+                  {selectedPaperForSummaryPreview && (
+                    <div className="rounded-2xl border border-border/80 bg-muted/30 p-5 space-y-3 pt-4 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5 text-primary" /> Selected Paper Preview
+                        </span>
+                        {selectedPaperForSummaryPreview.aiSummary ? (
+                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-bold rounded-full">
+                            Summary Available
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-bold rounded-full">
+                            Not Analyzed
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <h4 className="text-sm font-bold text-foreground leading-snug">
+                          {selectedPaperForSummaryPreview.title}
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          {selectedPaperForSummaryPreview.authors || "Authors not specified"}
                         </p>
                       </div>
+
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        {(selectedPaperForSummaryPreview.year || selectedPaperForSummaryPreview.publicationYear) && (
+                          <Badge variant="outline" className="rounded-md border-border bg-background/80 text-[0.7rem] font-semibold">
+                            {selectedPaperForSummaryPreview.year || selectedPaperForSummaryPreview.publicationYear}
+                          </Badge>
+                        )}
+                        {(selectedPaperForSummaryPreview.journal || selectedPaperForSummaryPreview.journalOrConference) && (
+                          <Badge variant="outline" className="rounded-md border-border bg-background/80 text-[0.7rem] font-semibold max-w-xs truncate">
+                            {selectedPaperForSummaryPreview.journal || selectedPaperForSummaryPreview.journalOrConference}
+                          </Badge>
+                        )}
+                        {selectedPaperForSummaryPreview.doi && (
+                          <Badge variant="outline" className="rounded-md border-primary/30 text-primary bg-primary/5 text-[0.7rem] font-mono">
+                            DOI: {selectedPaperForSummaryPreview.doi}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    <Separator />
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {p.summary || `Executive summary of ${p.title}. Explores key methodologies, dataset parameters, and academic contributions.`}
-                    </p>
+                  )}
+                </Card>
+
+                {/* PROCESSING EXPERIENCE INDICATOR */}
+                {isGeneratingSummary && (
+                  <Card className="surface-elevated rounded-3xl border border-primary/40 bg-card p-6 md:p-8 space-y-6 shadow-lg animate-pulse">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/15 text-primary">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-foreground">Analyzing Research Paper</h3>
+                          <p className="text-xs text-primary font-medium">{summaryProgressMessage}</p>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="gap-1 rounded-full border-primary/40 bg-primary/10 text-primary text-[0.68rem] font-bold px-3 py-1">
+                        <Sparkles className="h-3 w-3" /> Gemini AI
+                      </Badge>
+                    </div>
+
+                    {/* Vertical Stepper Progress */}
+                    <div className="space-y-4 px-2">
+                      <div className="flex items-center gap-3 text-xs font-semibold text-emerald-500">
+                        <div className="grid h-6 w-6 place-items-center rounded-full bg-emerald-500/20 text-emerald-500">
+                          <Check className="h-3.5 w-3.5" />
+                        </div>
+                        <span>Paper selected</span>
+                      </div>
+
+                      <div className={`flex items-center gap-3 text-xs font-semibold ${summaryProgressStep >= 2 ? "text-emerald-500" : "text-muted-foreground"}`}>
+                        <div className={`grid h-6 w-6 place-items-center rounded-full ${summaryProgressStep >= 2 ? "bg-emerald-500/20 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
+                          {summaryProgressStep >= 2 ? <Check className="h-3.5 w-3.5" /> : <div className="h-2 w-2 rounded-full bg-muted-foreground/50" />}
+                        </div>
+                        <span>Reading paper</span>
+                      </div>
+
+                      <div className={`flex items-center gap-3 text-xs font-semibold ${summaryProgressStep >= 3 ? "text-emerald-500" : summaryProgressStep === 2 ? "text-primary animate-pulse" : "text-muted-foreground"}`}>
+                        <div className={`grid h-6 w-6 place-items-center rounded-full ${summaryProgressStep >= 3 ? "bg-emerald-500/20 text-emerald-500" : summaryProgressStep === 2 ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                          {summaryProgressStep >= 3 ? <Check className="h-3.5 w-3.5" /> : <div className="h-2 w-2 rounded-full bg-primary" />}
+                        </div>
+                        <span>Analyzing methodology and findings</span>
+                      </div>
+
+                      <div className={`flex items-center gap-3 text-xs font-semibold ${summaryProgressStep >= 4 ? "text-emerald-500" : summaryProgressStep === 3 ? "text-primary animate-pulse" : "text-muted-foreground"}`}>
+                        <div className={`grid h-6 w-6 place-items-center rounded-full ${summaryProgressStep >= 4 ? "bg-emerald-500/20 text-emerald-500" : summaryProgressStep === 3 ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                          {summaryProgressStep >= 4 ? <Check className="h-3.5 w-3.5" /> : <div className="h-2 w-2 rounded-full bg-muted-foreground/50" />}
+                        </div>
+                        <span>Structuring academic summary</span>
+                      </div>
+                    </div>
                   </Card>
-                ))}
+                )}
+
+                {/* GENERATED SUMMARIES LIST */}
+                <div className="space-y-4 pt-2">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                    <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                      <FileCheck className="h-4 w-4 text-primary" /> Generated Summaries
+                    </h3>
+                    <Badge variant="outline" className="rounded-full text-[0.68rem] font-semibold border-border">
+                      {papers.filter((p) => p.aiSummary).length} Available
+                    </Badge>
+                  </div>
+
+                  {papers.every((p) => !p.aiSummary) ? (
+                    <Card className="surface-elevated flex flex-col items-center justify-center rounded-3xl border-dashed border-border py-12 px-4 text-center space-y-3">
+                      <BookOpen className="h-7 w-7 text-muted-foreground" />
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-foreground">No AI summaries yet</h4>
+                        <p className="text-xs text-muted-foreground max-w-sm">
+                          You already have reference papers in this project. Select one above to generate your first AI-powered academic summary.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          if (papers.length > 0) {
+                            setSelectedPaperIdForSummary(papers[0].id || papers[0]._id || "");
+                          }
+                        }}
+                        className="rounded-xl text-xs bg-primary text-primary-foreground font-semibold px-4"
+                      >
+                        Generate First Summary
+                      </Button>
+                    </Card>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {papers
+                        .filter((p) => p.aiSummary)
+                        .map((p) => {
+                          const s = p.aiSummary!;
+                          const genDateStr = s.generatedAt
+                            ? formatDisplayDate(s.generatedAt.split("T")[0])
+                            : "Recently";
+
+                          return (
+                            <Card key={p.id || p._id} className="rounded-2xl border border-border bg-card p-5 space-y-4 hover:border-primary/40 transition-all shadow-sm flex flex-col justify-between">
+                              <div className="space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-bold rounded-full shrink-0">
+                                    AI Summary Available
+                                  </Badge>
+                                  <span className="text-[0.68rem] text-muted-foreground shrink-0">
+                                    Generated {genDateStr}
+                                  </span>
+                                </div>
+
+                                <h4 className="font-bold text-foreground text-sm leading-snug line-clamp-2">
+                                  {p.title}
+                                </h4>
+
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {p.authors || "Unknown Authors"}
+                                </p>
+
+                                <p className="text-[0.725rem] text-muted-foreground/80">
+                                  {p.year || p.publicationYear || "N/A"} · {p.journal || p.journalOrConference || "Academic Publication"}
+                                </p>
+                              </div>
+
+                              <div className="pt-3 border-t border-border/60 flex items-center justify-between">
+                                <span className="text-[0.7rem] text-muted-foreground flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3 text-primary" /> Structured Analysis
+                                </span>
+                                <Button
+                                  size="sm"
+                                  onClick={() => setViewSummaryModalPaper(p)}
+                                  className="rounded-xl text-xs font-semibold px-3.5 h-8 bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5 shadow-xs"
+                                >
+                                  <Eye className="h-3.5 w-3.5" /> View Summary
+                                </Button>
+                              </div>
+                            </Card>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </TabsContent>
@@ -3404,6 +3845,234 @@ function ProjectWorkspacePage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* STRUCTURED AI PAPER SUMMARY RESULTS MODAL */}
+      <Dialog open={viewSummaryModalPaper !== null} onOpenChange={(open) => !open && setViewSummaryModalPaper(null)}>
+        <DialogContent className="max-w-4xl rounded-3xl border-border bg-card p-6 md:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+          {viewSummaryModalPaper && viewSummaryModalPaper.aiSummary && (
+            <>
+              <DialogHeader className="border-b border-border/60 pb-4 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Badge variant="outline" className="gap-1 rounded-full border-primary/30 bg-primary/10 text-primary text-[0.68rem] font-bold px-3 py-0.5">
+                    <Sparkles className="h-3 w-3" /> Generated with Gemini AI
+                  </Badge>
+
+                  {viewSummaryModalPaper.aiSummary.generatedAt && (
+                    <span className="text-[0.725rem] text-muted-foreground">
+                      Analysis Generated: {formatDisplayDate(viewSummaryModalPaper.aiSummary.generatedAt.split("T")[0])}
+                    </span>
+                  )}
+                </div>
+
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground leading-snug">
+                  {viewSummaryModalPaper.title}
+                </DialogTitle>
+
+                <DialogDescription className="text-xs text-muted-foreground">
+                  {viewSummaryModalPaper.authors || "Authors not specified"} {viewSummaryModalPaper.year ? `(${viewSummaryModalPaper.year})` : ""} · {viewSummaryModalPaper.journal || viewSummaryModalPaper.journalOrConference || "Academic Paper"}
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* 11 STRUCTURED SUMMARY SECTIONS */}
+              <div className="space-y-6 py-2">
+                {/* Top 2-Column Grid for Core Overview & Objectives */}
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* 01 — Overview */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">01</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5 text-primary" /> Overview
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.overview}
+                    </p>
+                  </Card>
+
+                  {/* 02 — Research Objective */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">02</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Target className="h-3.5 w-3.5 text-primary" /> Research Objective
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.researchObjective}
+                    </p>
+                  </Card>
+                </div>
+
+                {/* 03 — Problem Statement */}
+                <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                  <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                    <span className="text-xs font-bold text-primary font-mono">03</span>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 text-amber-500" /> Problem Statement
+                    </h4>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                    {viewSummaryModalPaper.aiSummary.problemStatement}
+                  </p>
+                </Card>
+
+                {/* 2-Column Grid for Methodology & Dataset */}
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* 04 — Methodology */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">04</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Layers className="h-3.5 w-3.5 text-primary" /> Methodology
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.methodology}
+                    </p>
+                  </Card>
+
+                  {/* 05 — Dataset / Data Used */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">05</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Database className="h-3.5 w-3.5 text-cyan-500" /> Dataset / Data Used
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.dataset}
+                    </p>
+                  </Card>
+                </div>
+
+                {/* 2-Column Grid for Algorithms & Key Findings */}
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* 06 — Algorithms / Models / Techniques */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">06</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Cpu className="h-3.5 w-3.5 text-primary" /> Algorithms / Models / Techniques
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.algorithms}
+                    </p>
+                  </Card>
+
+                  {/* 07 — Key Findings */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">07</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Key Findings
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.keyFindings}
+                    </p>
+                  </Card>
+                </div>
+
+                {/* 2-Column Grid for Advantages & Limitations */}
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* 08 — Advantages / Contributions */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">08</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <Award className="h-3.5 w-3.5 text-emerald-500" /> Advantages / Contributions
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.advantages}
+                    </p>
+                  </Card>
+
+                  {/* 09 — Limitations */}
+                  <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                      <span className="text-xs font-bold text-primary font-mono">09</span>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <ShieldAlert className="h-3.5 w-3.5 text-amber-500" /> Limitations
+                      </h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {viewSummaryModalPaper.aiSummary.limitations}
+                    </p>
+                  </Card>
+                </div>
+
+                {/* 10 — Future Work */}
+                <Card className="rounded-2xl border border-border bg-card/60 p-5 space-y-2 shadow-xs">
+                  <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+                    <span className="text-xs font-bold text-primary font-mono">10</span>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <Compass className="h-3.5 w-3.5 text-primary" /> Future Work
+                    </h4>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                    {viewSummaryModalPaper.aiSummary.futureWork}
+                  </p>
+                </Card>
+
+                {/* 11 — KEY TAKEAWAY (HIGHLIGHTED VISUAL INSIGHT CARD) */}
+                <div className="relative overflow-hidden rounded-3xl border-2 border-primary/40 bg-gradient-to-br from-primary/15 via-primary/5 to-card p-6 shadow-md space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-primary font-mono">11</span>
+                      <h4 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+                        <Sparkles className="h-4 w-4" /> Key Takeaway
+                      </h4>
+                    </div>
+                    <Badge variant="outline" className="border-primary/40 text-primary bg-primary/10 text-[0.65rem] font-bold rounded-full">
+                      Academic Insight
+                    </Badge>
+                  </div>
+                  <p className="text-sm font-medium text-foreground leading-relaxed italic">
+                    "{viewSummaryModalPaper.aiSummary.keyTakeaway}"
+                  </p>
+                </div>
+              </div>
+
+              {/* DIALOG FOOTER & ACTIONS */}
+              <DialogFooter className="border-t border-border/60 pt-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCopySummaryContent(viewSummaryModalPaper)}
+                    className="rounded-xl text-xs font-semibold gap-1.5 border-border hover:bg-muted"
+                  >
+                    {copiedSummaryState ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedSummaryState ? "Copied!" : "Copy Summary"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const paperToRegen = viewSummaryModalPaper;
+                      setViewSummaryModalPaper(null);
+                      handleGeneratePaperSummary(paperToRegen);
+                    }}
+                    className="rounded-xl text-xs font-semibold gap-1.5 border-border hover:bg-muted"
+                  >
+                    <RefreshCcw className="h-3.5 w-3.5" /> Regenerate Summary
+                  </Button>
+                </div>
+
+                <Button
+                  onClick={() => setViewSummaryModalPaper(null)}
+                  className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold px-6"
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
