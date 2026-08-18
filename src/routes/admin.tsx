@@ -2296,8 +2296,13 @@ function AdminPage() {
             <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">Global Research Projects</h2>
-                  <p className="text-xs text-muted-foreground mt-1">Platform-wide overview of student and faculty research initiatives.</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-bold text-foreground">Global Research Projects</h2>
+                    <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 text-xs px-2.5 py-0.5 font-semibold flex items-center gap-1.5">
+                      <Eye className="h-3.5 w-3.5" /> Read-Only Access
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Platform-wide overview of student and faculty research initiatives. Read-only governance mode.</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
@@ -2364,17 +2369,17 @@ function AdminPage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => { setSelectedProject(p); setViewProjectModalOpen(true); }} title="View Details">
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-amber-500 hover:bg-amber-500/10" onClick={() => handleArchiveProject(p)} title="Archive Project">
-                                <Archive className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => { setSelectedProject(p); setDeleteProjectModalOpen(true); }} title="Delete Project">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5 rounded-xl text-xs font-semibold hover:bg-primary/10 hover:text-primary hover:border-primary/40 transition-colors"
+                              onClick={() => {
+                                setSelectedProject(p);
+                                setViewProjectModalOpen(true);
+                              }}
+                            >
+                              <Eye className="h-3.5 w-3.5 text-primary" /> View Details
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))
@@ -2392,8 +2397,13 @@ function AdminPage() {
             <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">Repository Research Papers</h2>
-                  <p className="text-xs text-muted-foreground mt-1">Inspect uploaded manuscripts, publications, and citations.</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-bold text-foreground">Repository Research Papers</h2>
+                    <Badge variant="outline" className="border-purple-500/40 text-purple-600 bg-purple-500/10 text-xs px-2.5 py-0.5 font-semibold flex items-center gap-1.5">
+                      <Eye className="h-3.5 w-3.5" /> Read-Only Access
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Inspect uploaded manuscripts, publications, and citations. Read-only repository view.</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
@@ -2432,15 +2442,26 @@ function AdminPage() {
                           <TableCell className="text-xs text-muted-foreground">{p.uploaderEmail || "ScholarNexus AI"}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{new Date(p.createdAt).toLocaleDateString()}</TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => { setSelectedPaper(p); setViewPaperModalOpen(true); }} title="View Summary">
-                                <Eye className="h-3.5 w-3.5" />
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 rounded-xl text-xs font-semibold hover:bg-purple-500/10 hover:text-purple-600 hover:border-purple-500/40 transition-colors"
+                                onClick={() => {
+                                  setSelectedPaper(p);
+                                  setViewPaperModalOpen(true);
+                                }}
+                              >
+                                <Eye className="h-3.5 w-3.5 text-purple-500" /> View Details
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10" onClick={() => handleDownloadPaper(p)} title="Download Manuscript">
-                                <Download className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => { setSelectedPaper(p); setDeletePaperModalOpen(true); }} title="Delete Paper">
-                                <Trash2 className="h-3.5 w-3.5" />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="gap-1.5 rounded-xl text-xs font-semibold text-primary hover:bg-primary/10"
+                                onClick={() => handleDownloadPaper(p)}
+                                title="Download Manuscript"
+                              >
+                                <Download className="h-3.5 w-3.5" /> Download
                               </Button>
                             </div>
                           </TableCell>
@@ -3276,83 +3297,105 @@ function AdminPage() {
 
       {/* View Project Details Modal */}
       <Dialog open={viewProjectModalOpen} onOpenChange={setViewProjectModalOpen}>
-        <DialogContent className="rounded-3xl max-w-lg">
+        <DialogContent className="rounded-3xl max-w-lg p-6 bg-card border border-border shadow-xl">
           <DialogHeader>
-            <DialogTitle className="text-lg font-bold">Research Project Overview</DialogTitle>
-            <DialogDescription className="text-xs">Project metadata & supervisor alignment.</DialogDescription>
+            <div className="flex items-center justify-between gap-2 pb-1">
+              <DialogTitle className="text-lg font-bold text-foreground">Research Project Overview</DialogTitle>
+              <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 text-[0.68rem] px-2.5 py-0.5 font-bold flex items-center gap-1">
+                <Eye className="h-3 w-3" /> Read-Only View
+              </Badge>
+            </div>
+            <DialogDescription className="text-xs text-muted-foreground">Comprehensive project metadata & supervisor alignment.</DialogDescription>
           </DialogHeader>
           {selectedProject && (
             <div className="space-y-4 py-2 text-xs">
-              <div className="space-y-1">
-                <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary">{selectedProject.domain}</Badge>
-                <h3 className="font-bold text-base text-foreground">{selectedProject.title}</h3>
+              <div className="space-y-1.5 rounded-2xl border border-border bg-background p-4">
+                <Badge variant="outline" className="text-[0.68rem] border-primary/30 text-primary font-semibold">{selectedProject.domain}</Badge>
+                <h3 className="font-bold text-base text-foreground pt-1">{selectedProject.title}</h3>
                 <p className="text-muted-foreground leading-relaxed">{selectedProject.description}</p>
               </div>
-              <div className="space-y-2 border-t border-border pt-3">
-                <div className="flex justify-between"><span className="text-muted-foreground">Lead Researcher:</span><span className="font-medium text-foreground">{selectedProject.userEmail}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Faculty Advisor:</span><span className="font-medium text-foreground">{selectedProject.faculty || "Unassigned"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><Badge variant="outline">{selectedProject.status}</Badge></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Date Range:</span><span className="font-medium text-foreground">{selectedProject.startDate} to {selectedProject.expectedCompletionDate}</span></div>
+              <div className="grid gap-2.5 rounded-2xl border border-border bg-background p-4">
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Lead Researcher (Student):</span><span className="font-semibold text-foreground">{selectedProject.userEmail}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Faculty Advisor:</span><span className="font-semibold text-foreground">{selectedProject.faculty || "Unassigned"}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Research Domain:</span><span className="font-semibold text-foreground">{selectedProject.domain}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Project Status:</span><Badge variant="outline" className="font-semibold">{selectedProject.status}</Badge></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Overall Progress:</span><span className="font-bold text-emerald-500">{selectedProject.progress}%</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Timeline Schedule:</span><span className="font-medium text-foreground">{selectedProject.startDate} to {selectedProject.expectedCompletionDate}</span></div>
+                {selectedProject.createdAt && (
+                  <div className="flex justify-between items-center pt-2 border-t border-border/50 text-[0.7rem] text-muted-foreground">
+                    <span>Created: {new Date(selectedProject.createdAt).toLocaleDateString()}</span>
+                    <span>Last Updated: {selectedProject.updatedAt ? new Date(selectedProject.updatedAt).toLocaleDateString() : "Recent"}</span>
+                  </div>
+                )}
               </div>
-              <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[0.7rem] text-amber-700 dark:text-amber-300">
-                <span className="font-bold">Admin Policy Note:</span> Admin module permits project viewing, archiving, and deletion, but does not allow editing student research content.
+              <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 p-3 text-[0.7rem] text-blue-700 dark:text-blue-300 flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
+                <div>
+                  <span className="font-bold">Administrative Governance Policy:</span> Admin has read-only access to monitor research project progress and supervisor alignment. Project management and edits are strictly maintained by student researchers and faculty advisors.
+                </div>
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Project Modal */}
-      <Dialog open={deleteProjectModalOpen} onOpenChange={setDeleteProjectModalOpen}>
-        <DialogContent className="rounded-3xl max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-destructive">Delete Research Project</DialogTitle>
-            <DialogDescription className="text-xs">Are you sure you want to delete project <span className="font-semibold text-foreground">{selectedProject?.title}</span>?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteProjectModalOpen(false)} className="rounded-xl text-xs">Cancel</Button>
-            <Button variant="destructive" onClick={handleDeleteProject} className="rounded-xl text-xs">Delete Project</Button>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewProjectModalOpen(false)} className="rounded-xl text-xs font-semibold">
+              Close Overview
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* View Paper Summary Modal */}
       <Dialog open={viewPaperModalOpen} onOpenChange={setViewPaperModalOpen}>
-        <DialogContent className="rounded-3xl max-w-lg">
+        <DialogContent className="rounded-3xl max-w-lg p-6 bg-card border border-border shadow-xl">
           <DialogHeader>
-            <DialogTitle className="text-lg font-bold">Research Paper Manuscript</DialogTitle>
-            <DialogDescription className="text-xs">Summary abstract & author details.</DialogDescription>
+            <div className="flex items-center justify-between gap-2 pb-1">
+              <DialogTitle className="text-lg font-bold text-foreground">Research Paper Manuscript</DialogTitle>
+              <Badge variant="outline" className="border-purple-500/40 text-purple-600 bg-purple-500/10 text-[0.68rem] px-2.5 py-0.5 font-bold flex items-center gap-1">
+                <Eye className="h-3 w-3" /> Read-Only View
+              </Badge>
+            </div>
+            <DialogDescription className="text-xs text-muted-foreground">Publication summary, abstract & author attribution.</DialogDescription>
           </DialogHeader>
           {selectedPaper && (
             <div className="space-y-4 py-2 text-xs">
-              <div className="space-y-1">
-                <Badge variant="outline" className="text-[0.65rem] border-purple-500/30 text-purple-500">{selectedPaper.domain || "AI"}</Badge>
-                <h3 className="font-bold text-base text-foreground">{selectedPaper.title}</h3>
-                <p className="text-muted-foreground font-medium">Authors: {selectedPaper.authors}</p>
+              <div className="space-y-2 rounded-2xl border border-border bg-background p-4">
+                <Badge variant="outline" className="text-[0.68rem] border-purple-500/30 text-purple-500 font-semibold">{selectedPaper.domain || "AI"}</Badge>
+                <h3 className="font-bold text-base text-foreground pt-0.5">{selectedPaper.title}</h3>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <User className="h-3.5 w-3.5 text-purple-500 shrink-0" />
+                  <span className="font-semibold text-foreground">Authors: {selectedPaper.authors}</span>
+                </div>
               </div>
-              <div className="space-y-1 border-t border-border pt-3">
-                <span className="font-semibold text-foreground">Abstract / Summary</span>
+              <div className="space-y-1.5 rounded-2xl border border-border bg-background p-4">
+                <span className="font-bold text-foreground block text-xs uppercase tracking-wider">Abstract / Summary</span>
                 <p className="text-muted-foreground leading-relaxed">{selectedPaper.summary}</p>
               </div>
-              <div className="flex justify-between border-t border-border pt-3 text-muted-foreground">
-                <span>Uploader: {selectedPaper.uploaderEmail}</span>
-                <span>Date: {new Date(selectedPaper.createdAt).toLocaleDateString()}</span>
+              <div className="grid gap-2 rounded-2xl border border-border bg-background p-4 text-xs">
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Uploaded By:</span><span className="font-semibold text-foreground">{selectedPaper.uploaderEmail}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Upload Date:</span><span className="font-medium text-foreground">{new Date(selectedPaper.createdAt).toLocaleDateString()}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Research Domain:</span><span className="font-semibold text-purple-500">{selectedPaper.domain || "Artificial Intelligence"}</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">AI Summarization:</span><Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 text-[0.65rem] font-bold">Available</Badge></div>
+              </div>
+              <div className="rounded-xl bg-purple-500/10 border border-purple-500/30 p-3 text-[0.7rem] text-purple-700 dark:text-purple-300 flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-purple-500" />
+                <div>
+                  <span className="font-bold">Repository Governance Policy:</span> Administrative view of repository papers is read-only. Manuscripts, uploads, and peer reviews are governed by students and faculty supervisors.
+                </div>
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Paper Modal */}
-      <Dialog open={deletePaperModalOpen} onOpenChange={setDeletePaperModalOpen}>
-        <DialogContent className="rounded-3xl max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-destructive">Delete Paper Record</DialogTitle>
-            <DialogDescription className="text-xs">Are you sure you want to delete paper record <span className="font-semibold text-foreground">{selectedPaper?.title}</span>?</DialogDescription>
-          </DialogHeader>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeletePaperModalOpen(false)} className="rounded-xl text-xs">Cancel</Button>
-            <Button variant="destructive" onClick={handleDeletePaper} className="rounded-xl text-xs">Delete Paper</Button>
+            <Button variant="outline" onClick={() => setViewPaperModalOpen(false)} className="rounded-xl text-xs font-semibold">
+              Close Preview
+            </Button>
+            {selectedPaper && (
+              <Button
+                onClick={() => handleDownloadPaper(selectedPaper)}
+                className="rounded-xl bg-primary text-primary-foreground font-semibold text-xs gap-1.5"
+              >
+                <Download className="h-3.5 w-3.5" /> Download Manuscript
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
