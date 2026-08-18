@@ -94,6 +94,8 @@ interface WorkspaceData {
     url?: string;
     fileData?: string;
     authors?: string;
+    year?: string;
+    journal?: string;
     summary?: string;
     reviewStatus: "Pending Review" | "Reviewed" | "No Review Requested";
     reviewId?: string;
@@ -107,6 +109,9 @@ interface WorkspaceData {
     url?: string;
     fileData?: string;
     authors?: string;
+    year?: string;
+    journal?: string;
+    summary?: string;
   }[];
   researchWork?: {
     id: string;
@@ -728,7 +733,7 @@ function FacultyStudentsPage() {
                             <div>
                               <h4 className="font-bold text-foreground text-sm leading-snug">{paper.title}</h4>
                               <p className="text-xs text-muted-foreground pt-0.5">
-                                Uploaded: {paper.uploadDate} • Format: <span className="font-medium text-foreground">{paper.fileType || "PDF"}</span>
+                                {paper.authors ? `${paper.authors} • ` : ""}Uploaded: {paper.uploadDate} • Format: <span className="font-medium text-foreground">{paper.fileType || "PDF"}</span>
                               </p>
                             </div>
                           </div>
@@ -737,6 +742,13 @@ function FacultyStudentsPage() {
                             Reference Only
                           </Badge>
                         </div>
+
+                        {paper.summary && (
+                          <div className="rounded-2xl border border-border/70 bg-muted/20 p-3.5 text-xs italic text-muted-foreground line-clamp-2">
+                            <strong className="text-foreground not-italic block mb-0.5">Abstract / Summary:</strong>
+                            "{paper.summary}"
+                          </div>
+                        )}
 
                         <div className="flex items-center justify-between pt-2 border-t border-border">
                           <span className="text-[0.7rem] text-muted-foreground">
@@ -747,11 +759,8 @@ function FacultyStudentsPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => {
-                                if (paper.url) window.open(paper.url, "_blank");
-                                else toast.info(`Viewing metadata for "${paper.title}".`);
-                              }}
-                              className="rounded-xl text-xs font-semibold h-8 gap-1.5"
+                              onClick={() => setViewingPaper(paper)}
+                              className="rounded-xl text-xs font-semibold h-8 gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
                             >
                               <Eye className="h-3.5 w-3.5" /> View Reference Paper
                             </Button>
@@ -1151,41 +1160,136 @@ function FacultyStudentsPage() {
 
         {/* PAPER PREVIEW MODAL */}
         <Dialog open={!!viewingPaper} onOpenChange={(open) => !open && setViewingPaper(null)}>
-          <DialogContent className="sm:max-w-2xl rounded-3xl p-6">
-            <DialogHeader>
-              <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" /> {viewingPaper?.title}
+          <DialogContent className="sm:max-w-3xl rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+            <DialogHeader className="border-b border-border pb-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <Badge variant="outline" className="border-indigo-500/30 text-indigo-500 bg-indigo-500/10 text-xs font-semibold">
+                  Reference Literature
+                </Badge>
+                <Badge variant="outline" className="border-border text-muted-foreground text-xs font-normal">
+                  {viewingPaper?.fileType || "PDF Document"}
+                </Badge>
+              </div>
+              <DialogTitle className="text-xl font-bold text-foreground flex items-center gap-2 pt-2">
+                <BookOpen className="h-5 w-5 text-primary shrink-0" /> {viewingPaper?.title}
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                Uploaded Date: {viewingPaper?.uploadDate} • Format: {viewingPaper?.fileType}
+                Uploaded: {viewingPaper?.uploadDate || "Recently"} • Workspace Literature Reference
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2 text-xs">
-              {viewingPaper?.summary && (
-                <div className="space-y-1">
-                  <span className="font-semibold text-foreground">Abstract / Summary:</span>
-                  <p className="text-muted-foreground leading-relaxed bg-muted/30 p-3 rounded-2xl border border-border">
-                    {viewingPaper.summary}
+            <div className="space-y-5 py-3 text-xs">
+              {/* METADATA GRID */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="rounded-2xl border border-border/70 bg-muted/30 p-3 space-y-1">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider block">Authors</span>
+                  <p className="font-semibold text-foreground truncate" title={viewingPaper?.authors || "N/A"}>
+                    {viewingPaper?.authors || "Not specified"}
                   </p>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-muted/30 p-3 space-y-1">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider block">Publication Year</span>
+                  <p className="font-semibold text-foreground">
+                    {viewingPaper?.year || "N/A"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-muted/30 p-3 space-y-1">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider block">Journal / Venue</span>
+                  <p className="font-semibold text-foreground truncate" title={viewingPaper?.journal || "N/A"}>
+                    {viewingPaper?.journal || "Academic Reference"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-muted/30 p-3 space-y-1">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider block">Upload Date</span>
+                  <p className="font-semibold text-foreground">
+                    {viewingPaper?.uploadDate || "N/A"}
+                  </p>
+                </div>
+              </div>
+
+              {/* ABSTRACT / SUMMARY */}
+              {viewingPaper?.summary && (
+                <div className="space-y-2">
+                  <span className="font-bold text-foreground flex items-center gap-1.5">
+                    <FileText className="h-4 w-4 text-primary" /> Abstract / Paper Summary
+                  </span>
+                  <div className="text-foreground leading-relaxed bg-muted/20 p-4 rounded-2xl border border-border/70 whitespace-pre-wrap">
+                    {viewingPaper.summary}
+                  </div>
                 </div>
               )}
 
-              {viewingPaper?.fileData && (
+              {/* FILE PREVIEW OR EMBED / LINK */}
+              {viewingPaper?.fileData ? (
                 <div className="space-y-2">
-                  <span className="font-semibold text-foreground">Document File Preview:</span>
-                  <div className="h-64 rounded-2xl border border-border bg-slate-950 p-4 text-slate-200 overflow-y-auto font-mono text-[0.75rem]">
-                    {viewingPaper.fileData.startsWith("data:application/pdf") ? (
-                      <iframe src={viewingPaper.fileData} className="w-full h-full rounded-xl" title="Paper PDF Preview" />
+                  <span className="font-bold text-foreground flex items-center gap-1.5">
+                    <BookOpen className="h-4 w-4 text-indigo-500" /> Reference Document Preview
+                  </span>
+                  <div className="h-96 rounded-2xl border border-border bg-slate-950 p-2 text-slate-200 overflow-hidden">
+                    {viewingPaper.fileData.startsWith("data:application/pdf") || viewingPaper.fileData.startsWith("data:blob") ? (
+                      <iframe src={viewingPaper.fileData} className="w-full h-full rounded-xl border-0" title="Paper PDF Preview" />
                     ) : (
-                      <p className="whitespace-pre-wrap">{viewingPaper.fileData.slice(0, 1000)}...</p>
+                      <div className="p-4 font-mono text-[0.75rem] overflow-y-auto h-full whitespace-pre-wrap">
+                        {viewingPaper.fileData}
+                      </div>
                     )}
                   </div>
+                </div>
+              ) : viewingPaper?.url ? (
+                <div className="space-y-2">
+                  <span className="font-bold text-foreground flex items-center gap-1.5">
+                    <ExternalLink className="h-4 w-4 text-indigo-500" /> External Reference Document
+                  </span>
+                  <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4 flex items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="font-semibold text-foreground text-xs">External Publication Link</p>
+                      <p className="text-[0.75rem] text-muted-foreground truncate max-w-md">{viewingPaper.url}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => window.open(viewingPaper.url, "_blank")}
+                      className="rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shrink-0"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Link
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border p-4 text-center text-muted-foreground text-xs">
+                  <p>Paper metadata stored. No raw file or external URL attached for preview.</p>
                 </div>
               )}
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="border-t border-border pt-4 flex flex-row items-center justify-between sm:justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {viewingPaper?.url && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(viewingPaper.url, "_blank")}
+                    className="rounded-xl text-xs font-semibold gap-1.5"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> Open External Link
+                  </Button>
+                )}
+                {viewingPaper?.fileData && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const link = document.createElement("a");
+                      link.href = viewingPaper.fileData;
+                      link.download = `${viewingPaper.title || "reference-paper"}.pdf`;
+                      link.click();
+                    }}
+                    className="rounded-xl text-xs font-semibold gap-1.5"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download Document
+                  </Button>
+                )}
+              </div>
+
               <Button variant="outline" onClick={() => setViewingPaper(null)} className="rounded-xl text-xs font-semibold">
                 Close Preview
               </Button>

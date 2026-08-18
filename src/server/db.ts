@@ -138,7 +138,8 @@ export async function recordUserActivity(
   action: string,
   title: string,
   description: string,
-  category: "Project" | "Paper" | "Task" | "Note" | "Profile" | "System" = "System"
+  category: "Project" | "Paper" | "Task" | "Note" | "Profile" | "System" = "System",
+  projectId?: string
 ) {
   try {
     const col = await getCollection<Document>("activity_logs");
@@ -149,6 +150,7 @@ export async function recordUserActivity(
       title,
       description,
       category,
+      projectId: projectId || undefined,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -1683,13 +1685,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           $or: [{ projectId: pIdStr }, { projectId: pAltId }]
         }).toArray(),
         activityCol.find({
-          userEmail: studentEmail,
           $or: [
+            { userEmail: studentEmail },
             { projectId: pIdStr },
             { projectId: pAltId },
             { details: { $regex: pIdStr, $options: "i" } }
           ]
-        }).sort({ timestamp: -1 }).limit(20).toArray(),
+        }).sort({ timestamp: -1 }).limit(30).toArray(),
       ]);
 
       const targetStudent = {
@@ -1720,7 +1722,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           url: p.url || "",
           fileData: p.fileData || "",
           authors: p.authors || "",
-          summary: p.summary || "",
+          year: p.year || "",
+          journal: p.journal || p.conference || "",
+          summary: p.summary || p.abstract || "",
           reviewStatus: existingRev ? existingRev.status : "No Review Requested",
           reviewId: existingRev ? existingRev._id.toString() : undefined,
           feedback: existingRev ? existingRev.feedback : undefined,
@@ -1748,15 +1752,110 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         };
       });
 
-      const formattedActivities = projectActivities.map((a) => ({
-        id: a._id.toString(),
-        _id: a._id.toString(),
-        action: a.action || a.actionType || "PROJECT_ACTIVITY",
-        title: a.title || a.description || "Project update",
-        description: a.description || a.details || "",
-        timestamp: a.timestamp || new Date().toISOString(),
-        userName: a.userName || targetStudent.name,
-      }));
+      // Synthesize comprehensive project activity timeline from DB logs & workspace events
+      const combinedActivities: any[] = [];
+      const seenKeys = new Set<string>();
+
+      // 1. Explicit activity logs from DB
+      for (const a of projectActivities) {
+        const title = a.title || a.description || "Project update";
+        const key = `${title}_${(a.timestamp || "").substring(0, 16)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combinedActivities.push({
+            id: a._id.toString(),
+            _id: a._id.toString(),
+            action: a.action || a.actionType || "PROJECT_ACTIVITY",
+            title,
+            description: a.description || a.details || "",
+            timestamp: a.timestamp || new Date().toISOString(),
+            userName: a.userName || targetStudent.name,
+          });
+        }
+      }
+
+      // 2. Paper upload events
+      for (const p of studentPapers) {
+        const title = `Reference Paper Uploaded: "${p.title || "Paper"}"`;
+        const timestamp = p.createdAt || (p.uploadDate ? `${p.uploadDate}T12:00:00.000Z` : new Date().toISOString());
+        const key = `${title}_${timestamp.substring(0, 10)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combinedActivities.push({
+            id: `act-paper-${p._id.toString()}`,
+            _id: `act-paper-${p._id.toString()}`,
+            action: "PAPER_UPLOADED",
+            title,
+            description: `Student scholar uploaded literature reference paper (${p.fileType || "PDF"}) for research background.`,
+            timestamp,
+            userName: targetStudent.name,
+          });
+        }
+      }
+
+      // 3. Research Work Document events
+      for (const w of studentWorkDocs) {
+        const title = `Research Work Authored: "${w.title || "Research Manuscript"}"`;
+        const timestamp = w.updatedAt || w.createdAt || w.lastSaved || new Date().toISOString();
+        const key = `${title}_${timestamp.substring(0, 10)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combinedActivities.push({
+            id: `act-work-${w._id.toString()}`,
+            _id: `act-work-${w._id.toString()}`,
+            action: "RESEARCH_WORK_UPDATED",
+            title,
+            description: `Academic research document updated (${w.templateType || "Research Paper"}) with ${w.sections?.length || 0} section(s).`,
+            timestamp,
+            userName: targetStudent.name,
+          });
+        }
+      }
+
+      // 4. Review & Feedback events
+      for (const r of paperReviews) {
+        const title = r.status === "Reviewed"
+          ? `Faculty Feedback Submitted: "${r.documentTitle || "Research Manuscript"}"`
+          : `Manuscript Review Requested: "${r.documentTitle || "Research Manuscript"}"`;
+        const timestamp = r.reviewedAt || r.requestedAt || new Date().toISOString();
+        const key = `${title}_${timestamp.substring(0, 10)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combinedActivities.push({
+            id: `act-rev-${r._id.toString()}`,
+            _id: `act-rev-${r._id.toString()}`,
+            action: r.status === "Reviewed" ? "FEEDBACK_SUBMITTED" : "REVIEW_REQUESTED",
+            title,
+            description: r.status === "Reviewed"
+              ? `Faculty mentor published academic feedback: "${(r.feedback || "").slice(0, 120)}"`
+              : `Student submitted manuscript for faculty supervision review.`,
+            timestamp,
+            userName: r.status === "Reviewed" ? (r.facultyName || "Faculty Mentor") : targetStudent.name,
+          });
+        }
+      }
+
+      // 5. Supervision Approval / Project Start event
+      if (projectDoc) {
+        const supTime = supReq?.respondedAt || (projectDoc.createdAt ? new Date(projectDoc.createdAt).toISOString() : new Date().toISOString());
+        const supTitle = `Supervision Workspace Active`;
+        const key = `${supTitle}_${supTime.substring(0, 10)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combinedActivities.push({
+            id: `act-sup-${projectDoc._id.toString()}`,
+            _id: `act-sup-${projectDoc._id.toString()}`,
+            action: "SUPERVISION_APPROVED",
+            title: supTitle,
+            description: `Faculty supervision confirmed for project "${projectDoc.title || "Academic Project"}".`,
+            timestamp: supTime,
+            userName: supReq?.facultyName || "Faculty Supervisor",
+          });
+        }
+      }
+
+      // Sort chronological newest first
+      combinedActivities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
       const workspaceData = {
         student: targetStudent,
@@ -1777,7 +1876,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         referencePapers: formattedPapers,
         papers: formattedPapers,
         researchWork: formattedResearchWork,
-        activities: formattedActivities,
+        activities: combinedActivities,
       };
 
       return new Response(JSON.stringify(workspaceData), {
