@@ -1510,7 +1510,6 @@ ${s.keyTakeaway}
     { id: "comparison", label: "Literature Comparison", icon: GitCompareArrows },
     { id: "citations", label: "Citation Generator", icon: Quote },
     { id: "similarity", label: "Similarity Checker", icon: ScanSearch },
-    { id: "faculty", label: "Faculty Supervision", icon: GraduationCap },
     { id: "settings", label: "Project Settings", icon: Settings },
   ];
 
@@ -2972,41 +2971,6 @@ ${s.keyTakeaway}
             </Card>
           </TabsContent>
 
-          {/* TAB 8: FACULTY FEEDBACK */}
-          <TabsContent value="faculty" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-3">
-              <Card className="surface-elevated rounded-2xl border-border bg-card p-6 space-y-4">
-                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-                  <GraduationCap className="h-5 w-5 text-primary" /> Assigned Faculty Mentor
-                </h3>
-                <div className="rounded-2xl border border-border/60 bg-muted/30 p-5 space-y-2">
-                  <p className="text-base font-bold text-foreground">
-                    {project.faculty || "Independent Research"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {project.faculty ? "Assigned Academic Advisor & Reviewer" : "No external mentor assigned."}
-                  </p>
-                </div>
-              </Card>
-
-              <Card className="lg:col-span-2 surface-elevated rounded-2xl border-border bg-card p-6 space-y-6">
-                <div>
-                  <h3 className="text-base font-bold text-foreground">Faculty Feedback & Review Timeline</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Comments, suggestions, and feedback timeline from assigned faculty advisor.
-                  </p>
-                </div>
-
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-12 px-4 text-center bg-card/40">
-                  <MessageSquare className="h-8 w-8 text-muted-foreground mb-2" />
-                  <h4 className="text-sm font-bold text-foreground">No Faculty Feedback Yet</h4>
-                  <p className="mt-1 max-w-md text-xs text-muted-foreground">
-                    Faculty feedback and peer reviews for "{project.title}" will appear here when submitted by your advisor.
-                  </p>
-                </div>
-              </Card>
-            </div>
-          </TabsContent>
 
           {/* TAB 9: PROJECT SETTINGS */}
           <TabsContent value="settings">
