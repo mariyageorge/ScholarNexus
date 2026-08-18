@@ -47,7 +47,9 @@ function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Faculty Wizard State
   const [facultyStep, setFacultyStep] = useState<number>(1);
@@ -81,13 +83,32 @@ function RegisterPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (!acceptedTerms) {
-      setErrorMessage("You must agree to the Terms of Service and Privacy Policy.");
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!trimmedName || trimmedName.length < 3) {
+      setErrorMessage("Full name must be at least 3 characters.");
       return;
     }
 
-    if (!name.trim() || !email.trim() || !password.trim()) {
-      setErrorMessage("Please complete all required fields.");
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      setErrorMessage("Please enter a valid email address.");
+      return;
+    }
+
+    if (!password || password.length < 8) {
+      setErrorMessage("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (confirmPassword !== password) {
+      setErrorMessage("Passwords do not match.");
+      return;
+    }
+
+    if (!acceptedTerms) {
+      setErrorMessage("You must agree to the Terms of Service and Privacy Policy.");
       return;
     }
 
@@ -97,7 +118,7 @@ function RegisterPage() {
       const response = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password, role: "student" }),
+        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, password, role: "student" }),
       });
 
       const data = await response.json();
@@ -114,30 +135,61 @@ function RegisterPage() {
     }
   };
 
-  // Handle Faculty Wizard Step Navigation
+  // Handle Faculty Wizard Step Navigation Validation
   const validateFacultyStep = (step: number): boolean => {
     setErrorMessage(null);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (step === 1) {
-      if (!facultyData.name.trim() || !facultyData.email.trim() || !facultyData.phone.trim() || !facultyData.password.trim() || !facultyData.confirmPassword.trim()) {
-        setErrorMessage("Please fill in all Step 1 required basic fields.");
+      const trimmedName = facultyData.name.trim();
+      const trimmedEmail = facultyData.email.trim();
+      const trimmedPhone = facultyData.phone.trim();
+      const phoneDigits = trimmedPhone.replace(/\D/g, "");
+
+      if (!trimmedName || trimmedName.length < 3) {
+        setErrorMessage("Full name must be at least 3 characters.");
         return false;
       }
-      if (facultyData.password.length < 8) {
-        setErrorMessage("Password must be at least 8 characters long.");
+      if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+        setErrorMessage("Please enter a valid email address.");
+        return false;
+      }
+      if (!trimmedPhone || /[a-zA-Z]/.test(trimmedPhone) || phoneDigits.length < 7) {
+        setErrorMessage("Please enter a valid phone number.");
+        return false;
+      }
+      if (!facultyData.password || facultyData.password.length < 8) {
+        setErrorMessage("Password must be at least 8 characters.");
         return false;
       }
       if (facultyData.password !== facultyData.confirmPassword) {
-        setErrorMessage("Passwords do not match. Please re-enter.");
+        setErrorMessage("Passwords do not match.");
         return false;
       }
     } else if (step === 2) {
-      if (!facultyData.institution.trim() || !facultyData.department.trim() || !facultyData.designation.trim() || !facultyData.facultyId.trim()) {
-        setErrorMessage("Please fill in all Step 2 academic information fields.");
+      if (!facultyData.institution.trim()) {
+        setErrorMessage("Institution is required.");
+        return false;
+      }
+      if (!facultyData.department.trim()) {
+        setErrorMessage("Department is required.");
+        return false;
+      }
+      if (!facultyData.designation.trim()) {
+        setErrorMessage("Designation is required.");
+        return false;
+      }
+      if (!facultyData.facultyId.trim()) {
+        setErrorMessage("Faculty ID is required.");
         return false;
       }
     } else if (step === 3) {
-      if (!facultyData.researchInterests.trim() || !facultyData.areasOfExpertise.trim()) {
-        setErrorMessage("Please specify your Research Interests and Areas of Expertise.");
+      if (!facultyData.researchInterests.trim()) {
+        setErrorMessage("Research Interests are required.");
+        return false;
+      }
+      if (!facultyData.areasOfExpertise.trim()) {
+        setErrorMessage("Areas of Expertise are required.");
         return false;
       }
     }
@@ -159,6 +211,22 @@ function RegisterPage() {
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const validTypes = [
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ];
+    const fileExt = file.name.split(".").pop()?.toLowerCase();
+    const validExts = ["pdf", "png", "jpg", "jpeg", "doc", "docx"];
+
+    if (!validTypes.includes(file.type) && (!fileExt || !validExts.includes(fileExt))) {
+      setErrorMessage("Invalid file type. Please upload a PDF, PNG, JPG, or DOCX document.");
+      return;
+    }
 
     if (file.size > 5 * 1024 * 1024) {
       setErrorMessage("Document size must not exceed 5MB.");
@@ -183,13 +251,29 @@ function RegisterPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (!acceptedTerms) {
-      setErrorMessage("You must agree to the Terms of Service and Privacy Policy.");
+    // Validate all wizard steps in sequence before submission
+    if (!validateFacultyStep(1)) {
+      setFacultyStep(1);
+      return;
+    }
+    if (!validateFacultyStep(2)) {
+      setFacultyStep(2);
+      return;
+    }
+    if (!validateFacultyStep(3)) {
+      setFacultyStep(3);
       return;
     }
 
     if (!facultyData.verificationDocument) {
-      setErrorMessage("Verification Document is mandatory. Please upload your Faculty ID or Institutional proof.");
+      setFacultyStep(4);
+      setErrorMessage("Verification document is required.");
+      return;
+    }
+
+    if (!acceptedTerms) {
+      setFacultyStep(4);
+      setErrorMessage("You must agree to the Terms of Service and Privacy Policy.");
       return;
     }
 
@@ -200,18 +284,18 @@ function RegisterPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: facultyData.name,
-          email: facultyData.email,
+          name: facultyData.name.trim(),
+          email: facultyData.email.trim(),
           password: facultyData.password,
           role: "faculty",
-          phone: facultyData.phone,
-          institution: facultyData.institution,
-          department: facultyData.department,
-          designation: facultyData.designation,
-          facultyId: facultyData.facultyId,
-          researchInterests: facultyData.researchInterests,
-          areasOfExpertise: facultyData.areasOfExpertise,
-          orcid: facultyData.orcid,
+          phone: facultyData.phone.trim(),
+          institution: facultyData.institution.trim(),
+          department: facultyData.department.trim(),
+          designation: facultyData.designation.trim(),
+          facultyId: facultyData.facultyId.trim(),
+          researchInterests: facultyData.researchInterests.trim(),
+          areasOfExpertise: facultyData.areasOfExpertise.trim(),
+          orcid: facultyData.orcid.trim(),
           verificationDocument: facultyData.verificationDocument,
         }),
       });
@@ -410,6 +494,31 @@ function RegisterPage() {
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="confirmPassword" className="text-xs font-semibold text-foreground">
+                Confirm Password
+              </Label>
+              <div className="relative">
+                <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter password"
+                  className="pl-10 pr-10 rounded-xl focus-visible:ring-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>

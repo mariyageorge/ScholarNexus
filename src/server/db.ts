@@ -4394,23 +4394,12 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     }
 
     const reqData = body as Record<string, any>;
-    const name = String(reqData.name || "");
-    const email = String(reqData.email || "");
+    const name = String(reqData.name || "").trim();
+    const email = String(reqData.email || "").trim().toLowerCase();
     const password = String(reqData.password || "");
-    const role = String(reqData.role || "");
+    const role = String(reqData.role || "").trim().toLowerCase();
 
-    if (!name || !email || !password || !role) {
-      return new Response(
-        JSON.stringify({ error: "Invalid registration fields." }),
-        {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        },
-      );
-    }
-
-    const normalizedRole = role.toLowerCase();
-    if (normalizedRole !== "student" && normalizedRole !== "faculty") {
+    if (!role || (role !== "student" && role !== "faculty")) {
       return new Response(
         JSON.stringify({ error: "Only student and faculty roles are allowed for sign up." }),
         {
@@ -4420,9 +4409,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
-    if (!name.trim() || !email.trim() || !password.trim()) {
+    // 1. Full Name Validation: Required, Minimum 3 characters
+    if (!name || name.length < 3) {
       return new Response(
-        JSON.stringify({ error: "Name, email, and password are required." }),
+        JSON.stringify({ error: "Full name must be at least 3 characters." }),
         {
           status: 400,
           headers: { "content-type": "application/json" },
@@ -4430,6 +4420,123 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       );
     }
 
+    // 2. Email Validation: Required, Valid Format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !emailRegex.test(email)) {
+      return new Response(
+        JSON.stringify({ error: "Please enter a valid email address." }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    // 3. Password Validation: Required, Minimum 8 characters
+    if (!password || password.length < 8) {
+      return new Response(
+        JSON.stringify({ error: "Password must be at least 8 characters." }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    // 4. Faculty Specific Required Fields & Validation
+    if (role === "faculty") {
+      const phone = String(reqData.phone || "").trim();
+      const institution = String(reqData.institution || "").trim();
+      const department = String(reqData.department || "").trim();
+      const designation = String(reqData.designation || "").trim();
+      const facultyId = String(reqData.facultyId || "").trim();
+      const researchInterests = String(reqData.researchInterests || "").trim();
+      const areasOfExpertise = String(reqData.areasOfExpertise || "").trim();
+      const verificationDocument = String(reqData.verificationDocument || "").trim();
+
+      const phoneDigits = phone.replace(/\D/g, "");
+      if (!phone || /[a-zA-Z]/.test(phone) || phoneDigits.length < 7) {
+        return new Response(
+          JSON.stringify({ error: "Please enter a valid phone number." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!institution) {
+        return new Response(
+          JSON.stringify({ error: "Institution is required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!department) {
+        return new Response(
+          JSON.stringify({ error: "Department is required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!designation) {
+        return new Response(
+          JSON.stringify({ error: "Designation is required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!facultyId) {
+        return new Response(
+          JSON.stringify({ error: "Faculty ID is required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!researchInterests) {
+        return new Response(
+          JSON.stringify({ error: "Research Interests are required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!areasOfExpertise) {
+        return new Response(
+          JSON.stringify({ error: "Areas of Expertise are required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      if (!verificationDocument) {
+        return new Response(
+          JSON.stringify({ error: "Verification document is required." }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+    }
+
+    // 5. Duplicate Email Check
     const existingUser = await findUserByEmail(email);
     if (existingUser) {
       return new Response(
@@ -4448,15 +4555,15 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       email,
       password,
       role,
-      phone: reqData.phone,
-      institution: reqData.institution,
-      department: reqData.department,
-      designation: reqData.designation,
-      facultyId: reqData.facultyId,
-      researchInterests: reqData.researchInterests,
-      areasOfExpertise: reqData.areasOfExpertise,
-      orcid: reqData.orcid,
-      verificationDocument: reqData.verificationDocument,
+      phone: reqData.phone ? String(reqData.phone).trim() : undefined,
+      institution: reqData.institution ? String(reqData.institution).trim() : undefined,
+      department: reqData.department ? String(reqData.department).trim() : undefined,
+      designation: reqData.designation ? String(reqData.designation).trim() : undefined,
+      facultyId: reqData.facultyId ? String(reqData.facultyId).trim() : undefined,
+      researchInterests: reqData.researchInterests ? String(reqData.researchInterests).trim() : undefined,
+      areasOfExpertise: reqData.areasOfExpertise ? String(reqData.areasOfExpertise).trim() : undefined,
+      orcid: reqData.orcid ? String(reqData.orcid).trim() : undefined,
+      verificationDocument: reqData.verificationDocument ? String(reqData.verificationDocument) : undefined,
     });
 
     return new Response(JSON.stringify({ userId: result.insertedId, role }), {
