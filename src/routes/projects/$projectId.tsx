@@ -55,8 +55,27 @@ import {
   ShieldAlert,
   Compass,
   Award,
+  MoreVertical,
+  MoreHorizontal,
+  History,
+  FileCheck2,
+  Info,
+  Lock,
+  Edit3,
+  AlertTriangle,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
+import { useSidebar } from "@/components/ui/sidebar";
+
+function AutoCollapseWorkspaceSidebar() {
+  const { setOpen, isMobile } = useSidebar();
+  useEffect(() => {
+    if (!isMobile) {
+      setOpen(false);
+    }
+  }, [setOpen, isMobile]);
+  return null;
+}
 import { getUserSession, UserSession } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,6 +112,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/projects/$projectId")({
@@ -374,6 +412,13 @@ function ProjectWorkspacePage() {
   const [savingWork, setSavingWork] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
+  // Delete Work & Review State
+  const [workToDelete, setWorkToDelete] = useState<any | null>(null);
+  const [isDeleteWorkModalOpen, setIsDeleteWorkModalOpen] = useState(false);
+  const [deletingWork, setDeletingWork] = useState(false);
+  const [activeSectionId, setActiveSectionId] = useState<string>("abstract");
+  const lastReviewedSnapshotRef = useRef<Record<string, string>>({});
+
   // AI Assist Drawer State
   const [aiAssistSectionId, setAiAssistSectionId] = useState<string | null>(null);
   const [aiAssistAction, setAiAssistAction] = useState<string>("improve_writing");
@@ -531,6 +576,19 @@ ${s.keyTakeaway}
     loadResearchWork(projectId);
   }, [projectId]);
 
+  // Helper to construct a content snapshot string for change detection
+  const getDocContentSnapshot = (doc: any) => {
+    if (!doc) return "";
+    const t = (doc.title || "").trim();
+    const a = (doc.abstract || "").trim();
+    const k = Array.isArray(doc.keywords) ? doc.keywords.join(",") : (doc.keywords || "").trim();
+    const template = (doc.templateType || "").trim();
+    const s = Array.isArray(doc.sections)
+      ? doc.sections.map((sec: any) => `${sec.id || ''}:${(sec.title || '').trim()}:${(sec.content || '').trim()}`).join(";")
+      : "";
+    return `${template}::${t}::${a}::${k}::${s}`;
+  };
+
   const loadResearchWork = async (pId: string) => {
     setLoadingWork(true);
     try {
@@ -548,8 +606,20 @@ ${s.keyTakeaway}
     }
   };
 
+  // 1. Prevent duplicate template type research works for the same project
   const handleCreateResearchWork = async (templateType: string) => {
     if (!project || !user?.email) return;
+
+    const existingSameTypeDoc = researchWorkList.find(
+      (w) => w.templateType === templateType
+    );
+
+    if (existingSameTypeDoc) {
+      toast.info(`A ${templateType} already exists for this project ("${existingSameTypeDoc.title}"). Opening document.`);
+      setIsCreateWorkModalOpen(false);
+      setActiveWorkDoc(existingSameTypeDoc);
+      return;
+    }
 
     try {
       const titleStr = newWorkTitle.trim() || `${templateType} — ${new Date().toLocaleDateString()}`;
@@ -567,10 +637,11 @@ ${s.keyTakeaway}
 
       if (res.ok) {
         const createdDoc = await res.json();
-        toast.success(`Created "${createdDoc.title}".`);
+        toast.success(`Created research document "${createdDoc.title}".`);
         setIsCreateWorkModalOpen(false);
         setNewWorkTitle("");
-        await loadResearchWork(projectId);
+        // Optimistically prepend created doc to researchWorkList
+        setResearchWorkList((prev) => [createdDoc, ...prev]);
         setActiveWorkDoc(createdDoc);
       } else {
         const errData = await res.json();
@@ -583,7 +654,8 @@ ${s.keyTakeaway}
   };
 
   const handleSaveActiveWorkDoc = async (docToSave = activeWorkDoc, showToast = false) => {
-    if (!docToSave || !docToSave.id) return;
+    const docId = docToSave?.id || docToSave?._id;
+    if (!docToSave || !docId) return;
     setSavingWork(true);
     setJustSaved(false);
 
@@ -594,8 +666,9 @@ ${s.keyTakeaway}
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: docToSave.id,
+          id: docId,
           title: docToSave.title,
+          templateType: docToSave.templateType,
           abstract: docToSave.abstract,
           keywords: docToSave.keywords,
           sections: docToSave.sections,
@@ -610,7 +683,7 @@ ${s.keyTakeaway}
           toast.success("Research work saved successfully.");
         }
         setResearchWorkList((prev) =>
-          prev.map((w) => (w.id === docToSave.id ? { ...w, ...docToSave, lastSaved: now.toISOString() } : w))
+          prev.map((w) => ((w.id === docId || w._id === docId) ? { ...w, ...docToSave, lastSaved: now.toISOString() } : w))
         );
       } else {
         if (showToast) {
@@ -627,7 +700,81 @@ ${s.keyTakeaway}
     }
   };
 
+  // 2. Review Workflow & Change Detection Logic
+  const hasContentChangedSinceReview = useMemo(() => {
+    if (!activeWorkDoc) return false;
+    const docId = activeWorkDoc.id || activeWorkDoc._id;
+    if (!docId) return false;
+
+    const status = activeWorkDoc.reviewStatus || "Draft";
+    if (status === "Draft") return true;
+    if (status === "Pending Review") return false;
+
+    const currentSnapshot = getDocContentSnapshot(activeWorkDoc);
+    const initialSnapshot = lastReviewedSnapshotRef.current[docId];
+
+    if (!initialSnapshot) {
+      // First time loading this reviewed doc into editor
+      lastReviewedSnapshotRef.current[docId] = currentSnapshot;
+      return false;
+    }
+
+    return currentSnapshot !== initialSnapshot;
+  }, [activeWorkDoc]);
+
+  const canRequestReview = useMemo(() => {
+    if (!activeWorkDoc) return false;
+    if (currentSupervisionState !== "Approved") return false;
+    const status = activeWorkDoc.reviewStatus || "Draft";
+    if (status === "Pending Review") return false;
+    if (status === "Draft") return true;
+    return hasContentChangedSinceReview;
+  }, [activeWorkDoc, currentSupervisionState, hasContentChangedSinceReview]);
+
+  const docWordCount = useMemo(() => {
+    if (!activeWorkDoc) return 0;
+    let total = 0;
+    if (activeWorkDoc.abstract) {
+      total += activeWorkDoc.abstract.trim().split(/\s+/).filter(Boolean).length;
+    }
+    if (Array.isArray(activeWorkDoc.sections)) {
+      for (const sec of activeWorkDoc.sections) {
+        if (sec.content) {
+          total += sec.content.trim().split(/\s+/).filter(Boolean).length;
+        }
+      }
+    }
+    return total;
+  }, [activeWorkDoc]);
+
+  const docCharCount = useMemo(() => {
+    if (!activeWorkDoc) return 0;
+    let total = 0;
+    if (activeWorkDoc.abstract) {
+      total += activeWorkDoc.abstract.length;
+    }
+    if (Array.isArray(activeWorkDoc.sections)) {
+      for (const sec of activeWorkDoc.sections) {
+        if (sec.content) {
+          total += sec.content.length;
+        }
+      }
+    }
+    return total;
+  }, [activeWorkDoc]);
+
+  const docReviewsHistory = useMemo(() => {
+    if (!activeWorkDoc || !Array.isArray(projectReviews)) return [];
+    const targetDocId = String(activeWorkDoc.id || activeWorkDoc._id);
+    return projectReviews.filter(
+      (r) => String(r.documentId) === targetDocId || String(r.documentId) === String(activeWorkDoc.id)
+    );
+  }, [activeWorkDoc, projectReviews]);
+
   const handleRequestWorkReview = async (workDoc: any) => {
+    if (!workDoc) return;
+    const docId = workDoc.id || workDoc._id;
+
     if (currentSupervisionState !== "Approved") {
       toast.error("Faculty supervision required. Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.");
       return;
@@ -638,13 +785,24 @@ ${s.keyTakeaway}
       return;
     }
 
+    const status = workDoc.reviewStatus || "Draft";
+    if ((status === "Reviewed" || status === "Changes Requested" || status === "Approved") && !hasContentChangedSinceReview) {
+      toast.error("Please make meaningful edits to your research work after faculty review before submitting another review request.");
+      return;
+    }
+
+    // Save active doc changes first if needed
+    if (activeWorkDoc && (activeWorkDoc.id === docId || activeWorkDoc._id === docId)) {
+      await handleSaveActiveWorkDoc(activeWorkDoc);
+    }
+
     try {
       const res = await fetch("/api/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: project?.id || project?._id || projectId,
-          documentId: workDoc.id,
+          documentId: docId,
           paperTitle: workDoc.title,
           documentTitle: workDoc.title,
           studentEmail: user?.email,
@@ -655,9 +813,10 @@ ${s.keyTakeaway}
 
       if (res.ok) {
         toast.success(`Review request submitted to supervisor for "${workDoc.title}".`);
+        delete lastReviewedSnapshotRef.current[docId];
         await loadResearchWork(projectId);
         await fetchProjectReviews(projectId);
-        if (activeWorkDoc && activeWorkDoc.id === workDoc.id) {
+        if (activeWorkDoc && (activeWorkDoc.id === docId || activeWorkDoc._id === docId)) {
           setActiveWorkDoc((prev: any) => ({ ...prev, reviewStatus: "Pending Review" }));
         }
       } else {
@@ -667,6 +826,39 @@ ${s.keyTakeaway}
     } catch (err) {
       console.error(err);
       toast.error("An error occurred while requesting review.");
+    }
+  };
+
+  // 3. Delete Research Work Handler
+  const handleDeleteResearchWork = async (docToDelete: any) => {
+    if (!docToDelete) return;
+    const docId = docToDelete.id || docToDelete._id;
+    if (!docId) return;
+
+    setDeletingWork(true);
+    try {
+      const res = await fetch(`/api/research-work?id=${encodeURIComponent(docId)}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        toast.success(`Deleted Research Work "${docToDelete.title}".`);
+        setIsDeleteWorkModalOpen(false);
+        setWorkToDelete(null);
+        if (activeWorkDoc && (activeWorkDoc.id === docId || activeWorkDoc._id === docId)) {
+          setActiveWorkDoc(null);
+        }
+        // Immediate optimistic UI update - remove card instantly without refetching
+        setResearchWorkList((prev) => prev.filter((w) => w.id !== docId && w._id !== docId));
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || "Failed to delete research document.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("An error occurred while deleting research document.");
+    } finally {
+      setDeletingWork(false);
     }
   };
 
@@ -1463,8 +1655,9 @@ ${s.keyTakeaway}
 
   if (loading) {
     return (
-      <DashboardLayout>
-        <div className="mx-auto max-w-[1400px] space-y-6">
+      <DashboardLayout defaultOpen={false}>
+        <AutoCollapseWorkspaceSidebar />
+        <div className="mx-auto max-w-[1600px] w-full space-y-6">
           <Skeleton className="h-44 w-full rounded-2xl" />
           <Skeleton className="h-14 w-full rounded-2xl" />
           <Skeleton className="h-96 w-full rounded-2xl" />
@@ -1475,8 +1668,9 @@ ${s.keyTakeaway}
 
   if (!project) {
     return (
-      <DashboardLayout>
-        <div className="mx-auto max-w-[1400px] flex flex-col items-center justify-center py-20 text-center">
+      <DashboardLayout defaultOpen={false}>
+        <AutoCollapseWorkspaceSidebar />
+        <div className="mx-auto max-w-[1600px] w-full flex flex-col items-center justify-center py-20 text-center">
           <div className="grid h-16 w-16 place-items-center rounded-2xl bg-destructive/15 text-destructive mb-4">
             <AlertCircle className="h-8 w-8" />
           </div>
@@ -1509,14 +1703,15 @@ ${s.keyTakeaway}
   ];
 
   return (
-    <DashboardLayout>
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6 pb-12">
-        {/* Breadcrumb & Navigation Header */}
+    <DashboardLayout defaultOpen={false}>
+      <AutoCollapseWorkspaceSidebar />
+      <div className="mx-auto flex max-w-[1600px] w-full flex-col gap-6 pb-12">
+        {/* Breadcrumb & Workspace Control Header */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <button
               onClick={() => (window.location.href = "/projects")}
-              className="flex items-center gap-1 font-semibold text-muted-foreground hover:text-primary transition-colors"
+              className="flex items-center gap-1.5 font-semibold text-muted-foreground hover:text-primary transition-colors"
             >
               <FolderKanban className="h-3.5 w-3.5" /> Research Projects
             </button>
@@ -1524,83 +1719,90 @@ ${s.keyTakeaway}
             <span className="font-bold text-foreground truncate max-w-md">{project.title}</span>
           </div>
 
-          <Badge variant="outline" className={`gap-1 rounded-full px-2.5 py-0.5 font-semibold text-[0.7rem] ${statusCfg.className}`}>
-            <StatusIcon className="h-3 w-3" />
-            {statusCfg.label}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className={`gap-1.5 rounded-full px-3 py-1 font-semibold text-xs ${statusCfg.className}`}>
+              <StatusIcon className="h-3.5 w-3.5" />
+              {statusCfg.label}
+            </Badge>
+          </div>
         </div>
 
-        {/* Persistent Project Header Card */}
-        <section className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-card via-card to-card/90 p-6 md:p-8 shadow-sm">
-          <div className="absolute inset-0 grid-neural opacity-25" aria-hidden />
-          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl" aria-hidden />
+        {/* Persistent Academic Research Workspace Header Card */}
+        <section className="relative overflow-hidden rounded-2xl border border-border/80 bg-gradient-to-br from-card via-card to-card/90 p-6 md:p-8 shadow-sm backdrop-blur-md">
+          <div className="absolute inset-0 grid-neural opacity-20 pointer-events-none" aria-hidden />
+          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl pointer-events-none" aria-hidden />
 
           <div className="relative space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="rounded-full border-border bg-muted/60 px-3 py-1 text-xs font-medium">
+                <Badge variant="outline" className="rounded-full border-border/80 bg-muted/60 px-3 py-1 text-xs font-semibold tracking-wide text-foreground">
                   {project.domain || "General"}
                 </Badge>
                 <Badge variant="outline" className={`gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${statusCfg.className}`}>
                   <StatusIcon className="h-3.5 w-3.5" />
                   {statusCfg.label}
                 </Badge>
+                {currentSupervisionState === "Approved" && (
+                  <Badge variant="outline" className="gap-1.5 rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-500 px-3 py-1 text-xs font-semibold">
+                    <GraduationCap className="h-3.5 w-3.5" /> Under Supervision
+                  </Badge>
+                )}
               </div>
 
               <Button
                 onClick={() => setIsEditModalOpen(true)}
                 variant="outline"
                 size="sm"
-                className="gap-1.5 rounded-xl border-border bg-card/80 backdrop-blur-md text-xs shadow-sm hover:bg-muted"
+                className="gap-1.5 rounded-xl border-border/80 bg-card/90 backdrop-blur-md text-xs font-semibold shadow-xs hover:bg-accent hover:text-accent-foreground transition-all"
               >
-                <Pencil className="h-3.5 w-3.5 text-amber-500" /> Edit Project
+                <Pencil className="h-3.5 w-3.5 text-amber-500" /> Edit Parameters
               </Button>
             </div>
 
             <div className="space-y-2">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl lg:text-4xl">
+              <h1 className="text-2xl font-extrabold tracking-tight text-foreground md:text-3xl lg:text-4xl">
                 {project.title}
               </h1>
-              <p className="text-sm leading-relaxed text-muted-foreground max-w-4xl">
+              <p className="text-sm leading-relaxed text-muted-foreground max-w-5xl">
                 {project.description || "No description provided."}
               </p>
             </div>
 
             {/* Key Metadata Grid */}
             <div className="grid gap-4 pt-1 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-xl border border-border/70 bg-background/50 p-3.5 backdrop-blur-md">
-                <div className="flex items-center justify-between text-xs font-semibold mb-1.5">
-                  <span className="text-muted-foreground">Progress Completion</span>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40 hover:shadow-xs">
+                <div className="flex items-center justify-between text-xs font-semibold mb-2">
+                  <span className="text-muted-foreground uppercase tracking-wider text-[0.68rem]">Calculated Progress</span>
                   <span className="text-primary font-bold">{project.progress || 0}%</span>
                 </div>
                 <Progress value={project.progress || 0} className="h-2 rounded-full" />
               </div>
 
-              <div className="rounded-xl border border-border/70 bg-background/50 p-3.5 backdrop-blur-md">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">
+              <div className="rounded-xl border border-border/70 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40 hover:shadow-xs">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1.5">
                   Faculty Guide
                 </span>
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground truncate">
+                <span className="flex items-center gap-2 text-xs font-semibold text-foreground truncate">
                   <GraduationCap className="h-4 w-4 text-primary shrink-0" />
                   {project.faculty || "Independent Research"}
                 </span>
               </div>
 
-              <div className="rounded-xl border border-border/70 bg-background/50 p-3.5 backdrop-blur-md">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">
+              <div className="rounded-xl border border-border/70 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40 hover:shadow-xs">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1.5">
                   Start Date
                 </span>
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                   <Calendar className="h-4 w-4 text-primary shrink-0" />
                   {formatDate(project.startDate)}
                 </span>
               </div>
 
-              <div className="rounded-xl border border-border/70 bg-background/50 p-3.5 backdrop-blur-md">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">
+              <div className="rounded-xl border border-border/70 bg-background/60 p-4 backdrop-blur-md transition-all hover:border-primary/40 hover:shadow-xs">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground block mb-1.5">
                   Target Completion
                 </span>
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                   <Clock className="h-4 w-4 text-primary shrink-0" />
                   {formatDate(project.expectedCompletionDate)}
                 </span>
@@ -1609,17 +1811,17 @@ ${s.keyTakeaway}
           </div>
         </section>
 
-        {/* Workspace 9 Internal Navigation Tabs */}
+        {/* Workspace IDE Navigation Tabs Bar */}
         <Tabs value={activeWorkspaceTab} onValueChange={setActiveWorkspaceTab} className="space-y-6">
           <div className="overflow-x-auto pb-1">
-            <TabsList className="flex w-max min-w-full justify-start gap-1 bg-card/60 border border-border/80 p-1.5 rounded-2xl shadow-sm h-auto">
+            <TabsList className="flex w-max min-w-full justify-start gap-1.5 bg-card/80 border border-border/80 p-1.5 rounded-2xl shadow-xs h-auto backdrop-blur-md">
               {workspaceTabs.map((tab) => {
                 const TabIcon = tab.icon;
                 return (
                   <TabsTrigger
                     key={tab.id}
                     value={tab.id}
-                    className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md hover:bg-muted/50 whitespace-nowrap"
+                    className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm hover:bg-muted/60 whitespace-nowrap"
                   >
                     <TabIcon className="h-3.5 w-3.5 shrink-0" />
                     <span>{tab.label}</span>
@@ -2035,58 +2237,71 @@ ${s.keyTakeaway}
           )}
 
           {/* TAB 3: MY RESEARCH WORK */}
+          {/* TAB 3: MY RESEARCH WORK */}
           <TabsContent value="my-work" className="space-y-6">
             {activeWorkDoc ? (
-              /* ACADEMIC RESEARCH WORK EDITOR VIEW */
+              /* ACADEMIC RESEARCH WORK WRITING WORKBENCH / EDITOR VIEW */
               <div className="space-y-6">
-                <Card className="rounded-3xl border border-border bg-card p-6 shadow-sm space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                {/* Editor Header Bar */}
+                <Card className="rounded-2xl border border-border/80 bg-card/90 p-5 shadow-xs backdrop-blur-md space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-4">
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() => setActiveWorkDoc(null)}
-                          className="h-8 px-2 rounded-lg text-muted-foreground hover:text-foreground"
+                          className="h-8 px-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted font-semibold text-xs"
                         >
                           <ArrowLeft className="h-4 w-4 mr-1" /> Back to My Work
                         </Button>
-                        <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-xs font-semibold">
+                        <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-xs font-semibold rounded-full px-3">
                           {activeWorkDoc.templateType || "Research Paper"}
                         </Badge>
                         <Badge
                           variant="outline"
                           className={
                             activeWorkDoc.reviewStatus === "Pending Review"
-                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold"
-                              : activeWorkDoc.reviewStatus === "Reviewed"
-                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold"
-                              : "text-muted-foreground text-xs border-border"
+                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold rounded-full px-3"
+                              : activeWorkDoc.reviewStatus === "Reviewed" || activeWorkDoc.reviewStatus === "Changes Requested"
+                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold rounded-full px-3"
+                              : "text-muted-foreground text-xs border-border/80 bg-muted/40 rounded-full px-3"
                           }
                         >
                           {activeWorkDoc.reviewStatus || "Draft"}
                         </Badge>
+                        {currentSupervisionState === "Approved" && (
+                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold rounded-full px-3">
+                            <GraduationCap className="h-3 w-3 mr-1" /> Under Supervision
+                          </Badge>
+                        )}
                       </div>
+
                       <input
                         type="text"
-                        value={activeWorkDoc.title}
+                        value={activeWorkDoc.title || ""}
                         onChange={(e) => setActiveWorkDoc({ ...activeWorkDoc, title: e.target.value })}
                         onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
-                        className="text-xl font-extrabold bg-transparent text-foreground border-b border-transparent hover:border-border focus:border-primary focus:outline-none w-full transition-colors py-1"
+                        className="text-xl md:text-2xl font-extrabold bg-transparent text-foreground border-b border-transparent hover:border-border/80 focus:border-primary focus:outline-none w-full transition-colors py-1 truncate"
                         placeholder="Enter Research Paper Title..."
                       />
-                      <p className="text-xs text-muted-foreground">
-                        {autoSaveTimer || `Created ${new Date(activeWorkDoc.createdAt).toLocaleDateString()}`}
-                      </p>
+
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground pt-0.5">
+                        <span>{autoSaveTimer || `Last updated ${new Date(activeWorkDoc.updatedAt || activeWorkDoc.createdAt || Date.now()).toLocaleDateString()}`}</span>
+                        <span>•</span>
+                        <span>{docWordCount.toLocaleString()} Words</span>
+                        <span>•</span>
+                        <span>{docCharCount.toLocaleString()} Characters</span>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap shrink-0">
                       <Button
                         onClick={() => handleSaveActiveWorkDoc(activeWorkDoc, true)}
                         disabled={savingWork}
                         size="sm"
                         variant="outline"
-                        className="rounded-xl text-xs font-semibold gap-1.5 border-border"
+                        className="rounded-xl text-xs font-semibold gap-1.5 border-border/80 bg-background/80"
                       >
                         {savingWork ? (
                           <>
@@ -2098,55 +2313,235 @@ ${s.keyTakeaway}
                           </>
                         ) : (
                           <>
-                            <Save className="h-3.5 w-3.5" /> Save
+                            <Save className="h-3.5 w-3.5" /> Save Draft
                           </>
                         )}
                       </Button>
-                      <Button
-                        onClick={() => handleRequestWorkReview(activeWorkDoc)}
-                        disabled={
-                          activeWorkDoc.reviewStatus === "Pending Review" ||
-                          currentSupervisionState !== "Approved"
-                        }
-                        size="sm"
-                        className="rounded-xl text-xs font-bold gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        {activeWorkDoc.reviewStatus === "Pending Review" ? "Pending Review" : "Request Faculty Review"}
-                      </Button>
+
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              <Button
+                                onClick={() => handleRequestWorkReview(activeWorkDoc)}
+                                disabled={!canRequestReview}
+                                size="sm"
+                                className="rounded-xl text-xs font-bold gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs disabled:opacity-50"
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                                {activeWorkDoc.reviewStatus === "Pending Review"
+                                  ? "Pending Review"
+                                  : activeWorkDoc.reviewStatus === "Reviewed" && !hasContentChangedSinceReview
+                                  ? "Review Complete"
+                                  : "Request Faculty Review"}
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          {!canRequestReview && (
+                            <TooltipContent className="max-w-xs text-xs">
+                              {currentSupervisionState !== "Approved"
+                                ? "Faculty supervision required before submitting review requests."
+                                : activeWorkDoc.reviewStatus === "Pending Review"
+                                ? "An active review request is already pending with your supervisor."
+                                : "Make meaningful edits to your research document to enable requesting another review."}
+                            </TooltipContent>
+                          )}
+                        </Tooltip>
+                      </TooltipProvider>
+
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="icon" variant="outline" className="h-8 w-8 rounded-xl border-border/80">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52 rounded-xl text-xs">
+                          <DropdownMenuItem onClick={() => setIsCreateWorkModalOpen(true)} className="gap-2 cursor-pointer font-medium">
+                            <Edit3 className="h-3.5 w-3.5 text-muted-foreground" /> Change Document Type
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setWorkToDelete(activeWorkDoc);
+                              setIsDeleteWorkModalOpen(true);
+                            }}
+                            className="gap-2 cursor-pointer text-destructive focus:text-destructive font-semibold"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Delete Research Work
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
 
-                  {/* Supervision Requirement Notice if not approved */}
+                  {/* Supervision Notice if not approved */}
                   {currentSupervisionState !== "Approved" && (
-                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3.5 flex items-start gap-3">
-                      <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-                      <div className="space-y-0.5">
-                        <h5 className="font-bold text-xs text-amber-600 dark:text-amber-400">Faculty supervision required</h5>
-                        <p className="text-[0.725rem] text-muted-foreground leading-relaxed">
-                          Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.
-                        </p>
-                      </div>
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-3 text-xs">
+                      <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-amber-800 dark:text-amber-300 text-[0.725rem] leading-relaxed">
+                        <span className="font-bold">Faculty supervision required:</span> Request and receive approval from a faculty supervisor before submitting your Research Work for review.
+                      </p>
                     </div>
                   )}
 
-                  {/* Faculty Feedback Highlight if Reviewed */}
+                  {/* Faculty Supervisor Feedback Banner */}
                   {activeWorkDoc.feedback && (
-                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2 text-xs">
-                      <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 text-sm">
-                        <CheckCircle2 className="h-4 w-4" /> Faculty Supervisor Feedback:
-                      </span>
-                      <p className="text-foreground italic leading-relaxed whitespace-pre-wrap pl-6">"{activeWorkDoc.feedback}"</p>
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 text-xs">
+                          <CheckCircle2 className="h-4 w-4" /> Latest Faculty Supervisor Feedback
+                        </span>
+                        {hasContentChangedSinceReview ? (
+                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[0.68rem] font-semibold">
+                            Edits Detected — Re-review Available
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-500/30 text-amber-600 bg-amber-500/10 text-[0.68rem] font-semibold">
+                            Edit sections to enable re-review
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-foreground italic leading-relaxed whitespace-pre-wrap pl-6 text-xs">
+                        "{activeWorkDoc.feedback}"
+                      </p>
                     </div>
                   )}
 
-                  {/* Abstract & Keywords Inputs */}
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="sm:col-span-2 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                          Abstract
-                        </label>
+                  {/* Review History Accordion */}
+                  {docReviewsHistory.length > 0 && (
+                    <Accordion type="single" collapsible className="w-full">
+                      <AccordionItem value="review-history" className="border-border/60">
+                        <AccordionTrigger className="text-xs font-semibold py-2 hover:no-underline text-muted-foreground hover:text-foreground">
+                          <span className="flex items-center gap-2">
+                            <History className="h-3.5 w-3.5 text-primary" /> Faculty Review History ({docReviewsHistory.length} Cycles)
+                          </span>
+                        </AccordionTrigger>
+                        <AccordionContent className="pt-2 space-y-3">
+                          {docReviewsHistory.map((rev: any, rIdx: number) => (
+                            <div key={rev.id || rev._id || rIdx} className="rounded-xl border border-border/60 bg-muted/30 p-3 space-y-1.5 text-xs">
+                              <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
+                                <span className="font-semibold text-foreground">
+                                  Review #{docReviewsHistory.length - rIdx} — {rev.status || "Completed"}
+                                </span>
+                                <span>{formatDate(rev.reviewedAt || rev.createdAt)}</span>
+                              </div>
+                              {rev.feedback ? (
+                                <p className="text-foreground italic text-xs leading-relaxed">"{rev.feedback}"</p>
+                              ) : (
+                                <p className="text-muted-foreground text-[0.7rem] italic">No written comments recorded.</p>
+                              )}
+                            </div>
+                          ))}
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  )}
+                </Card>
+
+                {/* Two-Column Writing Workbench (Sidebar + Canvas) */}
+                <div className="flex flex-col lg:flex-row gap-6 items-start">
+                  {/* Left Column: Section Outline Sidebar */}
+                  <Card className="w-full lg:w-72 shrink-0 rounded-2xl border border-border/80 bg-card/90 p-4 space-y-4 shadow-xs lg:sticky lg:top-20">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Document Outline</h3>
+                        <p className="text-[0.68rem] text-muted-foreground mt-0.5">{activeWorkDoc.sections?.length || 0} Sections</p>
+                      </div>
+                      <Badge variant="outline" className="text-[0.65rem] font-semibold">
+                        {docWordCount.toLocaleString()} words
+                      </Badge>
+                    </div>
+
+                    {/* Section Outline List */}
+                    <div className="space-y-1 text-xs">
+                      {/* Abstract Item */}
+                      <button
+                        onClick={() => {
+                          setActiveSectionId("abstract");
+                          document.getElementById("section-card-abstract")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }}
+                        className={`flex items-center justify-between w-full p-2 rounded-xl text-left font-medium transition-all ${
+                          activeSectionId === "abstract"
+                            ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                            : "text-foreground hover:bg-muted/60"
+                        }`}
+                      >
+                        <span className="truncate flex items-center gap-2">
+                          <FileText className="h-3.5 w-3.5 shrink-0" /> Abstract
+                        </span>
+                        {(activeWorkDoc.abstract || "").trim().length > 30 && (
+                          <CheckCircle2 className={`h-3.5 w-3.5 shrink-0 ${activeSectionId === "abstract" ? "text-primary-foreground" : "text-emerald-500"}`} />
+                        )}
+                      </button>
+
+                      {/* Sections List */}
+                      {activeWorkDoc.sections?.map((sec: any, sIdx: number) => {
+                        const secWords = sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0;
+                        const isDone = secWords > 10;
+                        const secId = sec.id || `sec-${sIdx}`;
+                        const isActive = activeSectionId === secId;
+
+                        return (
+                          <button
+                            key={secId}
+                            onClick={() => {
+                              setActiveSectionId(secId);
+                              document.getElementById(`section-card-${secId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                            className={`flex items-center justify-between w-full p-2 rounded-xl text-left font-medium transition-all ${
+                              isActive
+                                ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                                : "text-foreground hover:bg-muted/60"
+                            }`}
+                          >
+                            <span className="truncate flex items-center gap-2">
+                              <span className="font-bold text-[0.7rem] opacity-75 shrink-0">{sIdx + 1}.</span>
+                              <span className="truncate">{sec.title || `Section ${sIdx + 1}`}</span>
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`text-[0.65rem] ${isActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                                {secWords}w
+                              </span>
+                              {isDone && (
+                                <CheckCircle2 className={`h-3.5 w-3.5 ${isActive ? "text-primary-foreground" : "text-emerald-500"}`} />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <Button
+                      onClick={() => {
+                        const newSecId = `sec-${Date.now()}`;
+                        const updatedSecs = [
+                          ...(activeWorkDoc.sections || []),
+                          { id: newSecId, title: `${(activeWorkDoc.sections?.length || 0) + 1}. New Section`, content: "" },
+                        ];
+                        const updated = { ...activeWorkDoc, sections: updatedSecs };
+                        setActiveWorkDoc(updated);
+                        handleSaveActiveWorkDoc(updated);
+                        setActiveSectionId(newSecId);
+                      }}
+                      variant="outline"
+                      className="w-full text-xs font-semibold gap-1.5 rounded-xl border-dashed border-border py-2"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add Section
+                    </Button>
+                  </Card>
+
+                  {/* Right Column: Writing Canvas */}
+                  <div className="flex-1 min-w-0 w-full space-y-6">
+                    {/* Abstract & Keywords Card */}
+                    <Card id="section-card-abstract" className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs">
+                      <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-primary" /> Abstract
+                          </h3>
+                          <p className="text-[0.7rem] text-muted-foreground">Executive summary of research problem, methodology, and conclusions.</p>
+                        </div>
+
                         <Button
                           size="sm"
                           variant="ghost"
@@ -2155,164 +2550,182 @@ ${s.keyTakeaway}
                             setAiAssistAction("generate_abstract");
                             setAiSuggestion(null);
                           }}
-                          className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1"
+                          className="h-7 px-2.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded-xl gap-1"
                         >
-                          <Sparkles className="h-3 w-3" /> AI Assist
+                          <Sparkles className="h-3.5 w-3.5" /> AI Assist
                         </Button>
                       </div>
+
                       <Textarea
                         value={activeWorkDoc.abstract || ""}
                         onChange={(e) => setActiveWorkDoc({ ...activeWorkDoc, abstract: e.target.value })}
+                        onFocus={() => setActiveSectionId("abstract")}
                         onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
                         placeholder="Write a concise abstract summarizing your research problem, methodology, findings, and conclusions..."
-                        className="min-h-[100px] text-xs rounded-xl border-border bg-background/50 focus:border-primary"
+                        className="min-h-[120px] text-xs leading-relaxed rounded-xl border-border/80 bg-background/60 focus:border-primary font-sans p-3.5"
                       />
-                    </div>
 
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-foreground">Keywords</label>
-                      <Input
-                        value={Array.isArray(activeWorkDoc.keywords) ? activeWorkDoc.keywords.join(", ") : activeWorkDoc.keywords || ""}
-                        onChange={(e) =>
-                          setActiveWorkDoc({
-                            ...activeWorkDoc,
-                            keywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
-                          })
-                        }
-                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
-                        placeholder="e.g. Deep Learning, NLP, Healthcare"
-                        className="text-xs rounded-xl border-border bg-background/50"
-                      />
-                      <p className="text-[0.68rem] text-muted-foreground">Comma-separated academic keywords.</p>
-                    </div>
-                  </div>
-                </Card>
-
-                {/* Section Writing List */}
-                <div className="space-y-4">
-                  {activeWorkDoc.sections?.map((sec: any, idx: number) => (
-                    <Card key={sec.id || idx} className="rounded-2xl border border-border bg-card p-5 space-y-3 shadow-sm">
-                      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
-                        <input
-                          type="text"
-                          value={sec.title}
-                          onChange={(e) => {
-                            const updatedSecs = activeWorkDoc.sections.map((s: any) =>
-                              s.id === sec.id ? { ...s, title: e.target.value } : s
-                            );
-                            setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
-                          }}
-                          onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
-                          className="font-bold text-sm bg-transparent text-foreground border-b border-transparent hover:border-border focus:border-primary focus:outline-none w-full max-w-lg transition-colors py-0.5"
-                          placeholder="Section Title..."
-                        />
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          {idx > 0 && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => {
-                                const newSecs = [...activeWorkDoc.sections];
-                                const temp = newSecs[idx];
-                                newSecs[idx] = newSecs[idx - 1];
-                                newSecs[idx - 1] = temp;
-                                const updated = { ...activeWorkDoc, sections: newSecs };
-                                setActiveWorkDoc(updated);
-                                handleSaveActiveWorkDoc(updated);
-                              }}
-                              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
-                            >
-                              <ArrowUp className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {idx < activeWorkDoc.sections.length - 1 && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => {
-                                const newSecs = [...activeWorkDoc.sections];
-                                const temp = newSecs[idx];
-                                newSecs[idx] = newSecs[idx + 1];
-                                newSecs[idx + 1] = temp;
-                                const updated = { ...activeWorkDoc, sections: newSecs };
-                                setActiveWorkDoc(updated);
-                                handleSaveActiveWorkDoc(updated);
-                              }}
-                              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
-                            >
-                              <ArrowDown className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => {
-                              const filtered = activeWorkDoc.sections.filter((s: any) => s.id !== sec.id);
-                              const updated = { ...activeWorkDoc, sections: filtered };
-                              setActiveWorkDoc(updated);
-                              handleSaveActiveWorkDoc(updated);
-                            }}
-                            className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-border/60">
+                        <div className="flex-1 space-y-1">
+                          <label className="text-[0.7rem] font-bold text-foreground block">Keywords</label>
+                          <Input
+                            value={Array.isArray(activeWorkDoc.keywords) ? activeWorkDoc.keywords.join(", ") : activeWorkDoc.keywords || ""}
+                            onChange={(e) =>
+                              setActiveWorkDoc({
+                                ...activeWorkDoc,
+                                keywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
+                              })
+                            }
+                            onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                            placeholder="e.g. Machine Learning, Neural Networks, Computer Vision"
+                            className="text-xs rounded-xl border-border/80 bg-background/60 h-8"
+                          />
+                        </div>
+                        <div className="text-right text-[0.68rem] text-muted-foreground shrink-0 self-end">
+                          {(activeWorkDoc.abstract || "").trim().split(/\s+/).filter(Boolean).length} words • {(activeWorkDoc.abstract || "").length} characters
                         </div>
                       </div>
-
-                      <Textarea
-                        value={sec.content || ""}
-                        onChange={(e) => {
-                          const updatedSecs = activeWorkDoc.sections.map((s: any) =>
-                            s.id === sec.id ? { ...s, content: e.target.value } : s
-                          );
-                          setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
-                        }}
-                        onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
-                        placeholder={`Write section content for "${sec.title}"...`}
-                        className="min-h-[140px] text-xs font-mono leading-relaxed rounded-xl border-border bg-background/50 focus:border-primary"
-                      />
-
-                      <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground pt-1">
-                        <span>
-                          Word Count: {sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0} words
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setAiAssistSectionId(sec.id);
-                            setAiAssistAction("improve_writing");
-                            setAiSuggestion(null);
-                          }}
-                          className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
-                        >
-                          <Sparkles className="h-3 w-3" /> AI Assist Section
-                        </Button>
-                      </div>
                     </Card>
-                  ))}
 
-                  <Button
-                    onClick={() => {
-                      const newSecId = `sec-${Date.now()}`;
-                      const updatedSecs = [
-                        ...(activeWorkDoc.sections || []),
-                        { id: newSecId, title: `${(activeWorkDoc.sections?.length || 0) + 1}. New Section`, content: "" },
-                      ];
-                      const updated = { ...activeWorkDoc, sections: updatedSecs };
-                      setActiveWorkDoc(updated);
-                      handleSaveActiveWorkDoc(updated);
-                    }}
-                    variant="outline"
-                    className="w-full py-6 rounded-2xl border-dashed border-border text-xs font-bold text-muted-foreground hover:text-foreground gap-2"
-                  >
-                    <Plus className="h-4 w-4" /> Add New Section
-                  </Button>
+                    {/* Numbered Sections */}
+                    {activeWorkDoc.sections?.map((sec: any, idx: number) => {
+                      const secId = sec.id || `sec-${idx}`;
+                      const secWords = sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0;
+                      const secChars = sec.content ? sec.content.length : 0;
+
+                      return (
+                        <Card id={`section-card-${secId}`} key={secId} className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs">
+                          <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary/10 text-primary font-bold text-xs shrink-0">
+                                {idx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                value={sec.title || ""}
+                                onChange={(e) => {
+                                  const updatedSecs = activeWorkDoc.sections.map((s: any) =>
+                                    s.id === sec.id ? { ...s, title: e.target.value } : s
+                                  );
+                                  setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
+                                }}
+                                onFocus={() => setActiveSectionId(secId)}
+                                onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                                className="font-bold text-sm bg-transparent text-foreground border-b border-transparent hover:border-border/80 focus:border-primary focus:outline-none w-full max-w-lg transition-colors py-0.5"
+                                placeholder={`Section ${idx + 1} Title...`}
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              {idx > 0 && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    const newSecs = [...activeWorkDoc.sections];
+                                    const temp = newSecs[idx];
+                                    newSecs[idx] = newSecs[idx - 1];
+                                    newSecs[idx - 1] = temp;
+                                    const updated = { ...activeWorkDoc, sections: newSecs };
+                                    setActiveWorkDoc(updated);
+                                    handleSaveActiveWorkDoc(updated);
+                                  }}
+                                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                                >
+                                  <ArrowUp className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {idx < activeWorkDoc.sections.length - 1 && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    const newSecs = [...activeWorkDoc.sections];
+                                    const temp = newSecs[idx];
+                                    newSecs[idx] = newSecs[idx + 1];
+                                    newSecs[idx + 1] = temp;
+                                    const updated = { ...activeWorkDoc, sections: newSecs };
+                                    setActiveWorkDoc(updated);
+                                    handleSaveActiveWorkDoc(updated);
+                                  }}
+                                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
+                                >
+                                  <ArrowDown className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => {
+                                  const filtered = activeWorkDoc.sections.filter((s: any) => s.id !== sec.id);
+                                  const updated = { ...activeWorkDoc, sections: filtered };
+                                  setActiveWorkDoc(updated);
+                                  handleSaveActiveWorkDoc(updated);
+                                }}
+                                className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          <Textarea
+                            value={sec.content || ""}
+                            onChange={(e) => {
+                              const updatedSecs = activeWorkDoc.sections.map((s: any) =>
+                                s.id === sec.id ? { ...s, content: e.target.value } : s
+                              );
+                              setActiveWorkDoc({ ...activeWorkDoc, sections: updatedSecs });
+                            }}
+                            onFocus={() => setActiveSectionId(secId)}
+                            onBlur={() => handleSaveActiveWorkDoc(activeWorkDoc)}
+                            placeholder={`Write academic section content for "${sec.title || `Section ${idx + 1}`}"...`}
+                            className="min-h-[160px] text-xs font-mono leading-relaxed rounded-xl border-border/80 bg-background/60 focus:border-primary p-3.5"
+                          />
+
+                          <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground pt-1 border-t border-border/60">
+                            <span>
+                              {secWords} words • {secChars} characters
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setAiAssistSectionId(sec.id);
+                                setAiAssistAction("improve_writing");
+                                setAiSuggestion(null);
+                              }}
+                              className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
+                            >
+                              <Sparkles className="h-3 w-3" /> AI Assist Section
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+
+                    <Button
+                      onClick={() => {
+                        const newSecId = `sec-${Date.now()}`;
+                        const updatedSecs = [
+                          ...(activeWorkDoc.sections || []),
+                          { id: newSecId, title: `${(activeWorkDoc.sections?.length || 0) + 1}. New Section`, content: "" },
+                        ];
+                        const updated = { ...activeWorkDoc, sections: updatedSecs };
+                        setActiveWorkDoc(updated);
+                        handleSaveActiveWorkDoc(updated);
+                        setActiveSectionId(newSecId);
+                      }}
+                      variant="outline"
+                      className="w-full py-6 rounded-2xl border-dashed border-border/80 text-xs font-bold text-muted-foreground hover:text-foreground gap-2"
+                    >
+                      <Plus className="h-4 w-4" /> Add New Section
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (
-              /* MY RESEARCH WORK LIST VIEW */
+              /* ALL RESEARCH WORKS HUB (OVERVIEW VIEW) */
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3 gap-3">
                   <div>
@@ -2320,19 +2733,20 @@ ${s.keyTakeaway}
                       <Pencil className="h-5 w-5 text-primary" /> My Research Work
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      Write and manage your own research paper, proposal, literature review, and other research documents.
+                      Write, manage, and track all your academic research papers, proposals, literature reviews, and reports for this project.
                     </p>
                   </div>
 
                   <Button
                     onClick={() => setIsCreateWorkModalOpen(true)}
-                    className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold shadow-md"
+                    className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-md shrink-0"
                   >
                     <Plus className="h-4 w-4" /> Create Research Work
                   </Button>
                 </div>
 
                 {researchWorkList.length === 0 ? (
+                  /* EMPTY STATE */
                   <Card className="surface-elevated flex flex-col items-center justify-center rounded-2xl border-dashed border-border py-16 px-6 text-center space-y-4">
                     <div className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/15 text-primary">
                       <FileEdit className="h-8 w-8" />
@@ -2340,7 +2754,7 @@ ${s.keyTakeaway}
                     <div className="space-y-1 max-w-md">
                       <h3 className="text-lg font-bold text-foreground">No Research Work Created Yet</h3>
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        Start writing your own academic paper, research proposal, or literature review for this project.
+                        Create an academic paper, research proposal, or literature review for this project to start writing sections and requesting faculty review.
                       </p>
                     </div>
                     <Button
@@ -2351,71 +2765,154 @@ ${s.keyTakeaway}
                     </Button>
                   </Card>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  /* ALL RESEARCH WORKS CARDS GRID */
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-2">
                     {researchWorkList.map((doc) => (
-                      <Card key={doc.id} className="rounded-2xl border border-border bg-card p-5 space-y-4 hover:border-primary/40 transition-all shadow-sm">
-                        <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
-                          <div className="space-y-1">
-                            <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.65rem] font-semibold">
-                              {doc.templateType || "Research Paper"}
-                            </Badge>
-                            <h3 className="font-bold text-foreground text-sm leading-tight">{doc.title}</h3>
-                            <p className="text-[0.7rem] text-muted-foreground">
-                              Last saved: {doc.lastSaved ? new Date(doc.lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently"}
-                            </p>
+                      <Card key={doc.id || doc._id} className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs hover:border-primary/40 transition-all flex flex-col justify-between">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.68rem] font-semibold rounded-full px-2.5">
+                                  {doc.templateType || "Research Paper"}
+                                </Badge>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    doc.reviewStatus === "Pending Review"
+                                      ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
+                                      : doc.reviewStatus === "Reviewed" || doc.reviewStatus === "Changes Requested"
+                                      ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
+                                      : "text-muted-foreground text-[0.68rem] border-border/80 bg-muted/40 rounded-full px-2.5"
+                                  }
+                                >
+                                  {doc.reviewStatus || "Draft"}
+                                </Badge>
+                              </div>
+                              <h3 className="font-extrabold text-foreground text-base leading-snug truncate pt-1" title={doc.title}>
+                                {doc.title}
+                              </h3>
+                              <p className="text-[0.68rem] text-muted-foreground flex items-center gap-1">
+                                <FolderKanban className="h-3 w-3 text-muted-foreground shrink-0" />
+                                <span className="truncate">{project.title}</span>
+                              </p>
+                            </div>
+
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground shrink-0">
+                                  <MoreVertical className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48 rounded-xl text-xs">
+                                <DropdownMenuItem onClick={() => setActiveWorkDoc(doc)} className="gap-2 cursor-pointer font-medium">
+                                  <FileEdit className="h-3.5 w-3.5 text-primary" /> Open Editor
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={
+                                    doc.reviewStatus === "Pending Review" ||
+                                    currentSupervisionState !== "Approved"
+                                  }
+                                  onClick={() => handleRequestWorkReview(doc)}
+                                  className="gap-2 cursor-pointer font-medium"
+                                >
+                                  <Send className="h-3.5 w-3.5 text-muted-foreground" /> Request Review
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setWorkToDelete(doc);
+                                    setIsDeleteWorkModalOpen(true);
+                                  }}
+                                  className="gap-2 cursor-pointer text-destructive focus:text-destructive font-semibold"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" /> Delete Research Work
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
-                          <Badge
-                            variant="outline"
-                            className={
-                              doc.reviewStatus === "Pending Review"
-                                ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-semibold shrink-0"
-                                : doc.reviewStatus === "Reviewed"
-                                ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.65rem] font-semibold shrink-0"
-                                : "text-muted-foreground text-[0.65rem] font-normal border-border shrink-0"
-                            }
-                          >
-                            {doc.reviewStatus || "Draft"}
-                          </Badge>
+
+                          {/* Abstract Preview */}
+                          {doc.abstract ? (
+                            <p className="text-xs text-muted-foreground line-clamp-2 italic leading-relaxed bg-muted/20 p-2.5 rounded-xl border border-border/40">
+                              "{doc.abstract}"
+                            </p>
+                          ) : (
+                            <p className="text-[0.7rem] text-muted-foreground italic bg-muted/10 p-2.5 rounded-xl border border-dashed border-border/40">
+                              No abstract written yet. Click Open Editor to write abstract.
+                            </p>
+                          )}
+
+                          {/* Latest Faculty Supervisor Feedback */}
+                          {doc.feedback && (
+                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[0.7rem] text-foreground italic space-y-0.5">
+                              <span className="font-bold text-emerald-600 dark:text-emerald-400 block not-italic flex items-center gap-1">
+                                <CheckCircle2 className="h-3 w-3" /> Faculty Supervisor Feedback:
+                              </span>
+                              <p className="line-clamp-2">"{doc.feedback}"</p>
+                            </div>
+                          )}
                         </div>
 
-                        {doc.abstract && (
-                          <p className="text-xs text-muted-foreground line-clamp-2 italic">
-                            "{doc.abstract}"
-                          </p>
-                        )}
-
-                        {doc.feedback && (
-                          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[0.725rem] text-foreground italic">
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400 block not-italic">Faculty Feedback:</span>
-                            "{doc.feedback}"
+                        <div className="space-y-3 pt-3 border-t border-border/60">
+                          <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
+                            <span>
+                              {doc.sections?.length || 0} Sections • {doc.sections ? doc.sections.reduce((acc: number, s: any) => acc + (s.content ? s.content.trim().split(/\s+/).filter(Boolean).length : 0), 0) : 0} Words
+                            </span>
+                            <span>
+                              {doc.lastSaved ? `Saved ${new Date(doc.lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "Recently saved"}
+                            </span>
                           </div>
-                        )}
-
-                        <div className="flex items-center justify-between pt-2 border-t border-border/60">
-                          <span className="text-[0.7rem] text-muted-foreground">
-                            {doc.sections?.length || 0} Sections
-                          </span>
 
                           <div className="flex items-center gap-2">
                             <Button
                               size="sm"
                               onClick={() => setActiveWorkDoc(doc)}
-                              className="rounded-xl text-xs font-semibold px-3 h-7 bg-primary text-primary-foreground"
+                              className="rounded-xl text-xs font-semibold flex-1 h-8 bg-primary text-primary-foreground shadow-xs"
                             >
-                              <FileEdit className="h-3 w-3 mr-1" /> Open Editor
+                              <FileEdit className="h-3.5 w-3.5 mr-1" /> Open Editor
                             </Button>
+
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={
+                                        doc.reviewStatus === "Pending Review" ||
+                                        currentSupervisionState !== "Approved"
+                                      }
+                                      onClick={() => handleRequestWorkReview(doc)}
+                                      className="rounded-xl text-xs font-semibold h-8 border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
+                                    >
+                                      <Send className="h-3.5 w-3.5 mr-1" />
+                                      {doc.reviewStatus === "Pending Review" ? "Pending" : "Review"}
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                {(doc.reviewStatus === "Pending Review" || currentSupervisionState !== "Approved") && (
+                                  <TooltipContent className="max-w-xs text-xs">
+                                    {currentSupervisionState !== "Approved"
+                                      ? "Faculty supervision required before submitting review requests."
+                                      : "An active review request is already pending with your supervisor."}
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={
-                                doc.reviewStatus === "Pending Review" ||
-                                (project.supervisionStatus !== "Under Supervision" && !project.facultyEmail)
-                              }
-                              onClick={() => handleRequestWorkReview(doc)}
-                              className="rounded-xl text-xs font-semibold px-2.5 h-7 border-primary/40 text-primary hover:bg-primary/10"
+                              onClick={() => {
+                                setWorkToDelete(doc);
+                                setIsDeleteWorkModalOpen(true);
+                              }}
+                              className="rounded-xl text-xs h-8 px-2.5 border-destructive/30 text-destructive hover:bg-destructive/10 shrink-0"
+                              title="Delete Research Work"
                             >
-                              <MessageSquare className="h-3 w-3 mr-1" />
-                              {doc.reviewStatus === "Pending Review" ? "Pending Review" : "Request Review"}
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </div>
@@ -3490,6 +3987,51 @@ ${s.keyTakeaway}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Research Work Confirmation Modal */}
+      <AlertDialog open={isDeleteWorkModalOpen} onOpenChange={setIsDeleteWorkModalOpen}>
+        <AlertDialogContent className="rounded-2xl max-w-md border-border bg-card p-6 shadow-2xl">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-destructive/15 text-destructive shrink-0">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-foreground">Delete Research Work?</AlertDialogTitle>
+                <AlertDialogDescription className="text-xs text-muted-foreground mt-0.5">
+                  This action will permanently remove this research document.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <p className="text-foreground font-medium">
+              Are you sure you want to delete <span className="font-bold text-destructive">"{workToDelete?.title}"</span>?
+            </p>
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-amber-800 dark:text-amber-300 space-y-1">
+              <span className="font-bold block text-xs">⚠️ Permanent Deletion Warning</span>
+              <p className="text-[0.725rem] leading-relaxed">
+                All draft sections, abstract content, and keywords for this document will be permanently deleted. Your main research project will remain intact.
+              </p>
+            </div>
+          </div>
+
+          <AlertDialogFooter className="gap-2 sm:gap-0 pt-2">
+            <AlertDialogCancel disabled={deletingWork} className="rounded-xl text-xs font-semibold">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingWork}
+              onClick={() => handleDeleteResearchWork(workToDelete)}
+              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90 text-xs font-bold gap-1.5"
+            >
+              {deletingWork ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete Research Work
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Create Research Work Template Modal */}
       <Dialog open={isCreateWorkModalOpen} onOpenChange={setIsCreateWorkModalOpen}>

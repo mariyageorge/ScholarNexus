@@ -2325,19 +2325,31 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       await workCol.updateOne({ _id: existingDoc._id }, { $set: updateFields });
 
       if (existingDoc?.projectId) {
-        await calculateProjectProgress(existingDoc.projectId);
+        calculateProjectProgress(existingDoc.projectId).catch((err) =>
+          console.error("Async progress calculation error:", err)
+        );
       }
 
-      const updatedDoc = await workCol.findOne({ _id: existingDoc._id });
-      const formatted = updatedDoc ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() } : null;
+      const formatted = {
+        ...existingDoc,
+        ...updateFields,
+        id: existingDoc._id.toString(),
+        _id: existingDoc._id.toString(),
+      };
 
-      return new Response(JSON.stringify(formatted || { success: true }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(formatted), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
     if (request.method === "DELETE") {
       const workId = url.searchParams.get("id");
       if (!workId) {
-        return new Response(JSON.stringify({ error: "Research Work ID is required." }), { status: 400, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ error: "Research Work ID is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
       }
 
       let objId: any = workId;
@@ -2347,10 +2359,15 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       await workCol.deleteOne({ $or: [{ _id: objId }, { id: String(workId) }] });
 
       if (existingDoc?.projectId) {
-        await calculateProjectProgress(existingDoc.projectId);
+        calculateProjectProgress(existingDoc.projectId).catch((err) =>
+          console.error("Async progress calculation error:", err)
+        );
       }
 
-      return new Response(JSON.stringify({ success: true, message: "Research document deleted." }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ success: true, message: "Research document deleted." }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
   }
 
