@@ -1005,11 +1005,6 @@ ${s.keyTakeaway}
       errors.status = "Project Status is required.";
     }
 
-    const prog = Number(formData.progress);
-    if (isNaN(prog) || prog < 0 || prog > 100) {
-      errors.progress = "Progress completion must be between 0% and 100%.";
-    }
-
     if (!formData.expectedCompletionDate) {
       errors.expectedCompletionDate = "Expected Completion Date is required.";
     } else if (project?.startDate) {
@@ -3274,23 +3269,6 @@ ${s.keyTakeaway}
                   <SelectItem value="On Hold" className="text-xs">On Hold</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            {/* Progress Completion Slider */}
-            <div className="space-y-2 pt-1">
-              <div className="flex justify-between items-center">
-                <Label className="text-xs font-semibold text-foreground">Progress Completion</Label>
-                <span className="text-xs font-bold text-primary">{formData.progress}%</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                tabIndex={0}
-                value={formData.progress}
-                onChange={(e) => handleFieldChange("progress", Number(e.target.value))}
-                className="w-full h-2 rounded-lg bg-muted accent-primary cursor-pointer"
-              />
             </div>
 
             {/* Start Date (Read-only) */}

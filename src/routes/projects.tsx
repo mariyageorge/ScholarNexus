@@ -302,12 +302,6 @@ function ResearchProjectsPage() {
       errors.description = "Description cannot exceed 1000 characters.";
     }
 
-    // Progress: Number 0 - 100
-    const prog = Number(formData.progress);
-    if (isNaN(prog) || prog < 0 || prog > 100) {
-      errors.progress = "Progress must be between 0 and 100.";
-    }
-
     // Start Date & Expected Completion Date Validation
     if (!editingProject) {
       // NEW PROJECT CREATION RULES:
@@ -998,38 +992,6 @@ function ResearchProjectsPage() {
                   </p>
                 )}
               </div>
-            </div>
-
-            {/* Progress Completion Field */}
-            <div className="space-y-1.5">
-              <div className="flex justify-between">
-                <Label className="text-xs font-semibold text-foreground">
-                  Progress Completion (%) <span className="text-destructive">*</span>
-                </Label>
-                <span className="text-xs font-bold text-primary">{formData.progress}%</span>
-              </div>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={formData.progress}
-                onChange={(e) =>
-                  handleFieldChange(
-                    "progress",
-                    Math.min(100, Math.max(0, Number(e.target.value) || 0))
-                  )
-                }
-                onBlur={() => handleBlur("progress")}
-                className={`rounded-xl text-sm ${touched.progress && fieldErrors.progress
-                    ? "border-destructive focus-visible:ring-destructive"
-                    : ""
-                  }`}
-              />
-              {touched.progress && fieldErrors.progress && (
-                <p className="text-[0.75rem] text-destructive font-medium mt-1">
-                  {fieldErrors.progress}
-                </p>
-              )}
             </div>
 
             {/* Description & Objectives */}

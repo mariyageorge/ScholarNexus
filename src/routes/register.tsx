@@ -120,7 +120,7 @@ function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmedName, email: trimmedEmail, password, role: "student" }),
       });
-
+ 
       const data = await response.json();
 
       if (!response.ok) {

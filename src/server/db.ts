@@ -462,10 +462,13 @@ export async function findProjectsByUser(userEmail: string, search?: string, sta
 export async function createProject(project: Omit<ProjectRecord, "_id">) {
   const collection = await getCollection<Document>("projects");
   const result = await collection.insertOne(project as any);
+  const createdId = result.insertedId.toString();
+  const calculatedProgress = await calculateProjectProgress(createdId);
   return {
     ...project,
-    id: result.insertedId.toString(),
-    _id: result.insertedId.toString(),
+    progress: calculatedProgress,
+    id: createdId,
+    _id: createdId,
   };
 }
 
@@ -494,7 +497,7 @@ export async function updateProject(id: string, userEmail: string, updates: Part
     throw new Error("Unauthorized to modify this project.");
   }
 
-  const { _id, id: _ignoreId, startDate: _ignoreStartDate, ...cleanUpdates } = updates as any;
+  const { _id, id: _ignoreId, progress: _ignoreProgress, startDate: _ignoreStartDate, ...cleanUpdates } = updates as any;
   cleanUpdates.updatedAt = new Date().toISOString();
 
   await collection.updateOne(
@@ -502,10 +505,172 @@ export async function updateProject(id: string, userEmail: string, updates: Part
     { $set: cleanUpdates }
   );
 
+  await calculateProjectProgress(existing._id.toString());
+
   const updatedDoc = await collection.findOne({ _id: existing._id });
   return updatedDoc
     ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
     : null;
+}
+
+export async function calculateProjectProgress(projectId: string | ObjectId): Promise<number> {
+  if (!projectId) return 0;
+
+  const pIdStr = projectId.toString();
+  let pObjId: ObjectId | null = null;
+  try {
+    if (ObjectId.isValid(pIdStr)) {
+      pObjId = new ObjectId(pIdStr);
+    }
+  } catch {
+    // fallback
+  }
+
+  const projectsCol = await getCollection<Document>("projects");
+  const pQuery: any = pObjId
+    ? { $or: [{ _id: pObjId }, { _id: pIdStr }, { id: pIdStr }] }
+    : { $or: [{ _id: pIdStr }, { id: pIdStr }] };
+
+  const project = await projectsCol.findOne(pQuery);
+
+  if (!project) return 0;
+
+  // Rule: Completed project = 100%
+  if (project.status === "Completed") {
+    await projectsCol.updateOne(pQuery, {
+      $set: { progress: 100, updatedAt: new Date().toISOString() },
+    });
+    return 100;
+  }
+
+  const pMatchQuery: any = pObjId
+    ? { $or: [{ projectId: pIdStr }, { projectId: pObjId }] }
+    : { projectId: pIdStr };
+
+  const tasksCol = await getCollection<Document>("tasks");
+  const workCol = await getCollection<Document>("research_work");
+  const papersCol = await getCollection<Document>("papers");
+  const supCol = await getCollection<Document>("supervision_requests");
+  const revCol = await getCollection<Document>("reviews");
+
+  const [tasks, workDocs, papers, supReqs, reviews] = await Promise.all([
+    tasksCol.find(pMatchQuery).toArray(),
+    workCol.find(pMatchQuery).toArray(),
+    papersCol.find(pMatchQuery).toArray(),
+    supCol.find(pMatchQuery).toArray(),
+    revCol.find(pMatchQuery).toArray(),
+  ]);
+
+  let totalScore = 0;
+
+  // 1. Project Initiation & Supervision: 15%
+  // - Abstract exists = 5%
+  if (
+    project.abstract &&
+    typeof project.abstract === "string" &&
+    project.abstract.trim().length > 0
+  ) {
+    totalScore += 5;
+  }
+  // - Faculty supervision approved/active = 10%
+  const isSupervisionApproved =
+    project.supervisionStatus === "Under Supervision" ||
+    supReqs.some((r) => r.status === "Approved");
+  if (isSupervisionApproved) {
+    totalScore += 10;
+  }
+
+  // 2. Literature: 15%
+  // - 1 paper = 5%, 2 papers = 10%, 3+ papers = 15%
+  const paperCount = papers.length;
+  if (paperCount === 1) {
+    totalScore += 5;
+  } else if (paperCount === 2) {
+    totalScore += 10;
+  } else if (paperCount >= 3) {
+    totalScore += 15;
+  }
+
+  // 3. Tasks: 20%
+  // - (completed tasks / total tasks) * 20. 0 tasks = 0
+  const totalTasks = tasks.length;
+  if (totalTasks > 0) {
+    const completedTasks = tasks.filter((t) => t.status === "Completed").length;
+    totalScore += (completedTasks / totalTasks) * 20;
+  }
+
+  // 4. Research Writing: 35%
+  // - Research document exists = 5%
+  // - Abstract filled = 5%
+  // - Filled sections = up to 25% (>50 characters meaningful text)
+  if (workDocs.length > 0) {
+    totalScore += 5;
+
+    const mainWork = workDocs[0];
+    if (
+      mainWork.abstract &&
+      typeof mainWork.abstract === "string" &&
+      mainWork.abstract.trim().length > 0
+    ) {
+      totalScore += 5;
+    }
+
+    const sections = Array.isArray(mainWork.sections) ? mainWork.sections : [];
+    if (sections.length > 0) {
+      const filledSections = sections.filter(
+        (s: any) =>
+          s && typeof s.content === "string" && s.content.trim().length > 50
+      ).length;
+      totalScore += (filledSections / sections.length) * 25;
+    }
+  }
+
+  // 5. Faculty Review: 15%
+  // - Submitted/pending review = 5%
+  // - Reviewed/approved = 10%
+  const pendingStatuses = [
+    "Submitted",
+    "Pending Review",
+    "Under Review",
+    "In Review",
+  ];
+  const approvedStatuses = ["Reviewed", "Approved"];
+
+  const hasSubmission =
+    reviews.some(
+      (r) =>
+        pendingStatuses.includes(r.status) || approvedStatuses.includes(r.status)
+    ) ||
+    workDocs.some(
+      (w) =>
+        pendingStatuses.includes(w.reviewStatus) ||
+        approvedStatuses.includes(w.reviewStatus)
+    ) ||
+    papers.some(
+      (p) =>
+        pendingStatuses.includes(p.reviewStatus) ||
+        approvedStatuses.includes(p.reviewStatus)
+    );
+
+  const hasApproval =
+    reviews.some((r) => approvedStatuses.includes(r.status)) ||
+    workDocs.some((w) => approvedStatuses.includes(w.reviewStatus)) ||
+    papers.some((p) => approvedStatuses.includes(p.reviewStatus));
+
+  if (hasSubmission) {
+    totalScore += 5;
+  }
+  if (hasApproval) {
+    totalScore += 10;
+  }
+
+  const finalProgress = Math.min(100, Math.max(0, Math.round(totalScore)));
+
+  await projectsCol.updateOne(pQuery, {
+    $set: { progress: finalProgress, updatedAt: new Date().toISOString() },
+  });
+
+  return finalProgress;
 }
 
 export async function deleteProject(id: string, userEmail: string) {
@@ -1570,9 +1735,12 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
             createdAt: now,
             projectId: String(existingReq.projectId || ""),
             studentId: sEmail,
-            facultyId: fEmail,
           });
         }
+      }
+
+      if (existingReq?.projectId) {
+        await calculateProjectProgress(existingReq.projectId);
       }
 
       return new Response(JSON.stringify({ success: true, message: `Supervision request ${newStatus.toLowerCase()}.` }), {
@@ -2116,6 +2284,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         "Project"
       );
 
+      if (newDoc.projectId) {
+        await calculateProjectProgress(newDoc.projectId);
+      }
+
       const created = { ...newDoc, id: result.insertedId.toString(), _id: result.insertedId.toString() };
       return new Response(JSON.stringify(created), { status: 201, headers: { "content-type": "application/json" } });
     }
@@ -2152,6 +2324,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await workCol.updateOne({ _id: existingDoc._id }, { $set: updateFields });
 
+      if (existingDoc?.projectId) {
+        await calculateProjectProgress(existingDoc.projectId);
+      }
+
       const updatedDoc = await workCol.findOne({ _id: existingDoc._id });
       const formatted = updatedDoc ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() } : null;
 
@@ -2167,7 +2343,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let objId: any = workId;
       if (ObjectId.isValid(workId)) objId = new ObjectId(workId);
 
+      const existingDoc = await workCol.findOne({ $or: [{ _id: objId }, { id: String(workId) }] });
       await workCol.deleteOne({ $or: [{ _id: objId }, { id: String(workId) }] });
+
+      if (existingDoc?.projectId) {
+        await calculateProjectProgress(existingDoc.projectId);
+      }
+
       return new Response(JSON.stringify({ success: true, message: "Research document deleted." }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
@@ -2387,6 +2569,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         });
       }
 
+      if (projectId) {
+        await calculateProjectProgress(projectId);
+      }
+
       const created = { ...newReview, id: result.insertedId.toString(), _id: result.insertedId.toString() };
       return new Response(JSON.stringify(created), {
         status: 201,
@@ -2472,6 +2658,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           });
         }
 
+        if (existingReview?.projectId) {
+          await calculateProjectProgress(existingReview.projectId);
+        }
+
         return new Response(JSON.stringify({ success: true, message: "Feedback submitted successfully." }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -2538,6 +2728,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           researchWorkId: String(documentId),
           reviewId: String(revResult.insertedId),
         });
+
+        if (projIdStr) {
+          await calculateProjectProgress(projIdStr);
+        }
 
         return new Response(JSON.stringify({ success: true, message: "Feedback submitted successfully." }), {
           status: 200,
@@ -3416,6 +3610,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       await recordUserActivity(email, "Researcher", "TASK_CREATED", `Task Created: "${body.title.trim()}"`, `Priority: ${body.priority || "Medium"} • Due: ${body.dueDate}`, "Task");
 
+      if (newTask.projectId) {
+        await calculateProjectProgress(newTask.projectId);
+      }
+
       return new Response(JSON.stringify(createdTask), { status: 201, headers: { "content-type": "application/json" } });
     }
 
@@ -3456,6 +3654,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         await recordUserActivity(email, "Researcher", "TASK_COMPLETED", `Task Completed: "${updated?.title || body.title}"`, `Marked as completed`, "Task");
       }
 
+      if (updated?.projectId) {
+        await calculateProjectProgress(updated.projectId);
+      }
+
       const formatted = updated ? { ...updated, id: updated._id.toString(), _id: updated._id.toString() } : null;
       return new Response(JSON.stringify(formatted), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -3473,7 +3675,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         objId = new ObjectId(taskId);
       }
 
+      const existingTask = await tasksCol.findOne({ $or: [{ _id: objId }, { id: taskId }], userEmail: email });
       await tasksCol.deleteOne({ $or: [{ _id: objId }, { id: taskId }], userEmail: email });
+
+      if (existingTask?.projectId) {
+        await calculateProjectProgress(existingTask.projectId);
+      }
+
       return new Response(JSON.stringify({ success: true, message: "Task deleted." }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
@@ -3994,6 +4202,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const result = await papersCol.insertOne(paperRecord);
       const inserted = { ...paperRecord, id: result.insertedId.toString(), _id: result.insertedId.toString() };
 
+      if (projectId) {
+        await calculateProjectProgress(projectId);
+      }
+
       return new Response(JSON.stringify(inserted), { status: 201, headers: { "content-type": "application/json" } });
     }
 
@@ -4075,7 +4287,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         objId = new ObjectId(paperId);
       }
 
+      const existingPaper = await papersCol.findOne({ $or: [{ _id: objId }, { id: paperId }] });
       await papersCol.deleteOne({ $or: [{ _id: objId }, { id: paperId }] });
+
+      if (existingPaper?.projectId) {
+        await calculateProjectProgress(existingPaper.projectId);
+      }
+
       return new Response(JSON.stringify({ success: true, message: "Paper deleted successfully." }), { status: 200, headers: { "content-type": "application/json" } });
     }
   }
