@@ -23,6 +23,7 @@ import {
   FileUp,
   FolderKanban,
   GitCompareArrows,
+  Globe,
   GraduationCap,
   Inbox,
   Layers,
@@ -442,6 +443,98 @@ function ProjectWorkspacePage() {
   const [roadmapDurationWeeks, setRoadmapDurationWeeks] = useState<number>(6);
   const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
   const [isSyncingRoadmapTasks, setIsSyncingRoadmapTasks] = useState(false);
+
+  // Global Academic Literature Search State
+  const [isGlobalSearchModalOpen, setIsGlobalSearchModalOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchResults, setGlobalSearchResults] = useState<any[]>([]);
+  const [isSearchingGlobalPapers, setIsSearchingGlobalPapers] = useState(false);
+  const [importingPaperId, setImportingPaperId] = useState<string | null>(null);
+
+  const handleExecuteGlobalSearch = async (overrideQuery?: string) => {
+    const q = (overrideQuery !== undefined ? overrideQuery : globalSearchQuery).trim();
+    if (!q) {
+      toast.error("Please enter a search topic or paper title.");
+      return;
+    }
+
+    setIsSearchingGlobalPapers(true);
+    try {
+      const pId = project?.id || project?._id || projectId;
+      const res = await fetch(`/api/papers/search?query=${encodeURIComponent(q)}&projectId=${encodeURIComponent(pId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.results)) {
+          setGlobalSearchResults(data.results);
+          if (data.results.length === 0) {
+            toast.info("No matching papers found. Try different search terms.");
+          }
+        }
+      } else {
+        toast.error("Failed to fetch global search results.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error connecting to academic literature search proxy.");
+    } finally {
+      setIsSearchingGlobalPapers(false);
+    }
+  };
+
+  const handleImportGlobalPaper = async (paperResult: any) => {
+    if (!project) return;
+    const pId = project.id || project._id || projectId;
+    setImportingPaperId(paperResult.id);
+
+    try {
+      const newPaper: ProjectPaper = {
+        id: `paper-${Date.now()}`,
+        projectId: pId,
+        title: paperResult.title,
+        authors: paperResult.authors,
+        year: paperResult.year || paperResult.publicationYear || String(new Date().getFullYear()),
+        publicationYear: paperResult.publicationYear || paperResult.year || String(new Date().getFullYear()),
+        journal: paperResult.journal || paperResult.journalOrConference || "Academic Literature",
+        journalOrConference: paperResult.journalOrConference || paperResult.journal || "Academic Literature",
+        doi: paperResult.doi || "",
+        abstract: paperResult.abstract || "",
+        summary: paperResult.abstract || `Research paper "${paperResult.title}" imported from ${paperResult.source}.`,
+        keywords: paperResult.keywords || [project.domain || "AI"],
+        uploadDate: new Date().toISOString().split("T")[0],
+        url: paperResult.pdfUrl || paperResult.url || "",
+      };
+
+      setPapers((prev) => [newPaper, ...prev]);
+
+      const res = await fetch("/api/papers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...newPaper, userEmail: user?.email }),
+      });
+
+      if (res.ok) {
+        toast.success(`Paper "${paperResult.title}" imported to research workspace!`);
+        setGlobalSearchResults((prev) =>
+          prev.map((item) => (item.id === paperResult.id ? { ...item, isAlreadyImported: true } : item))
+        );
+      } else {
+        toast.error("Failed to save paper to database.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error importing paper to workspace.");
+    } finally {
+      setImportingPaperId(null);
+    }
+  };
+
+  const handleOpenGlobalSearchModal = () => {
+    setIsGlobalSearchModalOpen(true);
+    if (!globalSearchQuery && project) {
+      const defaultQuery = project.domain && project.domain !== "Other / General" ? project.domain : project.title || "";
+      setGlobalSearchQuery(defaultQuery);
+    }
+  };
 
   useEffect(() => {
     if (project && (project.progress || 0) >= 70) {
@@ -2306,9 +2399,19 @@ ${s.keyTakeaway}
                   </p>
                 </div>
 
-                <Button onClick={handleOpenPaperUploadModal} className="gap-2 rounded-xl bg-primary text-xs font-medium text-primary-foreground">
-                  <Plus className="h-4 w-4" /> Upload Reference Paper
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    onClick={handleOpenGlobalSearchModal}
+                    variant="outline"
+                    className="gap-2 rounded-xl border-primary/40 text-xs font-semibold text-primary hover:bg-primary/10 shadow-xs"
+                  >
+                    <Globe className="h-4 w-4" /> Discover Global Literature
+                  </Button>
+
+                  <Button onClick={handleOpenPaperUploadModal} className="gap-2 rounded-xl bg-primary text-xs font-medium text-primary-foreground">
+                    <Plus className="h-4 w-4" /> Upload Reference Paper
+                  </Button>
+                </div>
               </div>
 
               {papers.length === 0 ? (
@@ -2321,9 +2424,14 @@ ${s.keyTakeaway}
                   <p className="mt-2 max-w-lg text-sm text-muted-foreground leading-relaxed">
                     Collect and organize papers that support your research reference and literature study.
                   </p>
-                  <Button onClick={handleOpenPaperUploadModal} className="mt-6 gap-2 rounded-xl bg-primary font-medium text-primary-foreground shadow-md">
-                    <Plus className="h-4 w-4" /> Upload Reference Paper
-                  </Button>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                    <Button onClick={handleOpenGlobalSearchModal} variant="outline" className="gap-2 rounded-xl border-primary/40 text-xs font-semibold text-primary hover:bg-primary/10">
+                      <Globe className="h-4 w-4" /> Discover Global Literature
+                    </Button>
+                    <Button onClick={handleOpenPaperUploadModal} className="gap-2 rounded-xl bg-primary font-medium text-primary-foreground shadow-md">
+                      <Plus className="h-4 w-4" /> Upload Reference Paper
+                    </Button>
+                  </div>
                 </Card>
               ) : (
                 /* PAPERS TABLE / GRID */
@@ -5099,6 +5207,163 @@ ${s.keyTakeaway}
                   Generate Roadmap
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Global Academic Literature Search & Import Modal */}
+      <Dialog open={isGlobalSearchModalOpen} onOpenChange={setIsGlobalSearchModalOpen}>
+        <DialogContent className="sm:max-w-3xl rounded-3xl p-6 max-h-[90vh] flex flex-col">
+          <DialogHeader className="border-b border-border/60 pb-3 shrink-0">
+            <div className="flex items-center justify-between gap-2">
+              <Badge variant="outline" className="border-primary/40 text-primary bg-primary/10 text-xs font-semibold gap-1">
+                <Globe className="h-3.5 w-3.5" /> Open Access Scientific Engine (arXiv + CrossRef)
+              </Badge>
+              <Badge variant="outline" className="text-muted-foreground text-[0.68rem]">
+                100% Free Literature
+              </Badge>
+            </div>
+            <DialogTitle className="text-xl font-extrabold text-foreground flex items-center gap-2 pt-2">
+              Discover Global Academic Literature
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Search millions of open-access research papers, preprints, and peer-reviewed journals to import directly into your research workspace.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Search Input Bar */}
+          <div className="py-3 shrink-0 space-y-2">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleExecuteGlobalSearch();
+              }}
+              className="flex items-center gap-2"
+            >
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  value={globalSearchQuery}
+                  onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                  placeholder="Search papers by topic, title, author, or keywords (e.g. Quantum Machine Learning)..."
+                  className="pl-10 h-10 rounded-xl text-xs bg-background border-border/80 focus:border-primary"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={isSearchingGlobalPapers || !globalSearchQuery.trim()}
+                className="h-10 px-5 rounded-xl text-xs font-bold bg-primary text-primary-foreground gap-1.5 shadow-sm shrink-0"
+              >
+                {isSearchingGlobalPapers ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {isSearchingGlobalPapers ? "Searching..." : "Search"}
+              </Button>
+            </form>
+          </div>
+
+          {/* Search Results Area */}
+          <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[450px] pr-1 space-y-3">
+            {isSearchingGlobalPapers ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-xs font-semibold text-foreground">Querying arXiv and CrossRef repositories...</p>
+                <p className="text-[0.7rem] text-muted-foreground">Searching open access preprints and peer-reviewed literature</p>
+              </div>
+            ) : globalSearchResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center space-y-2 border border-dashed border-border/80 rounded-2xl p-6 bg-muted/20">
+                <Globe className="h-10 w-10 text-muted-foreground/60" />
+                <h4 className="text-sm font-bold text-foreground">Search Global Literature</h4>
+                <p className="text-xs text-muted-foreground max-w-md">
+                  Enter research keywords above to find relevant peer-reviewed papers and preprints.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                  <span>Found {globalSearchResults.length} global paper results</span>
+                  <span>Click import to save to workspace</span>
+                </div>
+                {globalSearchResults.map((paperResult: any) => (
+                  <Card
+                    key={paperResult.id}
+                    className="rounded-2xl border border-border/80 bg-card p-4 space-y-2.5 transition-all hover:border-primary/40 shadow-xs"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge
+                            variant="outline"
+                            className={
+                              paperResult.source === "arXiv"
+                                ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.65rem] font-bold"
+                                : "border-indigo-500/30 text-indigo-500 bg-indigo-500/10 text-[0.65rem] font-bold"
+                            }
+                          >
+                            {paperResult.source}
+                          </Badge>
+                          <span className="text-[0.7rem] font-semibold text-muted-foreground">
+                            {paperResult.journal || paperResult.journalOrConference || "Literature"} ({paperResult.year || "N/A"})
+                          </span>
+                        </div>
+                        <h4 className="text-sm font-bold text-foreground leading-snug">{paperResult.title}</h4>
+                        <p className="text-[0.725rem] text-muted-foreground">
+                          <strong>Authors:</strong> {paperResult.authors || "Academic Author(s)"}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0">
+                        {paperResult.isAlreadyImported ? (
+                          <Button disabled size="sm" variant="outline" className="rounded-xl text-xs font-semibold gap-1 border-emerald-500/30 text-emerald-600 bg-emerald-500/10">
+                            <Check className="h-3.5 w-3.5" /> Imported
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            disabled={importingPaperId === paperResult.id}
+                            onClick={() => handleImportGlobalPaper(paperResult)}
+                            className="rounded-xl text-xs font-bold bg-primary text-primary-foreground gap-1.5 shadow-xs"
+                          >
+                            {importingPaperId === paperResult.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Plus className="h-3.5 w-3.5" />
+                            )}
+                            {importingPaperId === paperResult.id ? "Importing..." : "Import to Workspace"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Abstract Text */}
+                    {paperResult.abstract && (
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 bg-muted/30 p-2.5 rounded-xl border border-border/40 italic">
+                        "{paperResult.abstract}"
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1 text-[0.7rem] text-muted-foreground">
+                      <span>DOI: {paperResult.doi || "N/A"}</span>
+                      {paperResult.url && (
+                        <a
+                          href={paperResult.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary font-semibold flex items-center gap-1 hover:underline"
+                        >
+                          View Source <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="border-t border-border/60 pt-3 shrink-0">
+            <Button variant="outline" onClick={() => setIsGlobalSearchModalOpen(false)} className="rounded-xl text-xs font-semibold px-5">
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -4405,6 +4405,160 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     }
   }
 
+  // ── Global Academic Literature Search Proxy API (arXiv + CrossRef) ──
+  if (url.pathname === "/api/papers/search") {
+    if (request.method === "GET") {
+      const searchQuery = (url.searchParams.get("query") || url.searchParams.get("q") || "").trim();
+      const projectIdParam = url.searchParams.get("projectId");
+
+      if (!searchQuery) {
+        return new Response(JSON.stringify({ success: true, results: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const papersCol = await getCollection<Document>("papers");
+      let existingDoiSet = new Set<string>();
+      let existingTitleSet = new Set<string>();
+
+      if (projectIdParam) {
+        const existingDocs = await papersCol.find({ projectId: String(projectIdParam) }).toArray();
+        existingDocs.forEach((p: any) => {
+          if (p.doi) existingDoiSet.add(String(p.doi).trim().toLowerCase());
+          if (p.title) existingTitleSet.add(String(p.title).trim().toLowerCase());
+        });
+      }
+
+      const results: any[] = [];
+      const seenTitles = new Set<string>();
+
+      // 1. Fetch arXiv Open API (XML format)
+      const fetchArxiv = async () => {
+        try {
+          const arxivUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(searchQuery)}&start=0&max_results=12`;
+          const res = await fetch(arxivUrl, { headers: { "User-Agent": "ScholarNexus/1.0 (mailto:admin@scholarnexus.edu)" } });
+          if (res.ok) {
+            const xmlText = await res.text();
+            const entries = xmlText.split("<entry>");
+            for (let i = 1; i < entries.length; i++) {
+              const entry = entries[i];
+              const titleMatch = entry.match(/<title>([\s\S]*?)<\/title>/);
+              const summaryMatch = entry.match(/<summary>([\s\S]*?)<\/summary>/);
+              const publishedMatch = entry.match(/<published>([\s\S]*?)<\/published>/);
+              const idMatch = entry.match(/<id>([\s\S]*?)<\/id>/);
+              const doiMatch = entry.match(/<arxiv:doi>([\s\S]*?)<\/arxiv:doi>/);
+
+              const nameMatches = Array.from(entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/g));
+              const authorsArr = nameMatches.map((m: any) => m[1].trim()).filter(Boolean);
+              const authorsStr = authorsArr.join(", ");
+
+              const rawTitle = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
+              if (!rawTitle) continue;
+
+              const cleanTitle = rawTitle;
+              const titleNorm = cleanTitle.toLowerCase();
+
+              if (seenTitles.has(titleNorm)) continue;
+              seenTitles.add(titleNorm);
+
+              const pubDateStr = publishedMatch ? publishedMatch[1].trim() : "";
+              const yearStr = pubDateStr ? String(new Date(pubDateStr).getFullYear()) : String(new Date().getFullYear());
+              const abstractText = summaryMatch ? summaryMatch[1].replace(/\s+/g, " ").trim() : "";
+              const paperUrl = idMatch ? idMatch[1].trim() : "";
+              const pdfUrl = paperUrl.replace("/abs/", "/pdf/") + ".pdf";
+              const doi = doiMatch ? doiMatch[1].trim() : "";
+
+              const isAlreadyImported = existingTitleSet.has(titleNorm) || (doi ? existingDoiSet.has(doi.toLowerCase()) : false);
+
+              results.push({
+                id: `arxiv-${Date.now()}-${i}`,
+                title: cleanTitle,
+                authors: authorsStr || "arXiv Contributor",
+                authorsList: authorsArr.length > 0 ? authorsArr : ["arXiv Contributor"],
+                year: yearStr,
+                publicationYear: yearStr,
+                journal: "arXiv Preprints",
+                journalOrConference: "arXiv Preprints",
+                doi: doi || `10.48550/arXiv.${paperUrl.split("/").pop() || ""}`,
+                abstract: abstractText,
+                url: paperUrl,
+                pdfUrl,
+                source: "arXiv",
+                isAlreadyImported,
+              });
+            }
+          }
+        } catch (err) {
+          console.error("arXiv search error:", err);
+        }
+      };
+
+      // 2. Fetch CrossRef REST API (JSON format)
+      const fetchCrossref = async () => {
+        try {
+          const crossrefUrl = `https://api.crossref.org/works?query=${encodeURIComponent(searchQuery)}&rows=12`;
+          const res = await fetch(crossrefUrl, { headers: { "User-Agent": "ScholarNexus/1.0 (mailto:admin@scholarnexus.edu)" } });
+          if (res.ok) {
+            const data = await res.json();
+            const items = data.message?.items || [];
+            for (let i = 0; i < items.length; i++) {
+              const item = items[i];
+              const rawTitle = Array.isArray(item.title) ? item.title[0] : item.title || "";
+              if (!rawTitle) continue;
+
+              const cleanTitle = String(rawTitle).replace(/\s+/g, " ").trim();
+              const titleNorm = cleanTitle.toLowerCase();
+              if (seenTitles.has(titleNorm)) continue;
+              seenTitles.add(titleNorm);
+
+              const authorsArr = Array.isArray(item.author)
+                ? item.author.map((a: any) => `${a.given || ""} ${a.family || ""}`.trim()).filter(Boolean)
+                : [];
+              const authorsStr = authorsArr.join(", ");
+
+              const pubDateParts = item["published-print"]?.["date-parts"]?.[0] || item["published-online"]?.["date-parts"]?.[0] || item.issued?.["date-parts"]?.[0];
+              const yearStr = pubDateParts && pubDateParts[0] ? String(pubDateParts[0]) : "";
+
+              const venue = Array.isArray(item["container-title"]) ? item["container-title"][0] : item["publisher"] || "Peer-Reviewed Literature";
+              const doi = item.DOI || "";
+              const paperUrl = item.URL || (doi ? `https://doi.org/${doi}` : "");
+              const rawAbstract = item.abstract || "";
+              const cleanAbstract = rawAbstract.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+
+              const isAlreadyImported = existingTitleSet.has(titleNorm) || (doi ? existingDoiSet.has(doi.toLowerCase()) : false);
+
+              results.push({
+                id: `crossref-${Date.now()}-${i}`,
+                title: cleanTitle,
+                authors: authorsStr || "Academic Author(s)",
+                authorsList: authorsArr.length > 0 ? authorsArr : ["Academic Author(s)"],
+                year: yearStr,
+                publicationYear: yearStr,
+                journal: venue,
+                journalOrConference: venue,
+                doi: doi ? `https://doi.org/${doi}` : "",
+                abstract: cleanAbstract || `Peer-reviewed reference published in ${venue}.`,
+                url: paperUrl,
+                source: "CrossRef",
+                isAlreadyImported,
+              });
+            }
+          }
+        } catch (err) {
+          console.error("CrossRef search error:", err);
+        }
+      };
+
+      await Promise.all([fetchArxiv(), fetchCrossref()]);
+
+      return new Response(JSON.stringify({ success: true, results }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
   // ── Research Papers MongoDB API ──
   if (url.pathname === "/api/papers") {
     const papersCol = await getCollection<Document>("papers");
