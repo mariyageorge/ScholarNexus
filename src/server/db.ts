@@ -4204,12 +4204,37 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
 
       const duration = Number(durationWeeks) || 6;
+      const pIdStr = projectDoc._id.toString();
+      const researchWorksCol = await getCollection<Document>("research_works");
+      const papersCol = await getCollection<Document>("papers");
+
+      const [researchWorks, savedPapersCount] = await Promise.all([
+        researchWorksCol.find({ projectId: pIdStr }).toArray(),
+        papersCol.countDocuments({ projectId: pIdStr }),
+      ]);
+
+      const hasResearchPaper = researchWorks.some(
+        (rw) => rw.workType === "Research Paper" || (rw.title && rw.title.toLowerCase().includes("paper"))
+      );
+      const pendingReview = researchWorks.find((rw) => rw.reviewStatus === "Pending Review");
+      const reviewed = researchWorks.find((rw) => rw.reviewStatus === "Reviewed");
+      const reviewStatus = pendingReview
+        ? "Pending Review"
+        : reviewed
+        ? "Reviewed"
+        : "None";
 
       const result = await generateResearchRoadmapWithGemini({
         projectTitle: projectDoc.title || "Academic Research Project",
         domain: projectDoc.domain || projectDoc.category || "",
         abstract: projectDoc.abstract || projectDoc.description || "",
         durationWeeks: duration,
+        progress: Number(projectDoc.progress) || 0,
+        status: projectDoc.status || "Planning",
+        researchWorksCount: researchWorks.length,
+        hasResearchPaper: hasResearchPaper,
+        reviewStatus: reviewStatus,
+        savedPapersCount: savedPapersCount,
       });
 
       if (!result.success || !result.roadmap) {

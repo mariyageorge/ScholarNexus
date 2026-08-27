@@ -549,6 +549,12 @@ export async function generateResearchRoadmapWithGemini(options: {
   domain?: string;
   abstract?: string;
   durationWeeks?: number;
+  progress?: number;
+  status?: string;
+  researchWorksCount?: number;
+  hasResearchPaper?: boolean;
+  reviewStatus?: string;
+  savedPapersCount?: number;
 }): Promise<GeneratedRoadmapResult> {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
@@ -561,6 +567,10 @@ export async function generateResearchRoadmapWithGemini(options: {
   const duration = options.durationWeeks || 6;
   const domainStr = options.domain ? `Domain / Field: ${options.domain}` : "";
   const abstractStr = options.abstract ? `Project Context / Abstract: ${options.abstract}` : "";
+  const progressStr = `Current Project Progress: ${options.progress || 0}% (${options.status || "In Progress"})`;
+  const worksStr = `Drafted Research Documents: ${options.researchWorksCount || 0} (Has Written Research Paper: ${options.hasResearchPaper ? "YES" : "NO"})`;
+  const reviewStr = `Faculty Supervisor Review Status: ${options.reviewStatus || "None"}`;
+  const papersStr = `Saved Reference Library Papers: ${options.savedPapersCount || 0}`;
 
   const promptText = `You are a distinguished academic research mentor and computer science / university professor.
 Generate a structured, step-by-step, week-by-week research roadmap over a duration of ${duration} weeks for the following student research project:
@@ -569,8 +579,28 @@ Project Title: "${options.projectTitle}"
 ${domainStr}
 ${abstractStr}
 
+CURRENT PROJECT REAL-TIME CONTEXT:
+- ${progressStr}
+- ${worksStr}
+- ${reviewStr}
+- ${papersStr}
+
+CRITICAL CONTEXT ADAPTATION INSTRUCTIONS:
+1. IF Has Written Research Paper is YES OR Faculty Supervisor Review Status is "Pending Review" / "Reviewed" OR Progress is >= 70%:
+   The student has ALREADY written or drafted their Research Paper and is in the advanced review/finalization phase!
+   Do NOT generate a generic "Week 1: Collect 20 papers" starting roadmap.
+   Instead, generate an Advanced Finalization & Publication Roadmap:
+   - Week 1: Audit manuscript citations, verify methodology against current paper draft, address pre-review notes.
+   - Week 2: Address supervisor review comments & incorporate faculty feedback into the manuscript.
+   - Week 3: Conduct ablation studies, parameter sensitivity checks, or dataset edge-case validations.
+   - Week 4+: Refine high-resolution figures, prepare camera-ready formatting, and draft defense slides or journal submission.
+2. IF Progress is 35% - 69% OR Research Work Documents exist (e.g. Literature Review):
+   Generate an Intermediate Execution & Experimentation Roadmap focusing on algorithm design, experimental benchmarks, and writing results sections.
+3. IF Progress is < 35% AND Has Written Research Paper is NO:
+   Generate a Foundational Roadmap starting with literature survey, problem formulation, and architecture design.
+
 The roadmap MUST span exactly ${duration} weeks, numbered 1 to ${duration}.
-Provide realistic, actionable academic research steps tailored specifically to this project's topic.
+Provide realistic, actionable academic research steps tailored specifically to this project's topic and current progress stage.
 
 Return ONLY a valid JSON object matching this exact schema:
 {
@@ -578,14 +608,14 @@ Return ONLY a valid JSON object matching this exact schema:
   "roadmap": [
     {
       "week": 1,
-      "title": "Short Descriptive Week Title (e.g., Literature Collection & Survey)",
+      "title": "Short Descriptive Week Title Tailored to Current Project Phase",
       "objective": "High-level goal for this week.",
       "tasks": [
-        "Actionable task item 1 (e.g., Collect 20 peer-reviewed papers on ...)",
-        "Actionable task item 2 (e.g., Filter papers by relevance and publication year)",
+        "Actionable task item 1",
+        "Actionable task item 2",
         "Actionable task item 3"
       ],
-      "deliverable": "Tangible deliverable for the week (e.g., Initial literature database of 20 papers)",
+      "deliverable": "Tangible deliverable for the week",
       "mentorTip": "Practical research tip or advice for the student for this phase"
     }
   ]
@@ -594,7 +624,7 @@ Return ONLY a valid JSON object matching this exact schema:
 CRITICAL RULES:
 1. Ensure the tasks are highly specific to "${options.projectTitle}".
 2. Each week MUST contain 2 to 4 concrete actionable tasks.
-3. The progression must be logical: Literature survey -> Analysis & Gap Identification -> Methodology & System Design -> Implementation / Experimentation -> Evaluation -> Writing & Review.
+3. Respect the student's actual project stage as specified above.
 4. Do NOT include markdown code fences or conversational text outside the JSON object.`;
 
   let availableModels: string[] = [];

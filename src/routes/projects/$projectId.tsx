@@ -443,6 +443,12 @@ function ProjectWorkspacePage() {
   const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
   const [isSyncingRoadmapTasks, setIsSyncingRoadmapTasks] = useState(false);
 
+  useEffect(() => {
+    if (project && (project.progress || 0) >= 70) {
+      setRoadmapDurationWeeks(2);
+    }
+  }, [project?.progress]);
+
   const handleGenerateRoadmap = async () => {
     if (!project) return;
     setIsGeneratingRoadmap(true);
@@ -4943,10 +4949,20 @@ ${s.keyTakeaway}
                   <SelectValue placeholder="Select duration" />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl text-xs">
-                  <SelectItem value="4">4 Weeks — Rapid Research Sprint</SelectItem>
-                  <SelectItem value="6">6 Weeks — Standard Academic Plan (Recommended)</SelectItem>
-                  <SelectItem value="8">8 Weeks — In-Depth Investigation</SelectItem>
-                  <SelectItem value="12">12 Weeks — Full Semester Capstone</SelectItem>
+                  {(project?.progress || 0) >= 70 ? (
+                    <>
+                      <SelectItem value="2">2 Weeks — Rapid Finalization & Revisions (Recommended)</SelectItem>
+                      <SelectItem value="3">3 Weeks — Final Review & Defense Prep</SelectItem>
+                      <SelectItem value="4">4 Weeks — Comprehensive Revision Sprint</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="4">4 Weeks — Rapid Research Sprint</SelectItem>
+                      <SelectItem value="6">6 Weeks — Standard Academic Plan (Recommended)</SelectItem>
+                      <SelectItem value="8">8 Weeks — In-Depth Investigation</SelectItem>
+                      <SelectItem value="12">12 Weeks — Full Semester Capstone</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -4954,7 +4970,9 @@ ${s.keyTakeaway}
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex items-start gap-2.5 text-xs text-primary">
               <Compass className="h-4 w-4 shrink-0 mt-0.5" />
               <p className="text-[0.725rem] leading-relaxed">
-                The generated roadmap will outline literature collection, problem synthesis, methodology, implementation, and paper drafting phases.
+                {(project?.progress || 0) >= 70
+                  ? "Advanced Phase: The AI will generate a finalization roadmap focusing on manuscript polishing, supervisor feedback integration, and defense prep."
+                  : "The generated roadmap will outline literature collection, problem synthesis, methodology, implementation, and paper drafting phases."}
               </p>
             </div>
           </div>
