@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Users,
   Search,
@@ -22,6 +22,9 @@ import {
   Sparkles,
   ExternalLink,
   ShieldCheck,
+  History,
+  Edit3,
+  ChevronRight,
   Pencil,
   Send,
   Loader2,
@@ -36,6 +39,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   Dialog,
   DialogContent,
@@ -169,6 +173,112 @@ function FacultyStudentsPage() {
   const [feedbackText, setFeedbackText] = useState("");
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
 
+  // Review Modal Extra State for Change Tracking & Outline Navigation
+  const [modalReviewHistory, setModalReviewHistory] = useState<any[]>([]);
+  const [activeFacultySectionId, setActiveFacultySectionId] = useState<string>("abstract");
+
+  useEffect(() => {
+    if (selectedWorkDoc) {
+      setFeedbackText(selectedWorkDoc.feedback || "");
+      const initialSecComments: Record<string, string> = {};
+      if (Array.isArray(selectedWorkDoc.sectionFeedback)) {
+        selectedWorkDoc.sectionFeedback.forEach((sf: any) => {
+          if (sf.sectionId && sf.comment) {
+            initialSecComments[sf.sectionId] = sf.comment;
+          }
+        });
+      }
+      setSectionComments(initialSecComments);
+
+      const docId = selectedWorkDoc.id || selectedWorkDoc._id;
+      if (docId) {
+        fetch(`/api/reviews?documentId=${encodeURIComponent(docId)}`)
+          .then((res) => (res.ok ? res.json() : []))
+          .then((history) => {
+            if (Array.isArray(history)) {
+              setModalReviewHistory(history);
+            }
+          })
+          .catch((err) => console.error("Error fetching doc review history:", err));
+      }
+    } else {
+      setModalReviewHistory([]);
+    }
+  }, [selectedWorkDoc?.id, selectedWorkDoc?._id]);
+
+  const changeTracking = useMemo(() => {
+    if (!selectedWorkDoc || modalReviewHistory.length === 0) {
+      return {
+        hasPreviousReview: false,
+        titleChanged: false,
+        abstractChanged: false,
+        keywordsChanged: false,
+        changedSectionIds: new Set<string>(),
+      };
+    }
+
+    const activeReviewIsPending =
+      modalReviewHistory[0]?.status === "Pending Review" || selectedWorkDoc.reviewStatus === "Pending Review";
+
+    const previousReviewWithSnapshot = modalReviewHistory.find((r: any, idx: number) => {
+      if (!r.documentSnapshot) return false;
+      if (activeReviewIsPending) {
+        return idx > 0;
+      }
+      return true;
+    });
+
+    if (!previousReviewWithSnapshot || !previousReviewWithSnapshot.documentSnapshot) {
+      return {
+        hasPreviousReview: false,
+        titleChanged: false,
+        abstractChanged: false,
+        keywordsChanged: false,
+        changedSectionIds: new Set<string>(),
+      };
+    }
+
+    const prevSnap = previousReviewWithSnapshot.documentSnapshot;
+
+    const titleChanged = (selectedWorkDoc.title || "").trim() !== (prevSnap.title || "").trim();
+    const abstractChanged = (selectedWorkDoc.abstract || "").trim() !== (prevSnap.abstract || "").trim();
+
+    const curKeywords = Array.isArray(selectedWorkDoc.keywords) ? selectedWorkDoc.keywords : [];
+    const prevKeywords = Array.isArray(prevSnap.keywords) ? prevSnap.keywords : [];
+    const keywordsChanged = JSON.stringify(curKeywords) !== JSON.stringify(prevKeywords);
+
+    const changedSectionIds = new Set<string>();
+    const prevSections = Array.isArray(prevSnap.sections) ? prevSnap.sections : [];
+
+    if (Array.isArray(selectedWorkDoc.sections)) {
+      selectedWorkDoc.sections.forEach((sec: any, idx: number) => {
+        const secId = sec.id || `sec-${idx}`;
+        const prevSec = prevSections.find((p: any) => p.id === secId || p.title === sec.title);
+
+        if (!prevSec) {
+          changedSectionIds.add(secId);
+        } else {
+          const titleMod = (sec.title || "").trim() !== (prevSec.title || "").trim();
+          const contentMod = (sec.content || "").trim() !== (prevSec.content || "").trim();
+          if (titleMod || contentMod) {
+            changedSectionIds.add(secId);
+          }
+        }
+      });
+    }
+
+    return {
+      hasPreviousReview: true,
+      previousReviewDate: previousReviewWithSnapshot.reviewedAt || previousReviewWithSnapshot.requestedAt,
+      previousReviewStatus: previousReviewWithSnapshot.status,
+      previousReviewFeedback: previousReviewWithSnapshot.feedback,
+      titleChanged,
+      abstractChanged,
+      keywordsChanged,
+      changedSectionIds,
+    };
+  }, [selectedWorkDoc, modalReviewHistory]);
+
   // Paper Viewing Preview Modal State
   const [viewingPaper, setViewingPaper] = useState<any | null>(null);
 
@@ -202,10 +312,13 @@ function FacultyStudentsPage() {
         }));
 
       const targetDocId = selectedWorkDoc.id || selectedWorkDoc._id;
+      const activeReviewId = modalReviewHistory[0]?.id || modalReviewHistory[0]?._id;
+
       const res = await fetch("/api/reviews", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          reviewId: activeReviewId,
           documentId: targetDocId,
           projectId: workspaceData?.project?.id || (workspaceData?.project as any)?._id,
           studentEmail: workspaceData?.student?.email,
@@ -242,6 +355,12 @@ function FacultyStudentsPage() {
             ),
           };
         });
+
+        // Re-fetch review history for this document to refresh versioning & snapshots
+        fetch(`/api/reviews?documentId=${encodeURIComponent(targetDocId)}`)
+          .then((r) => (r.ok ? r.json() : []))
+          .then((history) => Array.isArray(history) && setModalReviewHistory(history))
+          .catch((err) => console.error("Error refreshing doc review history:", err));
       } else {
         const errData = await res.json();
         toast.error(errData.error || "Failed to submit feedback.");
@@ -1057,190 +1176,401 @@ function FacultyStudentsPage() {
         </Dialog>
 
         {/* COMPLETE RESEARCH WORK VIEWER & FACULTY REVIEW MODAL */}
+        {/* VIEW & REVIEW RESEARCH WORK DOCUMENT MODAL */}
         <Dialog open={!!selectedWorkDoc} onOpenChange={(open) => !open && setSelectedWorkDoc(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] rounded-3xl p-6 overflow-y-auto space-y-6">
-            <DialogHeader className="border-b border-border pb-4">
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-xs font-semibold">
-                      {selectedWorkDoc?.templateType || "Research Paper"}
+          <DialogContent className="sm:max-w-5xl max-h-[92vh] rounded-3xl p-6 overflow-y-auto space-y-6">
+            {/* Academic Manuscript Header */}
+            <DialogHeader className="border-b border-border/80 pb-4 space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="border-primary/40 text-primary bg-primary/10 text-xs font-semibold">
+                    {selectedWorkDoc?.templateType || "Research Paper"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      selectedWorkDoc?.reviewStatus === "Approved"
+                        ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-bold gap-1"
+                        : selectedWorkDoc?.reviewStatus === "Changes Requested"
+                        ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-bold gap-1"
+                        : selectedWorkDoc?.reviewStatus === "Pending Review"
+                        ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold gap-1"
+                        : "text-muted-foreground text-xs border-border"
+                    }
+                  >
+                    {selectedWorkDoc?.reviewStatus === "Approved" && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+                    {selectedWorkDoc?.reviewStatus === "Changes Requested" && <AlertCircle className="h-3 w-3 text-amber-500" />}
+                    {selectedWorkDoc?.reviewStatus || "Draft"}
+                  </Badge>
+
+                  {/* Change Tracking Global Revision Badge */}
+                  {changeTracking.hasPreviousReview && (
+                    <Badge variant="outline" className="border-amber-500/40 text-amber-600 bg-amber-500/10 text-xs font-bold gap-1">
+                      <History className="h-3 w-3 text-amber-500" /> Revision Cycle (Re-submitted)
                     </Badge>
-                    <Badge
-                      variant="outline"
-                      className={
-                        selectedWorkDoc?.reviewStatus === "Pending Review"
-                          ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold"
-                          : selectedWorkDoc?.reviewStatus === "Reviewed"
-                          ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold"
-                          : "text-muted-foreground text-xs border-border"
-                      }
-                    >
-                      {selectedWorkDoc?.reviewStatus || "Draft"}
-                    </Badge>
-                  </div>
-                  <DialogTitle className="text-xl font-bold text-foreground">
-                    {selectedWorkDoc?.title}
-                  </DialogTitle>
-                  <DialogDescription className="text-xs text-muted-foreground">
-                    Student Scholar: <strong className="text-foreground">{workspaceData?.student?.name}</strong> ({workspaceData?.student?.email}) • Project: <strong className="text-foreground">{workspaceData?.project?.title}</strong>
-                  </DialogDescription>
+                  )}
                 </div>
+
                 <div className="text-right text-xs text-muted-foreground">
-                  <span>Last Updated: <strong className="text-foreground">{selectedWorkDoc?.lastSaved ? new Date(selectedWorkDoc.lastSaved).toLocaleDateString() : "Recently"}</strong></span>
+                  <span>Last Saved: <strong className="text-foreground">{selectedWorkDoc?.lastSaved ? new Date(selectedWorkDoc.lastSaved).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently"}</strong></span>
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <DialogTitle className="text-xl md:text-2xl font-extrabold text-foreground leading-snug">
+                    {selectedWorkDoc?.title || "Untitled Research Document"}
+                  </DialogTitle>
+                  {changeTracking.titleChanged && (
+                    <Badge className="bg-amber-500 text-white font-bold text-[0.68rem] px-2 py-0.5 rounded-lg gap-1">
+                      <Edit3 className="h-3 w-3" /> Title Modified
+                    </Badge>
+                  )}
+                </div>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  Student Scholar: <strong className="text-foreground">{workspaceData?.student?.name || "Student Author"}</strong> ({workspaceData?.student?.email}) • Project: <strong className="text-foreground">{workspaceData?.project?.title}</strong>
+                </DialogDescription>
+              </div>
+
+              {/* Read-only Approved Banner */}
+              {selectedWorkDoc?.reviewStatus === "Approved" && (
+                <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex items-center justify-between gap-3 text-xs shadow-xs">
+                  <div className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                    Faculty Approved — Permanently Read-Only Academic Manuscript
+                  </div>
+                  <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 bg-emerald-500/15 text-xs font-bold px-2.5 py-0.5">
+                    Approved ✓
+                  </Badge>
+                </div>
+              )}
             </DialogHeader>
 
-            {/* COMPLETE DOCUMENT SECTIONS VIEW */}
-            <div className="space-y-6">
-              {/* ABSTRACT SECTION */}
-              <div className="space-y-2 border-b border-border pb-5">
-                <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                  <BookOpen className="h-4 w-4 text-primary" /> Abstract
-                </h3>
-                {selectedWorkDoc?.abstract ? (
-                  <p className="text-xs text-foreground italic leading-relaxed bg-muted/30 p-4 rounded-2xl border border-border/60">
-                    "{selectedWorkDoc.abstract}"
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground italic bg-muted/20 p-3 rounded-xl border border-border/50">
-                    Not added yet
-                  </p>
-                )}
-              </div>
-
-              {/* KEYWORDS SECTION */}
-              <div className="space-y-2 border-b border-border pb-5">
-                <h3 className="text-xs font-bold text-foreground">Keywords</h3>
-                {selectedWorkDoc?.keywords && selectedWorkDoc.keywords.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedWorkDoc.keywords.map((kw: string, idx: number) => (
-                      <Badge key={idx} variant="secondary" className="rounded-xl text-[0.7rem] px-2.5 py-0.5 font-medium">
-                        #{kw}
-                      </Badge>
-                    ))}
+            {/* TWO-COLUMN MANUSCRIPT WORKBENCH (Outline Sidebar + Reading Canvas) */}
+            <div className="flex flex-col md:flex-row items-start gap-6">
+              {/* LEFT COLUMN: Section Navigation & Review History */}
+              <div className="w-full md:w-64 shrink-0 space-y-4 md:sticky md:top-0">
+                <Card className="rounded-2xl border border-border/80 bg-card p-4 space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Manuscript Outline</h4>
+                    <span className="text-[0.65rem] text-muted-foreground font-semibold">
+                      {selectedWorkDoc?.sections?.length || 0} Sections
+                    </span>
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground italic">Not added yet</p>
+
+                  <div className="space-y-1 text-xs">
+                    {/* Abstract Link */}
+                    <button
+                      onClick={() => {
+                        setActiveFacultySectionId("abstract");
+                        document.getElementById("fac-section-abstract")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className={`flex items-center justify-between w-full p-2 rounded-xl text-left font-medium transition-all ${
+                        activeFacultySectionId === "abstract"
+                          ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                          : "text-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      <span className="truncate flex items-center gap-2">
+                        <BookOpen className="h-3.5 w-3.5 shrink-0" /> Abstract
+                      </span>
+                      {changeTracking.abstractChanged && (
+                        <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" title="Modified since last review" />
+                      )}
+                    </button>
+
+                    {/* Section Links */}
+                    {selectedWorkDoc?.sections?.map((sec: any, idx: number) => {
+                      const secId = sec.id || `sec-${idx}`;
+                      const isMod = changeTracking.changedSectionIds.has(secId);
+                      const isActive = activeFacultySectionId === secId;
+
+                      return (
+                        <button
+                          key={secId}
+                          onClick={() => {
+                            setActiveFacultySectionId(secId);
+                            document.getElementById(`fac-section-${secId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }}
+                          className={`flex items-center justify-between w-full p-2 rounded-xl text-left font-medium transition-all ${
+                            isActive
+                              ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                              : "text-foreground hover:bg-muted/60"
+                          }`}
+                        >
+                          <span className="truncate flex items-center gap-2">
+                            <span className="font-bold text-[0.7rem] opacity-75 shrink-0">{idx + 1}.</span>
+                            <span className="truncate">{sec.title || `Section ${idx + 1}`}</span>
+                          </span>
+                          {isMod && (
+                            <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" title="Modified since last review" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Card>
+
+                {/* REVIEW HISTORY ACCORDION */}
+                {modalReviewHistory.length > 0 && (
+                  <Card className="rounded-2xl border border-border/80 bg-card p-4 space-y-2 shadow-xs">
+                    <Accordion type="single" collapsible className="w-full">
+                      <AccordionItem value="review-history" className="border-none">
+                        <AccordionTrigger className="text-xs font-semibold py-1 hover:no-underline text-muted-foreground hover:text-foreground">
+                          <span className="flex items-center gap-2">
+                            <History className="h-3.5 w-3.5 text-primary" /> Review History ({modalReviewHistory.length})
+                          </span>
+                        </AccordionTrigger>
+                        <AccordionContent className="pt-2 space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {modalReviewHistory.map((rev: any, rIdx: number) => (
+                            <div key={rev.id || rev._id || rIdx} className="rounded-xl border border-border/60 bg-muted/30 p-2.5 space-y-1 text-xs">
+                              <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
+                                <span className="font-bold text-foreground">
+                                  Review #{modalReviewHistory.length - rIdx}
+                                </span>
+                                <Badge variant="outline" className="text-[0.625rem] px-1.5 py-0 font-bold border-border/60">
+                                  {rev.status || "Completed"}
+                                </Badge>
+                              </div>
+                              <p className="text-[0.68rem] text-muted-foreground">
+                                {new Date(rev.reviewedAt || rev.requestedAt || rev.createdAt).toLocaleDateString()}
+                              </p>
+                              {rev.feedback && (
+                                <p className="text-foreground italic text-[0.725rem] leading-relaxed pt-0.5">
+                                  "{rev.feedback}"
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  </Card>
                 )}
               </div>
 
-              {/* ALL COMPLETE DOCUMENT SECTIONS */}
-              <div className="space-y-6">
-                <h3 className="text-sm font-bold text-foreground border-b border-border pb-2">
-                  Document Content & Academic Sections
-                </h3>
-                {selectedWorkDoc?.sections && selectedWorkDoc.sections.length > 0 ? (
-                  selectedWorkDoc.sections.map((sec: any, idx: number) => {
-                    const secId = sec.id || sec.title || idx;
-                    return (
-                      <div key={secId} className="space-y-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
-                        <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
-                          <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-lg border border-primary/20">{idx + 1}</span>
-                          {sec.title}
-                        </h4>
-                        {sec.content ? (
-                          <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap pt-1 font-sans">
-                            {sec.content}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground italic pt-1">
-                            Not added yet
-                          </p>
-                        )}
+              {/* RIGHT COLUMN: Manuscript Reading & Feedback Canvas */}
+              <div className="flex-1 min-w-0 w-full space-y-6">
+                {/* ABSTRACT & OVERVIEW CARD */}
+                <Card id="fac-section-abstract" className="rounded-2xl border border-border/80 bg-card p-5 space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                        <BookOpen className="h-4 w-4 text-primary" /> Abstract & Overview
+                      </h3>
+                      {changeTracking.abstractChanged && (
+                        <Badge className="bg-amber-500 text-white font-bold text-[0.65rem] px-2 py-0.5 rounded-md gap-1">
+                          <Edit3 className="h-3 w-3" /> Modified Since Last Review
+                        </Badge>
+                      )}
+                    </div>
+                    <span className="text-[0.68rem] text-muted-foreground font-medium">
+                      {selectedWorkDoc?.abstract ? selectedWorkDoc.abstract.trim().split(/\s+/).filter(Boolean).length : 0} words
+                    </span>
+                  </div>
 
-                        {/* Inline Section Note Input */}
-                        <div className="pt-2 border-t border-border/40 space-y-1.5">
-                          <label className="text-[0.7rem] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <MessageSquare className="h-3 w-3 text-primary" /> Faculty Section Note / Correction
-                          </label>
-                          <Input
-                            placeholder={`Add specific inline feedback for "${sec.title}"…`}
-                            value={sectionComments[secId] || ""}
-                            onChange={(e) =>
-                              setSectionComments((prev) => ({
-                                ...prev,
-                                [secId]: e.target.value,
-                              }))
-                            }
-                            className="rounded-xl text-xs bg-background/80"
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="text-xs text-muted-foreground italic">No document sections available.</p>
-                )}
-              </div>
+                  {selectedWorkDoc?.abstract ? (
+                    <p className="text-xs text-foreground italic leading-relaxed bg-muted/20 p-4 rounded-xl border border-border/40 font-sans">
+                      "{selectedWorkDoc.abstract}"
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic bg-muted/20 p-3 rounded-xl border border-border/40">
+                      No abstract written yet.
+                    </p>
+                  )}
 
-              {/* FACULTY REVIEW & FEEDBACK DECISION SECTION */}
-              <div className="space-y-4 pt-4 border-t border-border bg-muted/20 p-5 rounded-3xl border">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground flex items-center gap-2 text-sm">
-                    <MessageSquare className="h-4 w-4 text-primary" /> Overall Academic Review & Feedback
-                  </label>
-                  <p className="text-xs text-muted-foreground">
-                    Provide summary evaluation notes and choose an official review decision for the student scholar.
-                  </p>
+                  {/* KEYWORDS */}
+                  <div className="pt-2 flex items-center gap-2 flex-wrap text-xs border-t border-border/40">
+                    <span className="font-bold text-muted-foreground text-[0.7rem] uppercase tracking-wider">Keywords:</span>
+                    {changeTracking.keywordsChanged && (
+                      <Badge className="bg-amber-500 text-white font-bold text-[0.65rem] px-1.5 py-0 rounded-md">
+                        Modified
+                      </Badge>
+                    )}
+                    {selectedWorkDoc?.keywords && selectedWorkDoc.keywords.length > 0 ? (
+                      selectedWorkDoc.keywords.map((kw: string, idx: number) => (
+                        <Badge key={idx} variant="secondary" className="rounded-xl text-[0.68rem] px-2.5 py-0.5 font-semibold">
+                          #{kw}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-xs text-muted-foreground italic">None added</span>
+                    )}
+                  </div>
+                </Card>
+
+                {/* MANUSCRIPT SECTIONS REVIEW */}
+                <div className="space-y-5">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground border-b border-border/60 pb-2">
+                    Academic Sections & Manuscript Body ({selectedWorkDoc?.sections?.length || 0})
+                  </h3>
+
+                  {selectedWorkDoc?.sections && selectedWorkDoc.sections.length > 0 ? (
+                    selectedWorkDoc.sections.map((sec: any, idx: number) => {
+                      const secId = sec.id || `sec-${idx}`;
+                      const isModified = changeTracking.changedSectionIds.has(secId);
+                      const secWords = sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0;
+
+                      return (
+                        <Card id={`fac-section-${secId}`} key={secId} className={`rounded-2xl border bg-card p-5 space-y-4 shadow-xs ${isModified ? "border-amber-500/50 bg-amber-500/5" : "border-border/80"}`}>
+                          <div className="flex items-center justify-between border-b border-border/60 pb-2.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                                <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary/10 text-primary font-bold text-xs shrink-0">
+                                  {idx + 1}
+                                </span>
+                                {sec.title || `Section ${idx + 1}`}
+                              </h4>
+                              {isModified && (
+                                <Badge className="bg-amber-600 text-white font-bold text-[0.65rem] px-2 py-0.5 rounded-md gap-1">
+                                  <Edit3 className="h-3 w-3" /> Modified Since Last Review
+                                </Badge>
+                              )}
+                            </div>
+                            <span className="text-[0.68rem] text-muted-foreground font-medium">
+                              {secWords} words
+                            </span>
+                          </div>
+
+                          {/* Student Revision Highlight Callout */}
+                          {isModified && (
+                            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-0.5 text-amber-900 dark:text-amber-200">
+                              <div className="flex items-center gap-1.5 font-bold">
+                                <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Student Revision Update:
+                              </div>
+                              <p className="text-[0.725rem] text-amber-800 dark:text-amber-300">
+                                This section was modified by the student following your previous review request.
+                              </p>
+                            </div>
+                          )}
+
+                          {sec.content ? (
+                            <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap font-sans bg-background/50 p-4 rounded-xl border border-border/40">
+                              {sec.content}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground italic p-3 bg-muted/20 rounded-xl border border-border/40">
+                              Section content pending student authoring.
+                            </p>
+                          )}
+
+                          {/* Inline Section Feedback Field */}
+                          <div className="pt-2 border-t border-border/60 space-y-1.5">
+                            <label className="text-[0.7rem] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <MessageSquare className="h-3.5 w-3.5 text-primary" /> Faculty Inline Correction Note for "{sec.title || `Section ${idx + 1}`}"
+                            </label>
+                            <Input
+                              disabled={selectedWorkDoc?.reviewStatus === "Approved"}
+                              placeholder={
+                                selectedWorkDoc?.reviewStatus === "Approved"
+                                  ? "Document is approved (read-only)."
+                                  : `Add specific correction note for "${sec.title || `Section ${idx + 1}`}"…`
+                              }
+                              value={sectionComments[secId] || ""}
+                              onChange={(e) =>
+                                setSectionComments((prev) => ({
+                                  ...prev,
+                                  [secId]: e.target.value,
+                                }))
+                              }
+                              className="rounded-xl text-xs bg-background/80 focus:border-primary"
+                            />
+                          </div>
+                        </Card>
+                      );
+                    })
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic py-6 text-center border border-dashed border-border rounded-2xl">
+                      No academic sections defined in this document yet.
+                    </p>
+                  )}
                 </div>
-                <Textarea
-                  placeholder="Enter overall constructive academic feedback for this research document..."
-                  value={feedbackText}
-                  onChange={(e) => setFeedbackText(e.target.value)}
-                  rows={4}
-                  className="rounded-2xl text-xs border-border bg-background"
-                />
 
-                {/* DECISION ACTION BUTTONS */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <Button variant="outline" onClick={() => setSelectedWorkDoc(null)} className="rounded-xl text-xs">
-                    Close Viewer
-                  </Button>
+                {/* OVERALL FACULTY EVALUATION & DECISION PANEL */}
+                <div className="space-y-4 pt-4 border-t border-border bg-muted/30 p-5 rounded-3xl border shadow-xs">
+                  <div className="space-y-1">
+                    <label className="font-bold text-foreground flex items-center gap-2 text-sm">
+                      <MessageSquare className="h-4 w-4 text-primary" /> Overall Summary Evaluation & Faculty Remarks
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      Write constructive feedback summary and assign an official decision for the student's research document.
+                    </p>
+                  </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Changes Requested")}
-                      disabled={submittingFeedback}
-                      className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-xs gap-1.5"
-                    >
-                      {submittingDecision === "Changes Requested" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <AlertCircle className="h-3.5 w-3.5" />
-                      )}
-                      {submittingDecision === "Changes Requested" ? "Submitting..." : "Request Changes"}
+                  <Textarea
+                    disabled={selectedWorkDoc?.reviewStatus === "Approved"}
+                    placeholder={
+                      selectedWorkDoc?.reviewStatus === "Approved"
+                        ? "Document has been approved. Further revisions are locked."
+                        : "Enter overall constructive academic review feedback for this manuscript..."
+                    }
+                    value={feedbackText}
+                    onChange={(e) => setFeedbackText(e.target.value)}
+                    rows={4}
+                    className="rounded-2xl text-xs border-border bg-background"
+                  />
+
+                  {/* DECISION ACTION BUTTONS */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    <Button variant="outline" onClick={() => setSelectedWorkDoc(null)} className="rounded-xl text-xs font-semibold px-5">
+                      Close Viewer
                     </Button>
 
-                    <Button
-                      type="button"
-                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Approved")}
-                      disabled={submittingFeedback}
-                      className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs gap-1.5"
-                    >
-                      {submittingDecision === "Approved" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedWorkDoc?.reviewStatus === "Approved" ? (
+                        <Button
+                          type="button"
+                          disabled
+                          className="rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 gap-1.5 opacity-100 cursor-not-allowed px-5"
+                        >
+                          <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Document Approved ✓ (Read-Only)
+                        </Button>
                       ) : (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      )}
-                      {submittingDecision === "Approved" ? "Approving..." : "Approve Document"}
-                    </Button>
+                        <>
+                          <Button
+                            type="button"
+                            onClick={() => handleWorkDocSubmitFeedbackWithDecision("Changes Requested")}
+                            disabled={submittingFeedback}
+                            className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-xs gap-1.5"
+                          >
+                            {submittingDecision === "Changes Requested" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <AlertCircle className="h-3.5 w-3.5" />
+                            )}
+                            {submittingDecision === "Changes Requested" ? "Submitting..." : "Request Changes"}
+                          </Button>
 
-                    <Button
-                      type="button"
-                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Reviewed")}
-                      disabled={submittingFeedback || !feedbackText.trim()}
-                      className="rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-xs gap-1.5"
-                    >
-                      {submittingDecision === "Reviewed" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Send className="h-3.5 w-3.5" />
+                          <Button
+                            type="button"
+                            onClick={() => handleWorkDocSubmitFeedbackWithDecision("Approved")}
+                            disabled={submittingFeedback}
+                            className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs gap-1.5"
+                          >
+                            {submittingDecision === "Approved" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            )}
+                            {submittingDecision === "Approved" ? "Approving..." : "Approve Document"}
+                          </Button>
+
+                          <Button
+                            type="button"
+                            onClick={() => handleWorkDocSubmitFeedbackWithDecision("Reviewed")}
+                            disabled={submittingFeedback || !feedbackText.trim()}
+                            className="rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-xs gap-1.5"
+                          >
+                            {submittingDecision === "Reviewed" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Send className="h-3.5 w-3.5" />
+                            )}
+                            {submittingDecision === "Reviewed" ? "Saving..." : "Save General Feedback"}
+                          </Button>
+                        </>
                       )}
-                      {submittingDecision === "Reviewed" ? "Saving..." : "Save General Feedback"}
-                    </Button>
+                    </div>
                   </div>
                 </div>
               </div>

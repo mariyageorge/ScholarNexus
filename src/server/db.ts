@@ -1863,7 +1863,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         }).sort({ updatedAt: -1, createdAt: -1 }).toArray(),
         revCol.find({
           $or: [{ projectId: pIdStr }, { projectId: pAltId }]
-        }).toArray(),
+        }).sort({ requestedAt: -1, createdAt: -1 }).toArray(),
         activityCol.find({
           $or: [
             { userEmail: studentEmail },
@@ -1890,7 +1890,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       const formattedPapers = studentPapers.map((p) => {
         const paperIdStr = p._id.toString();
-        const existingRev = paperReviews.find((r) => r.documentId === paperIdStr || r.documentId === p.id);
+        const existingRev = paperReviews.find((r) => String(r.documentId) === paperIdStr || String(r.documentId) === String(p.id));
         return {
           id: paperIdStr,
           _id: paperIdStr,
@@ -1905,14 +1905,18 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           journal: p.journal || p.conference || "",
           summary: p.summary || p.abstract || "",
           reviewStatus: existingRev ? existingRev.status : "No Review Requested",
-          reviewId: existingRev ? existingRev._id.toString() : undefined,
+          reviewId: existingRev ? (existingRev.id || existingRev._id.toString()) : undefined,
           feedback: existingRev ? existingRev.feedback : undefined,
         };
       });
 
       const formattedResearchWork = studentWorkDocs.map((w) => {
         const workIdStr = w._id.toString();
-        const existingRev = paperReviews.find((r) => r.documentId === workIdStr || r.documentId === w.id);
+        const existingRev = paperReviews.find((r) => String(r.documentId) === workIdStr || String(r.documentId) === String(w.id));
+        const effectiveStatus = (w.reviewStatus === "Pending Review" || w.reviewStatus === "Approved")
+          ? w.reviewStatus
+          : (existingRev ? existingRev.status : (w.reviewStatus || "Draft"));
+
         return {
           id: workIdStr,
           _id: workIdStr,
@@ -1923,9 +1927,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           abstract: w.abstract || "",
           keywords: w.keywords || [],
           sections: w.sections || [],
-          reviewStatus: existingRev ? existingRev.status : (w.reviewStatus || "Draft"),
-          reviewId: existingRev ? existingRev._id.toString() : undefined,
-          feedback: existingRev ? existingRev.feedback : (w.feedback || undefined),
+          reviewStatus: effectiveStatus,
+          reviewId: existingRev ? (existingRev.id || existingRev._id.toString()) : undefined,
+          feedback: w.feedback || (existingRev ? existingRev.feedback : undefined),
           lastSaved: w.lastSaved || w.updatedAt || new Date().toISOString(),
           createdAt: w.createdAt || new Date().toISOString(),
         };
@@ -2333,6 +2337,21 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         return new Response(JSON.stringify({ error: "Research Work document not found." }), { status: 404, headers: { "content-type": "application/json" } });
       }
 
+      if (existingDoc.reviewStatus === "Approved") {
+        // Block student content edits on Approved documents
+        const isContentEdit =
+          body.title !== undefined ||
+          body.abstract !== undefined ||
+          body.keywords !== undefined ||
+          body.sections !== undefined;
+        if (isContentEdit) {
+          return new Response(
+            JSON.stringify({ error: "Approved research documents are permanently read-only and cannot be modified." }),
+            { status: 403, headers: { "content-type": "application/json" } }
+          );
+        }
+      }
+
       const now = new Date().toISOString();
       const updateFields: Record<string, any> = {
         lastSaved: now,
@@ -2380,6 +2399,18 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       if (ObjectId.isValid(workId)) objId = new ObjectId(workId);
 
       const filter = { $or: [{ _id: objId }, { id: String(workId) }] };
+      const docToDelete = await workCol.findOne(filter);
+      if (!docToDelete) {
+        return new Response(JSON.stringify({ error: "Research Work document not found." }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+
+      if (docToDelete.reviewStatus === "Approved") {
+        return new Response(
+          JSON.stringify({ error: "Approved research documents are permanently read-only and cannot be deleted." }),
+          { status: 403, headers: { "content-type": "application/json" } }
+        );
+      }
+
       const existingDoc = await workCol.findOneAndDelete(filter);
       const targetDoc = existingDoc?.value || existingDoc;
 
@@ -2487,6 +2518,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         url: r.url || "",
         feedback: r.feedback || "",
         status: r.status || "Pending Review",
+        documentSnapshot: r.documentSnapshot || null,
         requestedAt: r.requestedAt || r.createdAt || new Date().toISOString(),
         reviewedAt: r.reviewedAt || null,
         createdAt: r.createdAt || new Date().toISOString(),
@@ -2548,6 +2580,24 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const facultyNameStr = projectDoc.faculty || "Faculty Supervisor";
       const now = new Date().toISOString();
 
+      // Fetch target research_work to build content snapshot for revision change tracking
+      const workCol = await getCollection<Document>("research_work");
+      let wId: any = documentId;
+      if (ObjectId.isValid(documentId)) wId = new ObjectId(documentId);
+      const targetWorkDoc = await workCol.findOne({ $or: [{ _id: wId }, { id: String(documentId) }] });
+
+      const documentSnapshot = targetWorkDoc ? {
+        title: targetWorkDoc.title || "",
+        abstract: targetWorkDoc.abstract || "",
+        keywords: Array.isArray(targetWorkDoc.keywords) ? targetWorkDoc.keywords : [],
+        sections: Array.isArray(targetWorkDoc.sections) ? targetWorkDoc.sections.map((s: any) => ({
+          id: s.id,
+          title: s.title || "",
+          content: s.content || "",
+        })) : [],
+        savedAt: now,
+      } : null;
+
       const newReview = {
         projectId: String(projectId),
         projectTitle: projectDoc.title || "Research Project",
@@ -2564,6 +2614,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         url: url || "",
         feedback: "",
         status: "Pending Review",
+        documentSnapshot,
         requestedAt: now,
         reviewedAt: null,
         createdAt: now,
@@ -2573,9 +2624,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const result = await revCol.insertOne(newReview as any);
 
       // Sync status with research_work document
-      const workCol = await getCollection<Document>("research_work");
-      let wId: any = documentId;
-      if (ObjectId.isValid(documentId)) wId = new ObjectId(documentId);
       await workCol.updateOne(
         { $or: [{ _id: wId }, { id: String(documentId) }] },
         { $set: { reviewStatus: "Pending Review", updatedAt: now } }
@@ -2650,7 +2698,14 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
 
       if (!existingReview && documentId) {
-        existingReview = await revCol.findOne({ documentId: String(documentId) });
+        const latestDocs = await revCol
+          .find({ documentId: String(documentId) })
+          .sort({ requestedAt: -1, createdAt: -1 })
+          .limit(1)
+          .toArray();
+        if (latestDocs.length > 0) {
+          existingReview = latestDocs[0];
+        }
       }
 
       if (existingReview) {
