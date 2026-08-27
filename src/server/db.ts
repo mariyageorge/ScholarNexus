@@ -2275,17 +2275,19 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       const result = await workCol.insertOne(newDoc as any);
 
-      await recordUserActivity(
+      recordUserActivity(
         studentEmail,
         studentName || "Student Scholar",
         "CREATE_RESEARCH_WORK",
         `Created Research Document: "${docTitle}"`,
         `Template: ${tType}`,
         "Project"
-      );
+      ).catch((err) => console.error("Activity logging error:", err));
 
       if (newDoc.projectId) {
-        await calculateProjectProgress(newDoc.projectId);
+        calculateProjectProgress(newDoc.projectId).catch((err) =>
+          console.error("Async progress calculation error:", err)
+        );
       }
 
       const created = { ...newDoc, id: result.insertedId.toString(), _id: result.insertedId.toString() };
@@ -2355,11 +2357,12 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let objId: any = workId;
       if (ObjectId.isValid(workId)) objId = new ObjectId(workId);
 
-      const existingDoc = await workCol.findOne({ $or: [{ _id: objId }, { id: String(workId) }] });
-      await workCol.deleteOne({ $or: [{ _id: objId }, { id: String(workId) }] });
+      const filter = { $or: [{ _id: objId }, { id: String(workId) }] };
+      const existingDoc = await workCol.findOneAndDelete(filter);
+      const targetDoc = existingDoc?.value || existingDoc;
 
-      if (existingDoc?.projectId) {
-        calculateProjectProgress(existingDoc.projectId).catch((err) =>
+      if (targetDoc?.projectId) {
+        calculateProjectProgress(targetDoc.projectId).catch((err) =>
           console.error("Async progress calculation error:", err)
         );
       }

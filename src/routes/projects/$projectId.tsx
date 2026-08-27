@@ -606,18 +606,64 @@ ${s.keyTakeaway}
     }
   };
 
+  // Set of already created template types for pre-selection disabling
+  const createdTemplateTypes = useMemo(() => {
+    const set = new Set<string>();
+    researchWorkList.forEach((w) => {
+      if (w.templateType && w.templateType !== "Blank Document") {
+        set.add(w.templateType);
+      }
+    });
+    return set;
+  }, [researchWorkList]);
+
+  const handleOpenCreateWorkModal = () => {
+    const templates = [
+      "Research Paper",
+      "Literature Review",
+      "Research Proposal",
+      "Project Report",
+      "Conference Paper",
+      "Blank Document",
+    ];
+    const available = templates.find((t) => t === "Blank Document" || !createdTemplateTypes.has(t));
+    setSelectedTemplate(available || "Blank Document");
+    setIsCreateWorkModalOpen(true);
+  };
+
+  const autoSaveDebounceRef = useRef<any>(null);
+
+  // Automatic debounced background autosave when activeWorkDoc is edited
+  useEffect(() => {
+    const docId = activeWorkDoc?.id || activeWorkDoc?._id;
+    if (!activeWorkDoc || !docId) return;
+
+    if (autoSaveDebounceRef.current) {
+      clearTimeout(autoSaveDebounceRef.current);
+    }
+
+    autoSaveDebounceRef.current = setTimeout(() => {
+      handleSaveActiveWorkDoc(activeWorkDoc, false);
+    }, 1500);
+
+    return () => {
+      if (autoSaveDebounceRef.current) {
+        clearTimeout(autoSaveDebounceRef.current);
+      }
+    };
+  }, [
+    activeWorkDoc?.title,
+    activeWorkDoc?.abstract,
+    JSON.stringify(activeWorkDoc?.keywords),
+    JSON.stringify(activeWorkDoc?.sections),
+  ]);
+
   // 1. Prevent duplicate template type research works for the same project
   const handleCreateResearchWork = async (templateType: string) => {
     if (!project || !user?.email) return;
 
-    const existingSameTypeDoc = researchWorkList.find(
-      (w) => w.templateType === templateType
-    );
-
-    if (existingSameTypeDoc) {
-      toast.info(`A ${templateType} already exists for this project ("${existingSameTypeDoc.title}"). Opening document.`);
-      setIsCreateWorkModalOpen(false);
-      setActiveWorkDoc(existingSameTypeDoc);
+    if (templateType !== "Blank Document" && createdTemplateTypes.has(templateType)) {
+      toast.error(`A ${templateType} already exists for this project.`);
       return;
     }
 
@@ -730,6 +776,26 @@ ${s.keyTakeaway}
     if (status === "Draft") return true;
     return hasContentChangedSinceReview;
   }, [activeWorkDoc, currentSupervisionState, hasContentChangedSinceReview]);
+
+  const canRequestReviewForDoc = (doc: any) => {
+    if (!doc) return false;
+    if (currentSupervisionState !== "Approved") return false;
+    const status = doc.reviewStatus || "Draft";
+    if (status === "Pending Review") return false;
+    if (status === "Draft") return true;
+
+    const docId = doc.id || doc._id;
+    if (!docId) return false;
+
+    if (activeWorkDoc && (activeWorkDoc.id === docId || activeWorkDoc._id === docId)) {
+      return hasContentChangedSinceReview;
+    }
+
+    const initialSnapshot = lastReviewedSnapshotRef.current[docId];
+    if (!initialSnapshot) return false;
+    const currentSnapshot = getDocContentSnapshot(doc);
+    return currentSnapshot !== initialSnapshot;
+  };
 
   const docWordCount = useMemo(() => {
     if (!activeWorkDoc) return 0;
@@ -2297,6 +2363,15 @@ ${s.keyTakeaway}
 
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
                       <Button
+                        onClick={handleOpenCreateWorkModal}
+                        size="sm"
+                        variant="outline"
+                        className="rounded-xl text-xs font-semibold gap-1.5 border-border/80 bg-background/80 hover:bg-muted"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-primary" /> + Add Research Work
+                      </Button>
+
+                      <Button
                         onClick={() => handleSaveActiveWorkDoc(activeWorkDoc, true)}
                         disabled={savingWork}
                         size="sm"
@@ -2305,7 +2380,7 @@ ${s.keyTakeaway}
                       >
                         {savingWork ? (
                           <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Saving...
                           </>
                         ) : justSaved ? (
                           <>
@@ -2738,10 +2813,10 @@ ${s.keyTakeaway}
                   </div>
 
                   <Button
-                    onClick={() => setIsCreateWorkModalOpen(true)}
+                    onClick={handleOpenCreateWorkModal}
                     className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-md shrink-0"
                   >
-                    <Plus className="h-4 w-4" /> Create Research Work
+                    <Plus className="h-4 w-4" /> + Add Research Work
                   </Button>
                 </div>
 
@@ -2758,10 +2833,10 @@ ${s.keyTakeaway}
                       </p>
                     </div>
                     <Button
-                      onClick={() => setIsCreateWorkModalOpen(true)}
+                      onClick={handleOpenCreateWorkModal}
                       className="gap-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold shadow-md"
                     >
-                      <Plus className="h-4 w-4" /> Create Research Work
+                      <Plus className="h-4 w-4" /> + Add Research Work
                     </Button>
                   </Card>
                 ) : (
@@ -2809,12 +2884,9 @@ ${s.keyTakeaway}
                                   <FileEdit className="h-3.5 w-3.5 text-primary" /> Open Editor
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={
-                                    doc.reviewStatus === "Pending Review" ||
-                                    currentSupervisionState !== "Approved"
-                                  }
+                                  disabled={!canRequestReviewForDoc(doc)}
                                   onClick={() => handleRequestWorkReview(doc)}
-                                  className="gap-2 cursor-pointer font-medium"
+                                  className="gap-2 cursor-pointer font-medium disabled:opacity-50"
                                 >
                                   <Send className="h-3.5 w-3.5 text-muted-foreground" /> Request Review
                                 </DropdownMenuItem>
@@ -2880,10 +2952,7 @@ ${s.keyTakeaway}
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      disabled={
-                                        doc.reviewStatus === "Pending Review" ||
-                                        currentSupervisionState !== "Approved"
-                                      }
+                                      disabled={!canRequestReviewForDoc(doc)}
                                       onClick={() => handleRequestWorkReview(doc)}
                                       className="rounded-xl text-xs font-semibold h-8 border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
                                     >
@@ -2892,11 +2961,13 @@ ${s.keyTakeaway}
                                     </Button>
                                   </span>
                                 </TooltipTrigger>
-                                {(doc.reviewStatus === "Pending Review" || currentSupervisionState !== "Approved") && (
+                                {!canRequestReviewForDoc(doc) && (
                                   <TooltipContent className="max-w-xs text-xs">
                                     {currentSupervisionState !== "Approved"
                                       ? "Faculty supervision required before submitting review requests."
-                                      : "An active review request is already pending with your supervisor."}
+                                      : doc.reviewStatus === "Pending Review"
+                                      ? "An active review request is already pending with your supervisor."
+                                      : "Make meaningful edits to your research document to enable requesting another review."}
                                   </TooltipContent>
                                 )}
                               </Tooltip>
@@ -4092,22 +4163,37 @@ ${s.keyTakeaway}
                   },
                 ].map((t) => {
                   const TIcon = t.icon;
+                  const isAlreadyCreated = t.type !== "Blank Document" && createdTemplateTypes.has(t.type);
                   const isSelected = selectedTemplate === t.type;
                   return (
                     <div
                       key={t.type}
-                      onClick={() => setSelectedTemplate(t.type)}
-                      className={`cursor-pointer rounded-2xl border p-3.5 space-y-1.5 transition-all ${
-                        isSelected
-                          ? "border-primary bg-primary/10 shadow-sm"
-                          : "border-border/70 bg-background/50 hover:border-border"
+                      onClick={() => {
+                        if (!isAlreadyCreated) {
+                          setSelectedTemplate(t.type);
+                        }
+                      }}
+                      className={`rounded-2xl border p-3.5 space-y-1.5 transition-all ${
+                        isAlreadyCreated
+                          ? "opacity-50 bg-muted/40 border-muted/80 cursor-not-allowed pointer-events-none"
+                          : isSelected
+                          ? "border-primary bg-primary/10 shadow-sm cursor-pointer"
+                          : "border-border/70 bg-background/50 hover:border-border cursor-pointer"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1">
                         <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
                           <TIcon className="h-4 w-4 text-primary" /> {t.type}
                         </span>
-                        {isSelected && <Badge variant="outline" className="border-primary text-primary text-[0.65rem] font-bold">Selected</Badge>}
+                        {isAlreadyCreated ? (
+                          <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[0.65rem] font-bold rounded-full px-2">
+                            Already Created
+                          </Badge>
+                        ) : isSelected ? (
+                          <Badge variant="outline" className="border-primary text-primary text-[0.65rem] font-bold rounded-full px-2">
+                            Selected
+                          </Badge>
+                        ) : null}
                       </div>
                       <p className="text-[0.7rem] text-muted-foreground leading-snug">{t.desc}</p>
                     </div>
@@ -4122,8 +4208,9 @@ ${s.keyTakeaway}
               Cancel
             </Button>
             <Button
+              disabled={selectedTemplate !== "Blank Document" && createdTemplateTypes.has(selectedTemplate)}
               onClick={() => handleCreateResearchWork(selectedTemplate)}
-              className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-sm gap-1.5"
+              className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-sm gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Pencil className="h-3.5 w-3.5" /> Start Writing
             </Button>
