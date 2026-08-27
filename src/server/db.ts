@@ -4196,6 +4196,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         });
       }
 
+      if (projectDoc.status === "Completed") {
+        return new Response(
+          JSON.stringify({ error: "Cannot generate or modify a research roadmap for a completed project." }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
       const duration = Number(durationWeeks) || 6;
 
       const result = await generateResearchRoadmapWithGemini({

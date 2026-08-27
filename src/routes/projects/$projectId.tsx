@@ -3095,13 +3095,24 @@ ${s.keyTakeaway}
 
                 <div className="flex flex-wrap items-center gap-2.5">
                   <Button
-                    onClick={() => setIsGenerateRoadmapModalOpen(true)}
+                    onClick={() => {
+                      if (project.status === "Completed") {
+                        toast.error("Cannot modify roadmap for a completed project.");
+                        return;
+                      }
+                      setIsGenerateRoadmapModalOpen(true);
+                    }}
+                    disabled={project.status === "Completed"}
                     variant="outline"
                     size="sm"
-                    className="gap-2 rounded-xl text-xs font-semibold"
+                    className="gap-2 rounded-xl text-xs font-semibold disabled:opacity-50"
                   >
                     <RefreshCcw className="h-3.5 w-3.5 text-primary" />
-                    {Array.isArray(project.roadmap) && project.roadmap.length > 0 ? "Regenerate Plan" : "Generate Roadmap"}
+                    {project.status === "Completed"
+                      ? "Roadmap Locked (Completed)"
+                      : Array.isArray(project.roadmap) && project.roadmap.length > 0
+                      ? "Regenerate Plan"
+                      : "Generate Roadmap"}
                   </Button>
 
                   {Array.isArray(project.roadmap) && project.roadmap.length > 0 && (
@@ -3202,8 +3213,29 @@ ${s.keyTakeaway}
                     ))}
                   </div>
                 </div>
+              ) : project.status === "Completed" ? (
+                /* Empty State for Completed Project */
+                <div className="py-16 text-center space-y-4 max-w-md mx-auto">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-500">
+                    <CheckCircle2 className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-lg font-bold text-foreground">Project Completed</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      This research project has been completed. Roadmap generation is locked for completed projects.
+                    </p>
+                  </div>
+
+                  <Button
+                    disabled
+                    variant="outline"
+                    className="gap-2 rounded-xl text-xs font-bold border-border text-muted-foreground opacity-60 cursor-not-allowed px-6 py-2.5"
+                  >
+                    <Lock className="h-4 w-4" /> Roadmap Locked (Project Completed)
+                  </Button>
+                </div>
               ) : (
-                /* Empty State */
+                /* Empty State for Active Projects */
                 <div className="py-16 text-center space-y-4 max-w-md mx-auto">
                   <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary">
                     <Compass className="h-8 w-8" />
