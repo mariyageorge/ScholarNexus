@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   Pencil,
   Send,
+  Loader2,
 } from "lucide-react";
 import { getUserSession, UserSession } from "@/lib/session";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -179,38 +180,65 @@ function FacultyStudentsPage() {
     }
   }, []);
 
-  const handleWorkDocSubmitFeedback = async () => {
-    if (!selectedWorkDoc || !feedbackText.trim()) {
-      toast.error("Please enter constructive academic feedback before submitting.");
+  const [sectionComments, setSectionComments] = useState<Record<string, string>>({});
+  const [submittingDecision, setSubmittingDecision] = useState<"Approved" | "Changes Requested" | "Rejected" | "Reviewed" | null>(null);
+
+  const handleWorkDocSubmitFeedbackWithDecision = async (decision: "Approved" | "Changes Requested" | "Rejected" | "Reviewed") => {
+    if (!selectedWorkDoc) return;
+    if (!feedbackText.trim() && Object.values(sectionComments).every((c) => !c.trim())) {
+      toast.error("Please enter overall academic feedback or section feedback notes.");
       return;
     }
 
+    setSubmittingDecision(decision);
     setSubmittingFeedback(true);
     try {
+      const sectionFeedbackArray = Object.entries(sectionComments)
+        .filter(([_, comment]) => comment.trim().length > 0)
+        .map(([secId, comment]) => ({
+          sectionId: secId,
+          sectionTitle: selectedWorkDoc.sections?.find((s: any) => (s.id || s.title || s._id) === secId)?.title || secId,
+          comment: comment.trim(),
+        }));
+
+      const targetDocId = selectedWorkDoc.id || selectedWorkDoc._id;
       const res = await fetch("/api/reviews", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          documentId: selectedWorkDoc.id,
+          documentId: targetDocId,
           projectId: workspaceData?.project?.id || (workspaceData?.project as any)?._id,
           studentEmail: workspaceData?.student?.email,
           studentName: workspaceData?.student?.name,
           facultyEmail: session?.email,
           facultyName: session?.name,
           feedback: feedbackText.trim(),
+          decisionStatus: decision,
+          sectionFeedback: sectionFeedbackArray,
         }),
       });
 
       if (res.ok) {
-        toast.success(`Faculty feedback submitted for "${selectedWorkDoc.title}".`);
+        toast.success(`Faculty review [${decision}] submitted for "${selectedWorkDoc.title}".`);
         const updatedFeedback = feedbackText.trim();
-        setSelectedWorkDoc((prev: any) => prev ? { ...prev, reviewStatus: "Reviewed", feedback: updatedFeedback } : null);
+        setSelectedWorkDoc((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                reviewStatus: decision,
+                feedback: updatedFeedback,
+                sectionFeedback: sectionFeedbackArray,
+              }
+            : null
+        );
         setWorkspaceData((prev: any) => {
           if (!prev) return prev;
           return {
             ...prev,
             researchWork: prev.researchWork?.map((w: any) =>
-              w.id === selectedWorkDoc.id ? { ...w, reviewStatus: "Reviewed", feedback: updatedFeedback } : w
+              (w.id || w._id) === targetDocId
+                ? { ...w, reviewStatus: decision, feedback: updatedFeedback, sectionFeedback: sectionFeedbackArray }
+                : w
             ),
           };
         });
@@ -223,6 +251,7 @@ function FacultyStudentsPage() {
       toast.error("An error occurred while submitting feedback.");
     } finally {
       setSubmittingFeedback(false);
+      setSubmittingDecision(null);
     }
   };
 
@@ -1103,55 +1132,116 @@ function FacultyStudentsPage() {
                   Document Content & Academic Sections
                 </h3>
                 {selectedWorkDoc?.sections && selectedWorkDoc.sections.length > 0 ? (
-                  selectedWorkDoc.sections.map((sec: any, idx: number) => (
-                    <div key={sec.id || idx} className="space-y-2 rounded-2xl border border-border bg-card p-5 shadow-sm">
-                      <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
-                        <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-lg border border-primary/20">{idx + 1}</span>
-                        {sec.title}
-                      </h4>
-                      {sec.content ? (
-                        <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap pt-1 font-sans">
-                          {sec.content}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-muted-foreground italic pt-1">
-                          Not added yet
-                        </p>
-                      )}
-                    </div>
-                  ))
+                  selectedWorkDoc.sections.map((sec: any, idx: number) => {
+                    const secId = sec.id || sec.title || idx;
+                    return (
+                      <div key={secId} className="space-y-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
+                        <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                          <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-lg border border-primary/20">{idx + 1}</span>
+                          {sec.title}
+                        </h4>
+                        {sec.content ? (
+                          <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap pt-1 font-sans">
+                            {sec.content}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground italic pt-1">
+                            Not added yet
+                          </p>
+                        )}
+
+                        {/* Inline Section Note Input */}
+                        <div className="pt-2 border-t border-border/40 space-y-1.5">
+                          <label className="text-[0.7rem] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                            <MessageSquare className="h-3 w-3 text-primary" /> Faculty Section Note / Correction
+                          </label>
+                          <Input
+                            placeholder={`Add specific inline feedback for "${sec.title}"…`}
+                            value={sectionComments[secId] || ""}
+                            onChange={(e) =>
+                              setSectionComments((prev) => ({
+                                ...prev,
+                                [secId]: e.target.value,
+                              }))
+                            }
+                            className="rounded-xl text-xs bg-background/80"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
                 ) : (
                   <p className="text-xs text-muted-foreground italic">No document sections available.</p>
                 )}
               </div>
 
-              {/* FACULTY REVIEW & FEEDBACK SECTION */}
-              <div className="space-y-3 pt-4 border-t border-border bg-muted/20 p-5 rounded-3xl border">
-                <label className="font-bold text-foreground flex items-center gap-2 text-sm">
-                  <MessageSquare className="h-4 w-4 text-primary" /> Faculty Review & Academic Feedback
-                </label>
-                <p className="text-xs text-muted-foreground">
-                  Provide guidance, suggestions, and corrections for the student's research document.
-                </p>
+              {/* FACULTY REVIEW & FEEDBACK DECISION SECTION */}
+              <div className="space-y-4 pt-4 border-t border-border bg-muted/20 p-5 rounded-3xl border">
+                <div className="space-y-1">
+                  <label className="font-bold text-foreground flex items-center gap-2 text-sm">
+                    <MessageSquare className="h-4 w-4 text-primary" /> Overall Academic Review & Feedback
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Provide summary evaluation notes and choose an official review decision for the student scholar.
+                  </p>
+                </div>
                 <Textarea
-                  placeholder="Enter constructive academic feedback for this research document..."
+                  placeholder="Enter overall constructive academic feedback for this research document..."
                   value={feedbackText}
                   onChange={(e) => setFeedbackText(e.target.value)}
-                  rows={5}
+                  rows={4}
                   className="rounded-2xl text-xs border-border bg-background"
                 />
-                <div className="flex justify-end gap-2 pt-2">
+
+                {/* DECISION ACTION BUTTONS */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                   <Button variant="outline" onClick={() => setSelectedWorkDoc(null)} className="rounded-xl text-xs">
                     Close Viewer
                   </Button>
-                  <Button
-                    onClick={handleWorkDocSubmitFeedback}
-                    disabled={submittingFeedback || !feedbackText.trim()}
-                    className="rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-sm gap-1.5"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {submittingFeedback ? "Submitting Feedback..." : "Submit Feedback"}
-                  </Button>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Changes Requested")}
+                      disabled={submittingFeedback}
+                      className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-xs gap-1.5"
+                    >
+                      {submittingDecision === "Changes Requested" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AlertCircle className="h-3.5 w-3.5" />
+                      )}
+                      {submittingDecision === "Changes Requested" ? "Submitting..." : "Request Changes"}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Approved")}
+                      disabled={submittingFeedback}
+                      className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs gap-1.5"
+                    >
+                      {submittingDecision === "Approved" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      {submittingDecision === "Approved" ? "Approving..." : "Approve Document"}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      onClick={() => handleWorkDocSubmitFeedbackWithDecision("Reviewed")}
+                      disabled={submittingFeedback || !feedbackText.trim()}
+                      className="rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-xs gap-1.5"
+                    >
+                      {submittingDecision === "Reviewed" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Send className="h-3.5 w-3.5" />
+                      )}
+                      {submittingDecision === "Reviewed" ? "Saving..." : "Save General Feedback"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

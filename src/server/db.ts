@@ -1795,6 +1795,8 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       const studentEmail = targetUser.email.toLowerCase();
 
+      const cleanFacEmail = (facultyEmail || "").trim().toLowerCase();
+
       // Locate specific requested project or default to the faculty's approved project
       let projectDoc: any = null;
       if (targetProjectId) {
@@ -1808,9 +1810,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           userEmail: studentEmail,
           supervisionStatus: "Under Supervision",
           $or: [
-            { facultyEmail: facultyEmail },
-            { facultyId: facultyEmail },
-            { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }
+            { facultyEmail: cleanFacEmail },
+            { facultyId: cleanFacEmail },
+            { facultyEmail: facultyEmail }
           ]
         });
       }
@@ -1828,13 +1830,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       // BACKEND SECURITY CHECK: Verify approved supervision relationship for THIS project & THIS faculty
       const isFacultyAssigned =
         projectDoc.supervisionStatus === "Under Supervision" &&
-        (projectDoc.facultyEmail?.toLowerCase() === facultyEmail ||
-         projectDoc.facultyId?.toLowerCase() === facultyEmail ||
-         (projectDoc.facultyEmail && new RegExp(`^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i").test(projectDoc.facultyEmail)));
+        (projectDoc.facultyEmail?.toLowerCase() === cleanFacEmail ||
+         projectDoc.facultyId?.toLowerCase() === cleanFacEmail ||
+         projectDoc.facultyEmail === facultyEmail);
 
       const approvedSupReq = await supCol.findOne({
         projectId: { $in: [pIdStr, pAltId] },
-        $or: [{ facultyEmail: facultyEmail }, { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }],
+        $or: [{ facultyEmail: cleanFacEmail }, { facultyEmail: facultyEmail }, { facultyId: cleanFacEmail }],
         status: "Approved",
       });
 
@@ -1845,7 +1847,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         );
       }
 
-      // SCOPED DATA FETCHING strictly by projectId (pIdStr / pAltId)
+      // SCOPED DATA FETCHING strictly by projectId (pIdStr / pAltId) - Fast indexed queries
       const [supReq, studentPapers, studentWorkDocs, paperReviews, projectActivities] = await Promise.all([
         supCol.findOne({
           projectId: { $in: [pIdStr, pAltId] },
@@ -1866,8 +1868,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           $or: [
             { userEmail: studentEmail },
             { projectId: pIdStr },
-            { projectId: pAltId },
-            { details: { $regex: pIdStr, $options: "i" } }
+            { projectId: pAltId }
           ]
         }).sort({ timestamp: -1 }).limit(30).toArray(),
       ]);
@@ -2064,22 +2065,18 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     }
 
     // LIST PATH: Fetch approved supervision requests & student directory for faculty
-    const approvedSupReqs = await supCol.find({
-      $or: [
-        { facultyEmail: facultyEmail },
-        { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }
-      ],
-      status: "Approved",
-    }).toArray();
+    const cleanFacultyEmail = (facultyEmail || "").trim().toLowerCase();
 
-    const supervisedProjects = await projectsCol.find({
-      $or: [
-        { facultyEmail: facultyEmail },
-        { facultyId: facultyEmail },
-        { facultyEmail: { $regex: `^${facultyEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } }
-      ],
-      supervisionStatus: "Under Supervision",
-    }).toArray();
+    const [approvedSupReqs, supervisedProjects] = await Promise.all([
+      supCol.find({
+        $or: [{ facultyEmail: cleanFacultyEmail }, { facultyEmail: facultyEmail }],
+        status: "Approved",
+      }).toArray(),
+      projectsCol.find({
+        $or: [{ facultyEmail: cleanFacultyEmail }, { facultyId: cleanFacultyEmail }, { facultyEmail: facultyEmail }],
+        supervisionStatus: "Under Supervision",
+      }).toArray(),
+    ]);
 
     const approvedProjectEntries: any[] = [];
     const seenProjectIds = new Set<string>();
@@ -2096,58 +2093,72 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
     }
 
-    for (const req of approvedSupReqs) {
-      const pIdStr = String(req.projectId);
-      if (pIdStr && !seenProjectIds.has(pIdStr)) {
-        seenProjectIds.add(pIdStr);
-        let pFilterId: any = pIdStr;
-        if (ObjectId.isValid(pIdStr)) pFilterId = new ObjectId(pIdStr);
-        const proj = await projectsCol.findOne({ $or: [{ _id: pFilterId }, { id: pIdStr }] });
-        if (proj) {
+    const missingReqProjectIds = approvedSupReqs
+      .map((req) => String(req.projectId))
+      .filter((pIdStr) => pIdStr && !seenProjectIds.has(pIdStr));
+
+    if (missingReqProjectIds.length > 0) {
+      const objIds = missingReqProjectIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
+      const fetchedProjects = await projectsCol.find({
+        $or: [{ _id: { $in: objIds } }, { id: { $in: missingReqProjectIds } }],
+      }).toArray();
+
+      for (const proj of fetchedProjects) {
+        const pIdStr = proj._id.toString();
+        if (!seenProjectIds.has(pIdStr)) {
+          seenProjectIds.add(pIdStr);
+          const matchedReq = approvedSupReqs.find((r) => String(r.projectId) === pIdStr || String(r.projectId) === proj.id);
           approvedProjectEntries.push({
-            studentEmail: (proj.userEmail || req.studentEmail || "").toLowerCase(),
+            studentEmail: (proj.userEmail || matchedReq?.studentEmail || "").toLowerCase(),
             project: proj,
-            supReq: req,
+            supReq: matchedReq,
           });
         }
       }
     }
 
     const studentEmails = Array.from(new Set(approvedProjectEntries.map((e) => e.studentEmail).filter(Boolean)));
-    const studentUsers = await usersCol.find({ email: { $in: studentEmails } }).toArray();
+    const allProjectIds = approvedProjectEntries.map((e) => e.project._id.toString());
+
+    const [studentUsers, paperCounts] = await Promise.all([
+      usersCol.find({ email: { $in: studentEmails } }).toArray(),
+      papersCol.aggregate([
+        { $match: { projectId: { $in: allProjectIds } } },
+        { $group: { _id: "$projectId", count: { $sum: 1 } } },
+      ]).toArray(),
+    ]);
+
     const studentUserMap = new Map<string, any>();
     for (const u of studentUsers) {
       studentUserMap.set(u.email.toLowerCase(), u);
     }
 
-    const formattedStudents = await Promise.all(
-      approvedProjectEntries.map(async (entry) => {
-        const sUser = studentUserMap.get(entry.studentEmail);
-        const pIdStr = entry.project._id.toString();
-        const pAltId = entry.project.id ? String(entry.project.id) : pIdStr;
+    const paperCountMap = new Map<string, number>();
+    for (const pc of paperCounts) {
+      paperCountMap.set(String(pc._id), pc.count);
+    }
 
-        const paperCount = await papersCol.countDocuments({
-          userEmail: entry.studentEmail,
-          $or: [{ projectId: pIdStr }, { projectId: pAltId }]
-        });
+    const formattedStudents = approvedProjectEntries.map((entry) => {
+      const sUser = studentUserMap.get(entry.studentEmail);
+      const pIdStr = entry.project._id.toString();
+      const paperCount = paperCountMap.get(pIdStr) || 0;
 
-        return {
-          id: sUser ? sUser._id.toString() : entry.project._id.toString(),
-          _id: sUser ? sUser._id.toString() : entry.project._id.toString(),
-          name: sUser?.name || entry.supReq?.studentName || "Student Scholar",
-          email: entry.studentEmail,
-          department: sUser?.department || "Computer Science",
-          degreeProgram: (sUser as any)?.degreeProgram || sUser?.affiliation || "B.S. Computer Science",
-          activeProject: entry.project.title || entry.supReq?.projectTitle || "Academic Research Project",
-          projectId: pIdStr,
-          status: "Under Supervision" as const,
-          joinedDate: entry.supReq?.respondedAt
-            ? new Date(entry.supReq.respondedAt).toISOString().split("T")[0]
-            : entry.project.createdAt ? new Date(entry.project.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-          paperCount,
-        };
-      })
-    );
+      return {
+        id: sUser ? sUser._id.toString() : entry.project._id.toString(),
+        _id: sUser ? sUser._id.toString() : entry.project._id.toString(),
+        name: sUser?.name || entry.supReq?.studentName || "Student Scholar",
+        email: entry.studentEmail,
+        department: sUser?.department || "Computer Science",
+        degreeProgram: (sUser as any)?.degreeProgram || sUser?.affiliation || "B.S. Computer Science",
+        activeProject: entry.project.title || entry.supReq?.projectTitle || "Academic Research Project",
+        projectId: pIdStr,
+        status: "Under Supervision" as const,
+        joinedDate: entry.supReq?.respondedAt
+          ? new Date(entry.supReq.respondedAt).toISOString().split("T")[0]
+          : entry.project.createdAt ? new Date(entry.project.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+        paperCount,
+      };
+    });
 
     return new Response(JSON.stringify(formattedStudents), {
       status: 200,
@@ -2190,6 +2201,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         sections: w.sections || [],
         reviewStatus: w.reviewStatus || "Draft",
         feedback: w.feedback || "",
+        sectionFeedback: w.sectionFeedback || [],
         lastSaved: w.lastSaved || w.updatedAt || new Date().toISOString(),
         createdAt: w.createdAt || new Date().toISOString(),
         updatedAt: w.updatedAt || new Date().toISOString(),
@@ -2615,19 +2627,19 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let body: any = {};
       try { body = await request.json(); } catch {}
 
-      const reviewId = body.id || body._id || body.reviewId;
-      const documentId = body.documentId || body.workId;
-      const projectId = body.projectId;
-      const feedbackText = (body.feedback || "").trim();
+      const { reviewId, documentId, feedback, projectId, decisionStatus, sectionFeedback } = body;
+      const feedbackText = (feedback || "").trim();
+      const statusToSet = decisionStatus || "Reviewed";
+      const secFeedbackArray = Array.isArray(sectionFeedback) ? sectionFeedback : [];
+      const now = new Date().toISOString();
 
-      if (!feedbackText) {
-        return new Response(JSON.stringify({ error: "Feedback text is required." }), {
+      if (!feedbackText && secFeedbackArray.length === 0) {
+        return new Response(JSON.stringify({ error: "Academic feedback or section feedback is required." }), {
           status: 400,
           headers: { "content-type": "application/json" },
         });
       }
 
-      const now = new Date().toISOString();
       const workCol = await getCollection<Document>("research_work");
       let existingReview: any = null;
 
@@ -2645,7 +2657,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         // Update existing review document
         const updatePayload = {
           feedback: feedbackText,
-          status: "Reviewed",
+          sectionFeedback: secFeedbackArray,
+          status: statusToSet,
+          decisionStatus: statusToSet,
           reviewedAt: now,
           updatedAt: now,
         };
@@ -2656,16 +2670,25 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         if (ObjectId.isValid(existingReview.documentId)) wId = new ObjectId(existingReview.documentId);
         await workCol.updateOne(
           { $or: [{ _id: wId }, { id: String(existingReview.documentId) }] },
-          { $set: { reviewStatus: "Reviewed", feedback: feedbackText, updatedAt: now } }
+          {
+            $set: {
+              reviewStatus: statusToSet,
+              feedback: feedbackText,
+              sectionFeedback: secFeedbackArray,
+              lastReviewedAt: now,
+              updatedAt: now,
+            },
+          }
         );
 
         // Record activity & notification
+        const statusLabel = statusToSet === "Approved" ? "Approved" : statusToSet === "Changes Requested" ? "Changes Requested" : "Reviewed";
         await recordUserActivity(
           existingReview.studentEmail || "student@scholarnexus.edu",
           existingReview.studentName || "Student Scholar",
           "FACULTY_FEEDBACK_SUBMITTED",
-          `Faculty feedback submitted for "${existingReview.documentTitle}"`,
-          `Feedback: "${feedbackText}"`,
+          `Faculty Review (${statusLabel}): "${existingReview.documentTitle}"`,
+          `Decision: ${statusLabel} • Feedback: "${feedbackText || "Section feedback attached"}"`,
           "Paper"
         );
 
@@ -2675,8 +2698,8 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
             recipientId: existingReview.studentEmail.toLowerCase(),
             senderId: (existingReview.facultyEmail || "").toLowerCase(),
             type: "FeedbackReceived",
-            title: "Faculty feedback received",
-            content: `${existingReview.facultyName || "Faculty"} has provided feedback on your research work for "${existingReview.projectTitle || existingReview.documentTitle}".`,
+            title: `Faculty Review: ${statusLabel}`,
+            content: `${existingReview.facultyName || "Faculty"} marked your document "${existingReview.documentTitle}" as [${statusLabel}]. ${feedbackText ? `Note: "${feedbackText}"` : ""}`,
             category: "Review",
             read: false,
             createdAt: now,
@@ -2692,7 +2715,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           await calculateProjectProgress(existingReview.projectId);
         }
 
-        return new Response(JSON.stringify({ success: true, message: "Feedback submitted successfully." }), {
+        return new Response(JSON.stringify({ success: true, message: `Review (${statusLabel}) submitted successfully.` }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -2720,7 +2743,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           documentTitle: docTitleStr,
           fileType: workDoc?.templateType ? `${workDoc.templateType} Document` : "Research Document",
           feedback: feedbackText,
-          status: "Reviewed",
+          sectionFeedback: secFeedbackArray,
+          status: statusToSet,
+          decisionStatus: statusToSet,
           requestedAt: now,
           reviewedAt: now,
           createdAt: now,
@@ -2730,15 +2755,24 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         const revResult = await revCol.insertOne(newReview as any);
         await workCol.updateOne(
           { $or: [{ _id: wId }, { id: String(documentId) }] },
-          { $set: { reviewStatus: "Reviewed", feedback: feedbackText, updatedAt: now } }
+          {
+            $set: {
+              reviewStatus: statusToSet,
+              feedback: feedbackText,
+              sectionFeedback: secFeedbackArray,
+              lastReviewedAt: now,
+              updatedAt: now,
+            },
+          }
         );
 
+        const statusLabel = statusToSet === "Approved" ? "Approved" : statusToSet === "Changes Requested" ? "Changes Requested" : "Reviewed";
         await recordUserActivity(
           studentEmailStr,
           studentNameStr,
           "FACULTY_FEEDBACK_SUBMITTED",
-          `Faculty feedback submitted for "${docTitleStr}"`,
-          `Feedback: "${feedbackText}"`,
+          `Faculty Review (${statusLabel}): "${docTitleStr}"`,
+          `Decision: ${statusLabel} • Feedback: "${feedbackText || "Section feedback attached"}"`,
           "Paper"
         );
 
@@ -2747,8 +2781,8 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           recipientId: studentEmailStr,
           senderId: (body.facultyEmail || "").toLowerCase(),
           type: "FeedbackReceived",
-          title: "Faculty feedback received",
-          content: `${body.facultyName || "Faculty"} has provided feedback on your research work for "${body.projectTitle || docTitleStr}".`,
+          title: `Faculty Review: ${statusLabel}`,
+          content: `${body.facultyName || "Faculty"} marked your document "${docTitleStr}" as [${statusLabel}]. ${feedbackText ? `Note: "${feedbackText}"` : ""}`,
           category: "Review",
           read: false,
           createdAt: now,

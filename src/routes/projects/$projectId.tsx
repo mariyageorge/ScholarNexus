@@ -780,10 +780,12 @@ ${s.keyTakeaway}
     }
   };
 
-  const handleSaveActiveWorkDoc = async (docToSave = activeWorkDoc, showToast = false) => {
+  const handleSaveActiveWorkDoc = async (docToSave = activeWorkDoc, showToast = false, isSilent = false) => {
     const docId = docToSave?.id || docToSave?._id;
     if (!docToSave || !docId) return;
-    setSavingWork(true);
+    if (!isSilent) {
+      setSavingWork(true);
+    }
     setJustSaved(false);
 
     try {
@@ -804,8 +806,10 @@ ${s.keyTakeaway}
 
       if (res.ok) {
         setAutoSaveTimer(`Last saved at ${formattedTime}`);
-        setJustSaved(true);
-        setTimeout(() => setJustSaved(false), 3000);
+        if (!isSilent) {
+          setJustSaved(true);
+          setTimeout(() => setJustSaved(false), 3000);
+        }
         if (showToast) {
           toast.success("Research work saved successfully.");
         }
@@ -823,7 +827,9 @@ ${s.keyTakeaway}
         toast.error("Unable to save your research work. Please try again.");
       }
     } finally {
-      setSavingWork(false);
+      if (!isSilent) {
+        setSavingWork(false);
+      }
     }
   };
 
@@ -918,6 +924,8 @@ ${s.keyTakeaway}
     );
   }, [activeWorkDoc, projectReviews]);
 
+  const [isRequestingReview, setIsRequestingReview] = useState(false);
+
   const handleRequestWorkReview = async (workDoc: any) => {
     if (!workDoc) return;
     const docId = workDoc.id || workDoc._id;
@@ -938,9 +946,11 @@ ${s.keyTakeaway}
       return;
     }
 
-    // Save active doc changes first if needed
+    setIsRequestingReview(true);
+
+    // Save active doc changes silently first if needed
     if (activeWorkDoc && (activeWorkDoc.id === docId || activeWorkDoc._id === docId)) {
-      await handleSaveActiveWorkDoc(activeWorkDoc);
+      await handleSaveActiveWorkDoc(activeWorkDoc, false, true);
     }
 
     try {
@@ -973,6 +983,8 @@ ${s.keyTakeaway}
     } catch (err) {
       console.error(err);
       toast.error("An error occurred while requesting review.");
+    } finally {
+      setIsRequestingReview(false);
     }
   };
 
@@ -2409,13 +2421,19 @@ ${s.keyTakeaway}
                         <Badge
                           variant="outline"
                           className={
-                            activeWorkDoc.reviewStatus === "Pending Review"
-                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold rounded-full px-3"
-                              : activeWorkDoc.reviewStatus === "Reviewed" || activeWorkDoc.reviewStatus === "Changes Requested"
-                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold rounded-full px-3"
+                            activeWorkDoc.reviewStatus === "Approved"
+                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-bold rounded-full px-3 gap-1"
+                              : activeWorkDoc.reviewStatus === "Changes Requested"
+                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-bold rounded-full px-3 gap-1"
+                              : activeWorkDoc.reviewStatus === "Rejected"
+                              ? "border-destructive/30 text-destructive bg-destructive/10 text-xs font-bold rounded-full px-3 gap-1"
+                              : activeWorkDoc.reviewStatus === "Pending Review"
+                              ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-xs font-semibold rounded-full px-3 gap-1"
                               : "text-muted-foreground text-xs border-border/80 bg-muted/40 rounded-full px-3"
                           }
                         >
+                          {activeWorkDoc.reviewStatus === "Approved" && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+                          {activeWorkDoc.reviewStatus === "Changes Requested" && <AlertCircle className="h-3 w-3 text-amber-500" />}
                           {activeWorkDoc.reviewStatus || "Draft"}
                         </Badge>
                         {currentSupervisionState === "Approved" && (
@@ -2481,16 +2499,24 @@ ${s.keyTakeaway}
                             <span>
                               <Button
                                 onClick={() => handleRequestWorkReview(activeWorkDoc)}
-                                disabled={!canRequestReview}
+                                disabled={!canRequestReview || isRequestingReview}
                                 size="sm"
                                 className="rounded-xl text-xs font-bold gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs disabled:opacity-50"
                               >
-                                <Send className="h-3.5 w-3.5" />
-                                {activeWorkDoc.reviewStatus === "Pending Review"
-                                  ? "Pending Review"
-                                  : activeWorkDoc.reviewStatus === "Reviewed" && !hasContentChangedSinceReview
-                                  ? "Review Complete"
-                                  : "Request Faculty Review"}
+                                {isRequestingReview ? (
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Submitting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send className="h-3.5 w-3.5" />
+                                    {activeWorkDoc.reviewStatus === "Pending Review"
+                                      ? "Pending Review"
+                                      : activeWorkDoc.reviewStatus === "Reviewed" && !hasContentChangedSinceReview
+                                      ? "Review Complete"
+                                      : "Request Faculty Review"}
+                                  </>
+                                )}
                               </Button>
                             </span>
                           </TooltipTrigger>
@@ -2542,12 +2568,36 @@ ${s.keyTakeaway}
                   )}
 
                   {/* Faculty Supervisor Feedback Banner */}
-                  {activeWorkDoc.feedback && (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 text-xs">
-                          <CheckCircle2 className="h-4 w-4" /> Latest Faculty Supervisor Feedback
+                  {(activeWorkDoc.feedback || (Array.isArray(activeWorkDoc.sectionFeedback) && activeWorkDoc.sectionFeedback.length > 0)) && (
+                    <div
+                      className={`rounded-xl border p-4 space-y-3 text-xs ${
+                        activeWorkDoc.reviewStatus === "Approved"
+                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          : activeWorkDoc.reviewStatus === "Changes Requested"
+                          ? "border-amber-500/30 bg-amber-500/5"
+                          : "border-primary/30 bg-primary/5"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span
+                          className={`font-bold flex items-center gap-2 text-xs ${
+                            activeWorkDoc.reviewStatus === "Approved"
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : activeWorkDoc.reviewStatus === "Changes Requested"
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-primary"
+                          }`}
+                        >
+                          {activeWorkDoc.reviewStatus === "Approved" ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                          ) : activeWorkDoc.reviewStatus === "Changes Requested" ? (
+                            <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                          ) : (
+                            <MessageSquare className="h-4 w-4 text-primary shrink-0" />
+                          )}
+                          Faculty Supervisor Decision: <strong>{activeWorkDoc.reviewStatus || "Reviewed"}</strong>
                         </span>
+
                         {hasContentChangedSinceReview ? (
                           <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 bg-emerald-500/10 text-[0.68rem] font-semibold">
                             Edits Detected — Re-review Available
@@ -2558,9 +2608,34 @@ ${s.keyTakeaway}
                           </Badge>
                         )}
                       </div>
-                      <p className="text-foreground italic leading-relaxed whitespace-pre-wrap pl-6 text-xs">
-                        "{activeWorkDoc.feedback}"
-                      </p>
+
+                      {activeWorkDoc.feedback && (
+                        <div className="space-y-1">
+                          <span className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground block">
+                            Overall Faculty Notes:
+                          </span>
+                          <p className="text-foreground italic leading-relaxed whitespace-pre-wrap text-xs bg-background/60 p-3 rounded-xl border border-border/50">
+                            "{activeWorkDoc.feedback}"
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Section-by-Section Comments Grid */}
+                      {Array.isArray(activeWorkDoc.sectionFeedback) && activeWorkDoc.sectionFeedback.length > 0 && (
+                        <div className="pt-2 border-t border-border/40 space-y-2">
+                          <span className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground block">
+                            Section-by-Section Inline Feedback:
+                          </span>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {activeWorkDoc.sectionFeedback.map((sf: any, sfIdx: number) => (
+                              <div key={sfIdx} className="rounded-xl border border-border/60 bg-card p-3 space-y-1 text-xs shadow-xs">
+                                <span className="font-bold text-primary text-[0.725rem] block">{sf.sectionTitle}</span>
+                                <p className="text-foreground text-[0.725rem] italic leading-relaxed">"{sf.comment}"</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2750,6 +2825,15 @@ ${s.keyTakeaway}
                       const secWords = sec.content ? sec.content.trim().split(/\s+/).filter(Boolean).length : 0;
                       const secChars = sec.content ? sec.content.length : 0;
 
+                      const sectionCommentObj = Array.isArray(activeWorkDoc.sectionFeedback)
+                        ? activeWorkDoc.sectionFeedback.find(
+                            (sf: any) =>
+                              sf.sectionId === secId ||
+                              sf.sectionTitle === sec.title ||
+                              (sf.sectionId && String(sf.sectionId) === String(sec.id))
+                          )
+                        : null;
+
                       return (
                         <Card id={`section-card-${secId}`} key={secId} className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs">
                           <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
@@ -2825,6 +2909,19 @@ ${s.keyTakeaway}
                               </Button>
                             </div>
                           </div>
+
+                          {/* Faculty Inline Section Correction Callout */}
+                          {sectionCommentObj && (
+                            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-1 text-xs">
+                              <div className="flex items-center gap-2 font-bold text-amber-800 dark:text-amber-300">
+                                <MessageSquare className="h-4 w-4 text-amber-500 shrink-0" />
+                                Faculty Correction for "{sec.title}":
+                              </div>
+                              <p className="text-amber-950 dark:text-amber-200 text-xs italic leading-relaxed pl-6">
+                                "{sectionCommentObj.comment}"
+                              </p>
+                            </div>
+                          )}
 
                           <Textarea
                             value={sec.content || ""}
