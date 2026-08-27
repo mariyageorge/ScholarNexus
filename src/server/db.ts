@@ -308,8 +308,14 @@ function getEnvVariable(key: string): string {
 async function sendOtpEmail(email: string, otp: string) {
   const smtpHost = getEnvVariable("SMTP_HOST") || "smtp.gmail.com";
   const smtpPort = Number(getEnvVariable("SMTP_PORT") || 465);
-  const smtpUser = getEnvVariable("SMTP_USER") || "scholarnexusadmin@gmail.com";
-  const smtpPass = getEnvVariable("SMTP_PASS") || "hifi nigy ikuv jpwb";
+  const smtpUser = getEnvVariable("SMTP_USER");
+  const smtpPass = getEnvVariable("SMTP_PASS");
+
+  if (!smtpUser || !smtpPass) {
+    throw new Error(
+      "SMTP configuration error: SMTP_USER and SMTP_PASS environment variables are required to send verification emails."
+    );
+  }
 
   const transporter = nodemailer.createTransport({
     host: smtpHost,
