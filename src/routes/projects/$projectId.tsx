@@ -168,6 +168,10 @@ export interface Project {
   supervisionStatus?: "Not Assigned" | "Pending Approval" | "Under Supervision" | "Rejected";
   lastRejectionReason?: string;
   keywords?: string[];
+  roadmap?: any[];
+  roadmapDurationWeeks?: number;
+  roadmapGeneratedAt?: string;
+  roadmapSyncedToTasks?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -432,6 +436,77 @@ function ProjectWorkspacePage() {
   const [summaryProgressMessage, setSummaryProgressMessage] = useState<string>("");
   const [viewSummaryModalPaper, setViewSummaryModalPaper] = useState<ProjectPaper | null>(null);
   const [copiedSummaryState, setCopiedSummaryState] = useState(false);
+
+  // AI Research Roadmap Generator State
+  const [isGenerateRoadmapModalOpen, setIsGenerateRoadmapModalOpen] = useState(false);
+  const [roadmapDurationWeeks, setRoadmapDurationWeeks] = useState<number>(6);
+  const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
+  const [isSyncingRoadmapTasks, setIsSyncingRoadmapTasks] = useState(false);
+
+  const handleGenerateRoadmap = async () => {
+    if (!project) return;
+    setIsGeneratingRoadmap(true);
+
+    try {
+      const res = await fetch("/api/projects/roadmap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id || project._id || projectId,
+          durationWeeks: roadmapDurationWeeks,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.project) {
+        setProject(data.project);
+        setIsGenerateRoadmapModalOpen(false);
+        toast.success(`Generated ${roadmapDurationWeeks}-Week AI Research Roadmap with Gemini!`);
+      } else {
+        toast.error(data.error || "Failed to generate AI Research Roadmap.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error connecting to server for roadmap generation.");
+    } finally {
+      setIsGeneratingRoadmap(false);
+    }
+  };
+
+  const handleSyncRoadmapToTasks = async () => {
+    if (!project || !Array.isArray(project.roadmap) || project.roadmap.length === 0) {
+      toast.error("No active roadmap steps to convert.");
+      return;
+    }
+
+    setIsSyncingRoadmapTasks(true);
+    try {
+      const res = await fetch("/api/projects/roadmap", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id || project._id || projectId,
+          userEmail: user?.email,
+          userName: user?.name,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.project) {
+          setProject(data.project);
+        }
+        toast.success(data.message || `Roadmap items converted into project tasks!`);
+      } else {
+        toast.error(data.error || "Failed to convert roadmap to tasks.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error syncing roadmap tasks.");
+    } finally {
+      setIsSyncingRoadmapTasks(false);
+    }
+  };
 
   const selectedPaperForSummaryPreview = useMemo(() => {
     if (!selectedPaperIdForSummary) return null;
@@ -1760,6 +1835,7 @@ ${s.keyTakeaway}
     { id: "overview", label: "Overview", icon: FolderKanban },
     { id: "reference-papers", label: "Reference Papers", icon: BookOpen },
     { id: "my-work", label: "My Research Work", icon: Pencil },
+    { id: "roadmap", label: "AI Research Roadmap", icon: Compass },
     { id: "assistant", label: "AI Research Assistant", icon: Bot },
     { id: "summaries", label: "Literature Summaries", icon: BookOpen },
     { id: "comparison", label: "Literature Comparison", icon: GitCompareArrows },
@@ -2995,7 +3071,162 @@ ${s.keyTakeaway}
             )}
           </TabsContent>
 
-          {/* TAB 3: AI RESEARCH ASSISTANT */}
+          {/* TAB: AI RESEARCH ROADMAP */}
+          <TabsContent value="roadmap" className="space-y-6">
+            <Card className="surface-elevated rounded-2xl border-border bg-card p-6 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-border">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="gap-1.5 rounded-full border-primary/30 bg-primary/10 text-primary px-3 py-1 text-xs font-bold">
+                      <Sparkles className="h-3.5 w-3.5" /> AI Mentor Roadmap
+                    </Badge>
+                    {project.roadmapGeneratedAt && (
+                      <span className="text-xs text-muted-foreground">
+                        Generated {formatDisplayDate(project.roadmapGeneratedAt)}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-xl font-bold text-foreground">AI Research Mentor Roadmap</h3>
+                  <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
+                    Custom step-by-step academic plan generated by Gemini AI for <strong>"{project.title}"</strong>.
+                    Follow these weekly milestones to structure your literature review, methodology, and implementation.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <Button
+                    onClick={() => setIsGenerateRoadmapModalOpen(true)}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 rounded-xl text-xs font-semibold"
+                  >
+                    <RefreshCcw className="h-3.5 w-3.5 text-primary" />
+                    {Array.isArray(project.roadmap) && project.roadmap.length > 0 ? "Regenerate Plan" : "Generate Roadmap"}
+                  </Button>
+
+                  {Array.isArray(project.roadmap) && project.roadmap.length > 0 && (
+                    <Button
+                      onClick={handleSyncRoadmapToTasks}
+                      disabled={isSyncingRoadmapTasks || Boolean(project.roadmapSyncedToTasks)}
+                      size="sm"
+                      className={`gap-2 rounded-xl text-xs font-bold shadow-xs transition-all ${
+                        project.roadmapSyncedToTasks
+                          ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 dark:text-emerald-400 cursor-not-allowed opacity-90"
+                          : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                      }`}
+                    >
+                      {isSyncingRoadmapTasks ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : project.roadmapSyncedToTasks ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      ) : (
+                        <Target className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      {project.roadmapSyncedToTasks ? "✓ Tasks Synced to Board" : "Convert Roadmap to Tasks"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Roadmap Timeline View */}
+              {Array.isArray(project.roadmap) && project.roadmap.length > 0 ? (
+                <div className="pt-6 space-y-6">
+                  <div className="relative pl-6 md:pl-8 border-l-2 border-primary/30 space-y-8">
+                    {project.roadmap.map((step: any, idx: number) => (
+                      <div key={idx} className="relative group">
+                        {/* Stepper Node Dot */}
+                        <div className="absolute -left-[37px] md:-left-[45px] top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-xs shadow-md border-2 border-background">
+                          {step.week || idx + 1}
+                        </div>
+
+                        {/* Week Card */}
+                        <Card className="rounded-2xl border border-border/80 bg-background/60 p-5 backdrop-blur-md transition-all hover:border-primary/50 hover:shadow-md space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[0.7rem] font-extrabold uppercase tracking-wider text-primary">
+                                  Week {step.week || idx + 1} Milestone
+                                </span>
+                              </div>
+                              <h4 className="text-base font-extrabold text-foreground">{step.title}</h4>
+                            </div>
+
+                            {step.deliverable && (
+                              <Badge variant="secondary" className="gap-1.5 rounded-xl px-3 py-1 text-xs font-semibold w-fit">
+                                <span>📦 Deliverable:</span>
+                                <span className="font-bold text-foreground">{step.deliverable}</span>
+                              </Badge>
+                            )}
+                          </div>
+
+                          {step.objective && (
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              <span className="font-semibold text-foreground">Objective:</span> {step.objective}
+                            </p>
+                          )}
+
+                          {/* Task List */}
+                          {Array.isArray(step.tasks) && step.tasks.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground block">
+                                Action Items & Checklist:
+                              </span>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {step.tasks.map((taskItem: string, tIdx: number) => (
+                                  <div
+                                    key={tIdx}
+                                    className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-card/80 p-2.5 text-xs text-foreground font-medium"
+                                  >
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+                                    <span className="leading-snug">{taskItem}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Mentor Advice Tip */}
+                          {step.mentorTip && (
+                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2.5 text-xs">
+                              <Sparkles className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                              <div>
+                                <span className="font-bold text-amber-800 dark:text-amber-300 block mb-0.5">Research Mentor Tip:</span>
+                                <p className="text-amber-950 dark:text-amber-200 text-[0.725rem] leading-relaxed">
+                                  {step.mentorTip}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </Card>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                /* Empty State */
+                <div className="py-16 text-center space-y-4 max-w-md mx-auto">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+                    <Compass className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-lg font-bold text-foreground">No Research Roadmap Generated Yet</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Let Gemini AI create a tailored, step-by-step weekly research plan based on your project topic and research goals.
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={() => setIsGenerateRoadmapModalOpen(true)}
+                    className="gap-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-md hover:bg-primary/90 px-6 py-2.5"
+                  >
+                    <Sparkles className="h-4 w-4" /> Generate AI Research Roadmap
+                  </Button>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* TAB: AI RESEARCH ASSISTANT */}
           <TabsContent value="assistant">
             <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card">
               <div className="border-b border-border bg-muted/40 p-4 flex items-center justify-between">
@@ -4644,6 +4875,85 @@ ${s.keyTakeaway}
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Generate AI Research Roadmap Modal */}
+      <Dialog open={isGenerateRoadmapModalOpen} onOpenChange={setIsGenerateRoadmapModalOpen}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-extrabold text-foreground">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Generate AI Research Roadmap
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Gemini AI will analyze <strong>"{project?.title}"</strong> and create a week-by-week research roadmap tailored for your project.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-foreground">Project Topic</Label>
+              <div className="rounded-xl border border-border/80 bg-muted/40 p-3 text-xs font-medium text-foreground">
+                {project?.title}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="durationSelect" className="text-xs font-semibold text-foreground">
+                Roadmap Duration Timeline
+              </Label>
+              <Select
+                value={String(roadmapDurationWeeks)}
+                onValueChange={(val) => setRoadmapDurationWeeks(Number(val))}
+              >
+                <SelectTrigger id="durationSelect" className="rounded-xl text-xs">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl text-xs">
+                  <SelectItem value="4">4 Weeks — Rapid Research Sprint</SelectItem>
+                  <SelectItem value="6">6 Weeks — Standard Academic Plan (Recommended)</SelectItem>
+                  <SelectItem value="8">8 Weeks — In-Depth Investigation</SelectItem>
+                  <SelectItem value="12">12 Weeks — Full Semester Capstone</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex items-start gap-2.5 text-xs text-primary">
+              <Compass className="h-4 w-4 shrink-0 mt-0.5" />
+              <p className="text-[0.725rem] leading-relaxed">
+                The generated roadmap will outline literature collection, problem synthesis, methodology, implementation, and paper drafting phases.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setIsGenerateRoadmapModalOpen(false)}
+              disabled={isGeneratingRoadmap}
+              className="rounded-xl text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleGenerateRoadmap}
+              disabled={isGeneratingRoadmap}
+              className="gap-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-sm"
+            >
+              {isGeneratingRoadmap ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Generating Roadmap...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Generate Roadmap
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

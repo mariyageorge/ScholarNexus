@@ -524,3 +524,165 @@ Return ONLY a valid JSON object matching this exact schema:
   };
 }
 
+export interface ResearchRoadmapWeek {
+  week: number;
+  title: string;
+  objective: string;
+  tasks: string[];
+  deliverable: string;
+  mentorTip?: string;
+}
+
+export interface GeneratedRoadmapResult {
+  success: boolean;
+  durationWeeks?: number;
+  roadmap?: ResearchRoadmapWeek[];
+  modelUsed?: string;
+  error?: string;
+}
+
+/**
+ * Generates a step-by-step academic research roadmap for a student project using Gemini AI.
+ */
+export async function generateResearchRoadmapWithGemini(options: {
+  projectTitle: string;
+  domain?: string;
+  abstract?: string;
+  durationWeeks?: number;
+}): Promise<GeneratedRoadmapResult> {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    return {
+      success: false,
+      error: "GEMINI_API_KEY environment variable is missing on the server.",
+    };
+  }
+
+  const duration = options.durationWeeks || 6;
+  const domainStr = options.domain ? `Domain / Field: ${options.domain}` : "";
+  const abstractStr = options.abstract ? `Project Context / Abstract: ${options.abstract}` : "";
+
+  const promptText = `You are a distinguished academic research mentor and computer science / university professor.
+Generate a structured, step-by-step, week-by-week research roadmap over a duration of ${duration} weeks for the following student research project:
+
+Project Title: "${options.projectTitle}"
+${domainStr}
+${abstractStr}
+
+The roadmap MUST span exactly ${duration} weeks, numbered 1 to ${duration}.
+Provide realistic, actionable academic research steps tailored specifically to this project's topic.
+
+Return ONLY a valid JSON object matching this exact schema:
+{
+  "durationWeeks": ${duration},
+  "roadmap": [
+    {
+      "week": 1,
+      "title": "Short Descriptive Week Title (e.g., Literature Collection & Survey)",
+      "objective": "High-level goal for this week.",
+      "tasks": [
+        "Actionable task item 1 (e.g., Collect 20 peer-reviewed papers on ...)",
+        "Actionable task item 2 (e.g., Filter papers by relevance and publication year)",
+        "Actionable task item 3"
+      ],
+      "deliverable": "Tangible deliverable for the week (e.g., Initial literature database of 20 papers)",
+      "mentorTip": "Practical research tip or advice for the student for this phase"
+    }
+  ]
+}
+
+CRITICAL RULES:
+1. Ensure the tasks are highly specific to "${options.projectTitle}".
+2. Each week MUST contain 2 to 4 concrete actionable tasks.
+3. The progression must be logical: Literature survey -> Analysis & Gap Identification -> Methodology & System Design -> Implementation / Experimentation -> Evaluation -> Writing & Review.
+4. Do NOT include markdown code fences or conversational text outside the JSON object.`;
+
+  let availableModels: string[] = [];
+  try {
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (listRes.ok) {
+      const listData = await listRes.json();
+      if (listData && Array.isArray(listData.models)) {
+        availableModels = listData.models
+          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
+          .map((m: any) => m.name.replace(/^models\//, ""));
+      }
+    }
+  } catch {}
+
+  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
+  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  let lastError = "";
+
+  for (const model of candidateModels) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+        }),
+      });
+
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        const candidate = data.candidates?.[0];
+        const rawText = candidate?.content?.parts?.[0]?.text;
+
+        if (rawText) {
+          let jsonStr = rawText.trim();
+          if (jsonStr.startsWith("```json")) {
+            jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "").trim();
+          } else if (jsonStr.startsWith("```")) {
+            jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
+          }
+
+          const parsed = JSON.parse(jsonStr);
+
+          if (Array.isArray(parsed.roadmap)) {
+            const formattedRoadmap: ResearchRoadmapWeek[] = parsed.roadmap.map((w: any, idx: number) => ({
+              week: Number(w.week) || idx + 1,
+              title: String(w.title || `Week ${idx + 1} Phase`).trim(),
+              objective: String(w.objective || "Complete weekly research milestones.").trim(),
+              tasks: Array.isArray(w.tasks) ? w.tasks.map((t: any) => String(t).trim()).filter(Boolean) : [],
+              deliverable: String(w.deliverable || "Weekly progress report").trim(),
+              mentorTip: w.mentorTip ? String(w.mentorTip).trim() : undefined,
+            }));
+
+            return {
+              success: true,
+              durationWeeks: duration,
+              roadmap: formattedRoadmap,
+              modelUsed: model,
+            };
+          }
+        }
+      } else {
+        const errBody = await res.text();
+        const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
+        lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
+      }
+    } catch (e: any) {
+      const msg = e?.name === "AbortError" ? "Request timed out after 60s" : e?.message || String(e);
+      const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
+      lastError = `Error (${model}): ${sanitizedErr}`;
+    }
+  }
+
+  return {
+    success: false,
+    error: lastError || "Failed to generate research roadmap using Gemini AI models.",
+  };
+}
+

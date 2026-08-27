@@ -1,7 +1,7 @@
 import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
 import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
-import { extractPaperMetadataWithGemini, generatePaperSummaryWithGemini } from "./services/ai";
+import { extractPaperMetadataWithGemini, generatePaperSummaryWithGemini, generateResearchRoadmapWithGemini } from "./services/ai";
 
 const uri = process.env.MONGODB_URI ?? import.meta?.env?.VITE_MONGODB_URI ?? "";
 
@@ -3694,10 +3694,27 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     if (request.method === "DELETE") {
       const taskId = url.searchParams.get("id");
+      const taskIdsParam = url.searchParams.get("ids");
       const email = (userEmail || url.searchParams.get("email"))?.trim().toLowerCase();
 
-      if (!taskId || !email) {
-        return new Response(JSON.stringify({ error: "Task ID and email are required." }), { status: 400, headers: { "content-type": "application/json" } });
+      if (!email) {
+        return new Response(JSON.stringify({ error: "User email is required." }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      if (taskIdsParam) {
+        const idList = taskIdsParam.split(",").map((i) => i.trim()).filter(Boolean);
+        const objIds = idList.filter((i) => ObjectId.isValid(i)).map((i) => new ObjectId(i));
+
+        await tasksCol.deleteMany({
+          $or: [{ _id: { $in: objIds } }, { id: { $in: idList } }],
+          userEmail: email,
+        });
+
+        return new Response(JSON.stringify({ success: true, message: `${idList.length} tasks deleted.` }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (!taskId) {
+        return new Response(JSON.stringify({ error: "Task ID is required." }), { status: 400, headers: { "content-type": "application/json" } });
       }
 
       let objId: any = taskId;
@@ -4147,6 +4164,178 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       } finally {
         globalWithMongo._summarizationInFlight?.delete(paperKey);
       }
+    }
+  }
+
+  // ── Gemini AI Project Research Roadmap Generator Endpoint ──
+  if (url.pathname === "/api/projects/roadmap") {
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { projectId, durationWeeks } = body;
+      if (!projectId) {
+        return new Response(JSON.stringify({ error: "Project ID is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const projectsCol = await getCollection<Document>("projects");
+      let pObjId: any = projectId;
+      if (ObjectId.isValid(projectId)) pObjId = new ObjectId(projectId);
+
+      const projectDoc = await projectsCol.findOne({
+        $or: [{ _id: pObjId }, { id: String(projectId) }],
+      });
+
+      if (!projectDoc) {
+        return new Response(JSON.stringify({ error: "Project not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const duration = Number(durationWeeks) || 6;
+
+      const result = await generateResearchRoadmapWithGemini({
+        projectTitle: projectDoc.title || "Academic Research Project",
+        domain: projectDoc.domain || projectDoc.category || "",
+        abstract: projectDoc.abstract || projectDoc.description || "",
+        durationWeeks: duration,
+      });
+
+      if (!result.success || !result.roadmap) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: result.error || "Failed to generate AI Research Roadmap.",
+          }),
+          { status: 500, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const now = new Date().toISOString();
+      const updatePayload = {
+        roadmap: result.roadmap,
+        roadmapDurationWeeks: duration,
+        roadmapGeneratedAt: now,
+        roadmapSyncedToTasks: false,
+        updatedAt: now,
+      };
+
+      await projectsCol.updateOne(
+        { _id: projectDoc._id },
+        { $set: updatePayload }
+      );
+
+      const updatedDoc = await projectsCol.findOne({ _id: projectDoc._id });
+      const formatted = updatedDoc
+        ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+        : null;
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          project: formatted,
+          roadmap: result.roadmap,
+          durationWeeks: duration,
+          modelUsed: result.modelUsed,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+
+    if (request.method === "PUT") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { projectId, userEmail, userName } = body;
+      if (!projectId) {
+        return new Response(JSON.stringify({ error: "Project ID is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const projectsCol = await getCollection<Document>("projects");
+      const tasksCol = await getCollection<Document>("tasks");
+
+      let pObjId: any = projectId;
+      if (ObjectId.isValid(projectId)) pObjId = new ObjectId(projectId);
+
+      const projectDoc = await projectsCol.findOne({
+        $or: [{ _id: pObjId }, { id: String(projectId) }],
+      });
+
+      if (!projectDoc || !Array.isArray(projectDoc.roadmap)) {
+        return new Response(JSON.stringify({ error: "Project or roadmap not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const now = new Date();
+      const pIdStr = projectDoc._id.toString();
+      const uEmail = (userEmail || projectDoc.userEmail || "").trim().toLowerCase();
+      let createdCount = 0;
+
+      for (const item of projectDoc.roadmap) {
+        const weekNum = Number(item.week) || 1;
+        const dueDateObj = new Date(now.getTime() + weekNum * 7 * 24 * 60 * 60 * 1000);
+        const dueDateStr = dueDateObj.toISOString().split("T")[0];
+
+        const milestoneTitle = `[Roadmap] Week ${weekNum}: ${item.title}`;
+        const existing = await tasksCol.findOne({
+          projectId: pIdStr,
+          title: milestoneTitle,
+        });
+
+        if (!existing) {
+          const actionItemsText = Array.isArray(item.tasks) && item.tasks.length > 0
+            ? item.tasks.map((t: string) => `• ${t}`).join("\n")
+            : "No action items specified.";
+
+          const description = `Objective: ${item.objective || "N/A"}\n\nDeliverable: ${item.deliverable || "N/A"}\n\nAction Checklist:\n${actionItemsText}${item.mentorTip ? `\n\nMentor Tip: ${item.mentorTip}` : ""}`;
+
+          const newTask = {
+            projectId: pIdStr,
+            userEmail: uEmail,
+            userName: userName || projectDoc.userName || "Student Scholar",
+            title: milestoneTitle,
+            description: description,
+            status: "Pending",
+            priority: weekNum === 1 ? "High" : "Medium",
+            dueDate: dueDateStr,
+            category: "Research Roadmap",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+
+          await tasksCol.insertOne(newTask);
+          createdCount++;
+        }
+      }
+
+      await projectsCol.updateOne(
+        { _id: projectDoc._id },
+        { $set: { roadmapSyncedToTasks: true, updatedAt: new Date().toISOString() } }
+      );
+
+      const updatedDoc = await projectsCol.findOne({ _id: projectDoc._id });
+      const formatted = updatedDoc
+        ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+        : null;
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Successfully synced ${createdCount} weekly milestone tasks to your project task board.`,
+          createdCount,
+          project: formatted,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
     }
   }
 

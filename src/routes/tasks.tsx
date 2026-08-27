@@ -115,6 +115,8 @@ function TasksAndNotesPage() {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
   const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
@@ -304,6 +306,45 @@ function TasksAndNotesPage() {
       }
     } catch {
       toast.error("Failed to delete task.");
+    }
+  };
+
+  const handleToggleSelectTask = (taskId: string) => {
+    setSelectedTaskIds((prev) =>
+      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
+    );
+  };
+
+  const handleSelectAllTasks = () => {
+    if (filteredTasks.length > 0 && selectedTaskIds.length === filteredTasks.length) {
+      setSelectedTaskIds([]);
+    } else {
+      const allIds = filteredTasks
+        .map((t) => t.id || t._id || "")
+        .filter(Boolean);
+      setSelectedTaskIds(allIds);
+    }
+  };
+
+  const handleBulkDeleteTasks = async () => {
+    if (!user || selectedTaskIds.length === 0) return;
+    try {
+      const idsParam = selectedTaskIds.join(",");
+      const res = await fetch(
+        `/api/tasks?ids=${encodeURIComponent(idsParam)}&email=${encodeURIComponent(user.email)}`,
+        { method: "DELETE" }
+      );
+
+      if (res.ok) {
+        toast.success(`Successfully deleted ${selectedTaskIds.length} tasks.`);
+        setSelectedTaskIds([]);
+        setIsBulkDeleteModalOpen(false);
+        fetchAllData(user.email);
+      } else {
+        toast.error("Failed to delete selected tasks.");
+      }
+    } catch {
+      toast.error("Error performing bulk task deletion.");
     }
   };
 
@@ -707,25 +748,74 @@ function TasksAndNotesPage() {
               </Card>
             ) : viewMode === "list" ? (
               <Card className="surface-elevated rounded-2xl border-border bg-card overflow-hidden">
-                <div className="p-4 border-b border-border/60 bg-muted/20 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="p-4 border-b border-border/60 bg-muted/20 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
                     <List className="h-4 w-4 text-primary" />
                     <span className="text-xs font-bold text-foreground">Unified Action Items Stream</span>
+                    <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary font-semibold">
+                      {filteredTasks.length} {filteredTasks.length === 1 ? "Task" : "Tasks"}
+                    </Badge>
                   </div>
-                  <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary font-semibold">
-                    {filteredTasks.length} {filteredTasks.length === 1 ? "Task" : "Tasks"}
-                  </Badge>
+
+                  {filteredTasks.length > 0 && (
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-foreground cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={filteredTasks.length > 0 && selectedTaskIds.length === filteredTasks.length}
+                          onChange={handleSelectAllTasks}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                        />
+                        <span>
+                          Select All ({selectedTaskIds.length}/{filteredTasks.length})
+                        </span>
+                      </label>
+
+                      {selectedTaskIds.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedTaskIds([])}
+                            className="text-xs rounded-xl h-7 px-2 text-muted-foreground hover:text-foreground"
+                          >
+                            Deselect All
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setIsBulkDeleteModalOpen(true)}
+                            className="gap-1.5 rounded-xl text-xs font-bold h-7 px-3 shadow-xs"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete Selected ({selectedTaskIds.length})
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="divide-y divide-border/60">
                   {filteredTasks.map((task) => {
                     const isOverdue = task.dueDate && task.dueDate < todayStr && task.status !== "Completed";
+                    const taskIdStr = task.id || task._id || "";
                     return (
                       <div
-                        key={task.id || task._id}
-                        className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:bg-muted/20 transition-colors"
+                        key={taskIdStr}
+                        className={`p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between transition-colors ${
+                          selectedTaskIds.includes(taskIdStr) ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-muted/20"
+                        }`}
                       >
                         <div className="flex items-start gap-3 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={selectedTaskIds.includes(taskIdStr)}
+                            onChange={() => handleToggleSelectTask(taskIdStr)}
+                            className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer shrink-0 accent-primary"
+                            title="Select task for bulk actions"
+                          />
+
                           <button
                             onClick={() =>
                               handleTaskStatusChange(
@@ -846,17 +936,30 @@ function TasksAndNotesPage() {
                       </div>
 
                       <div className="space-y-3 min-h-[300px]">
-                        {columnTasks.map((task) => (
-                          <Card
-                            key={task.id || task._id}
-                            className="surface-elevated rounded-2xl border-border bg-card p-4 hover:border-primary/50 transition-all space-y-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <h4 className="text-xs font-bold text-foreground leading-snug line-clamp-2">
-                                {task.title}
-                              </h4>
-                              {getPriorityBadge(task.priority)}
-                            </div>
+                        {columnTasks.map((task) => {
+                          const taskIdStr = task.id || task._id || "";
+                          const isSelected = selectedTaskIds.includes(taskIdStr);
+                          return (
+                            <Card
+                              key={taskIdStr}
+                              className={`surface-elevated rounded-2xl border-border bg-card p-4 transition-all space-y-3 ${
+                                isSelected ? "border-primary shadow-sm bg-primary/5 dark:bg-primary/10" : "hover:border-primary/50"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-start gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => handleToggleSelectTask(taskIdStr)}
+                                    className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer shrink-0 accent-primary"
+                                  />
+                                  <h4 className="text-xs font-bold text-foreground leading-snug line-clamp-2">
+                                    {task.title}
+                                  </h4>
+                                </div>
+                                {getPriorityBadge(task.priority)}
+                              </div>
 
                             {task.description && (
                               <p className="text-[0.725rem] text-muted-foreground leading-relaxed line-clamp-3">
@@ -895,7 +998,8 @@ function TasksAndNotesPage() {
                               </div>
                             </div>
                           </Card>
-                        ))}
+                        );
+                      })}
                       </div>
                     </div>
                   );
@@ -1270,6 +1374,30 @@ function TasksAndNotesPage() {
               <AlertDialogCancel className="rounded-xl text-xs">Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={handleDeleteTask} className="rounded-xl bg-destructive text-destructive-foreground text-xs font-semibold">
                 Delete Task
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* BULK DELETE TASKS CONFIRMATION */}
+        <AlertDialog open={isBulkDeleteModalOpen} onOpenChange={setIsBulkDeleteModalOpen}>
+          <AlertDialogContent className="rounded-2xl border-border bg-card p-6 max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-base font-bold text-destructive">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+                Delete {selectedTaskIds.length} Selected Tasks?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-xs text-muted-foreground leading-relaxed">
+                Are you sure you want to permanently delete <strong>{selectedTaskIds.length}</strong> selected tasks from your research board? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="pt-4 gap-2 sm:gap-0">
+              <AlertDialogCancel className="rounded-xl text-xs">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleBulkDeleteTasks}
+                className="rounded-xl bg-destructive hover:bg-destructive/90 text-destructive-foreground text-xs font-bold"
+              >
+                Delete {selectedTaskIds.length} Tasks
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
