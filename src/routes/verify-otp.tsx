@@ -9,7 +9,6 @@ import {
   InputOTPSlot,
   InputOTPSeparator,
 } from "@/components/ui/input-otp";
-import { sendFirebasePasswordReset } from "@/lib/firebase";
 
 export const Route = createFileRoute("/verify-otp")({
   head: () => ({ meta: [{ title: "Verify Code — ScholarNexus AI" }] }),
@@ -93,21 +92,20 @@ function OtpPage() {
     setSuccessMessage(null);
 
     try {
-      await fetch("/api/send-otp", {
+      const res = await fetch("/api/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
 
-      try {
-        await sendFirebasePasswordReset(email);
-      } catch (fbErr) {
-        console.warn("Firebase resend note:", fbErr);
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMessage(data?.error || "Failed to resend verification code.");
+      } else {
+        setSuccessMessage("A new 6-digit verification code has been sent to your email address!");
       }
-
-      setSuccessMessage("Verification code email re-sent from Firebase!");
     } catch (err) {
-      setErrorMessage("Unable to resend code.");
+      setErrorMessage("Unable to resend code. Please check your network connection.");
     } finally {
       setIsResending(false);
     }
@@ -116,7 +114,7 @@ function OtpPage() {
   return (
     <AuthLayout
       title="Verify Identity"
-      subtitle={`Enter the 6-digit verification code sent via Firebase to ${email || "your registered email"}`}
+      subtitle={`Enter the 6-digit verification code sent to ${email || "your registered email"}`}
       footer={
         <div className="text-xs text-muted-foreground">
           Didn't receive the code in your mail?{" "}
@@ -126,7 +124,7 @@ function OtpPage() {
             disabled={isResending}
             className="font-bold text-emerald-500 hover:underline disabled:opacity-50"
           >
-            {isResending ? "Resending..." : "Resend Code via Firebase"}
+            {isResending ? "Resending Code..." : "Resend Code"}
           </button>
         </div>
       }

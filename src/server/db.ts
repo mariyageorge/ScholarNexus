@@ -299,94 +299,98 @@ export async function completeUserProfile(
   );
 }
 
+function getEnvVariable(key: string): string {
+  if (process.env[key]) return process.env[key]!;
+  if ((import.meta as any)?.env?.[key]) return (import.meta as any)?.env?.[key];
+  return "";
+}
+
 async function sendOtpEmail(email: string, otp: string) {
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpPort = Number(process.env.SMTP_PORT ?? 587);
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
+  const smtpHost = getEnvVariable("SMTP_HOST") || "smtp.gmail.com";
+  const smtpPort = Number(getEnvVariable("SMTP_PORT") || 465);
+  const smtpUser = getEnvVariable("SMTP_USER") || "scholarnexusadmin@gmail.com";
+  const smtpPass = getEnvVariable("SMTP_PASS") || "hifi nigy ikuv jpwb";
 
-  const isRealSmtp =
-    smtpHost &&
-    smtpUser &&
-    smtpPass &&
-    !smtpUser.includes("your-gmail-address") &&
-    !smtpUser.includes("example");
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
 
-  if (isRealSmtp) {
-    try {
-      const transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpPort === 465,
-        auth: { user: smtpUser, pass: smtpPass },
-      });
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ScholarNexus AI Verification Code</title>
+      </head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 32px 16px; color: #1e293b;">
+        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);">
+          <!-- Header Banner -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); padding: 32px 24px; text-align: center;">
+              <h1 style="color: #ffffff; font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">ScholarNexus AI</h1>
+              <p style="color: #d1fae5; font-size: 13px; margin: 6px 0 0 0; font-weight: 500;">Academic Research Ecosystem</p>
+            </td>
+          </tr>
 
-      await transporter.sendMail({
-        from: `"ScholarNexus AI" <${process.env.SMTP_FROM ?? smtpUser}>`,
-        to: email,
-        subject: `ScholarNexus AI — Verification Code: ${otp}`,
-        html: `
-          <div style="font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #333; max-width: 480px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
-            <h2 style="color: #2A9D8F; margin: 0 0 12px 0; font-size: 20px;">ScholarNexus AI</h2>
-            <p style="font-size: 14px; margin-bottom: 8px;">Hello,</p>
-            <p style="font-size: 14px; color: #475569;">You requested a verification code to reset your ScholarNexus AI password.</p>
-            <p style="font-size: 14px; font-weight: bold; margin-top: 16px;">Your 6-Digit Verification Code is:</p>
-            <div style="background: #f0fdf4; border: 2px solid #2A9D8F; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #2A9D8F; text-align: center; padding: 18px; margin: 16px 0; border-radius: 10px;">
-              ${otp}
-            </div>
-            <p style="font-size: 12px; color: #64748b; line-height: 1.5;">This code is valid for 10 minutes. Enter this code on the OTP verification screen to set your new password.</p>
-            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-            <p style="font-size: 11px; color: #94a3b8; text-align: center;">ScholarNexus AI — Academic Research Ecosystem</p>
-          </div>
-        `,
-      });
-      console.log(`[ScholarNexus SMTP Email Sent] Successfully sent 6-digit OTP code to ${email}`);
-      return { sent: true };
-    } catch (err) {
-      console.error("[SMTP Delivery Error]", err);
-    }
-  }
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 32px 28px;">
+              <h2 style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0;">Password Reset Verification</h2>
+              <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 20px 0;">
+                A password reset request was initiated for your ScholarNexus AI account associated with <strong>${email}</strong>. Use the 6-digit verification code below to complete your password reset:
+              </p>
 
-  // Automatic Ethereal / Test Transport for local testing email delivery
-  try {
-    const testAccount = await nodemailer.createTestAccount();
-    const testTransporter = nodemailer.createTransport({
-      host: "smtp.ethereal.email",
-      port: 587,
-      secure: false,
-      auth: {
-        user: testAccount.user,
-        pass: testAccount.pass,
-      },
-    });
+              <!-- OTP Container -->
+              <div style="background-color: #ecfdf5; border: 2px dashed #059669; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #047857; display: block; margin-bottom: 8px;">Your 6-Digit Verification Code</span>
+                <div style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #047857;">
+                  ${otp}
+                </div>
+              </div>
 
-    const info = await testTransporter.sendMail({
-      from: `"ScholarNexus AI" <no-reply@scholarnexus.ai>`,
-      to: email,
-      subject: `ScholarNexus AI — Verification Code: ${otp}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 24px; color: #333; max-width: 480px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px;">
-          <h2 style="color: #2A9D8F;">ScholarNexus AI</h2>
-          <p>Your 6-digit password reset verification code is:</p>
-          <div style="background: #f0fdf4; border: 2px solid #2A9D8F; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2A9D8F; text-align: center; padding: 16px; margin: 16px 0; border-radius: 8px;">
-            ${otp}
-          </div>
-          <p style="font-size: 12px; color: #64748b;">This code expires in 10 minutes.</p>
-        </div>
-      `,
-    });
+              <!-- Expiry Notice -->
+              <div style="background-color: #f1f5f9; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px;">
+                <p style="font-size: 12px; line-height: 1.5; color: #475569; margin: 0;">
+                  ⏱️ <strong>Expiration Notice:</strong> This code is valid for <strong>10 minutes</strong>. If it expires, please request a new verification code from the Forgot Password page.
+                </p>
+              </div>
 
-    console.log(`\n==============================================`);
-    console.log(`[ScholarNexus OTP Email Sent] To: ${email} | OTP Code: ${otp}`);
-    console.log(`[Ethereal Preview URL]: ${nodemailer.getTestMessageUrl(info)}`);
-    console.log(`==============================================\n`);
-    return { sent: true, previewUrl: nodemailer.getTestMessageUrl(info) };
-  } catch (testErr) {
-    console.log(`\n==============================================`);
-    console.log(`[ScholarNexus OTP Email Fallback] To: ${email} | 6-Digit OTP Code: ${otp}`);
-    console.log(`==============================================\n`);
-  }
+              <!-- Security Notice -->
+              <p style="font-size: 12px; line-height: 1.5; color: #94a3b8; margin: 0;">
+                🔒 <strong>Security Notice:</strong> If you did not request a password reset, please ignore this email or contact ScholarNexus AI support. Never share this verification code with anyone.
+              </p>
+            </td>
+          </tr>
 
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 24px; text-align: center;">
+              <p style="font-size: 11px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                &copy; ${new Date().getFullYear()} ScholarNexus AI. All rights reserved.<br/>
+                This is an automated security transmission. Please do not reply to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  await transporter.sendMail({
+    from: `"ScholarNexus AI Security" <${smtpUser}>`,
+    to: email,
+    subject: `ScholarNexus AI — Verification Code: ${otp}`,
+    html: htmlContent,
+  });
+
+  console.log(`[ScholarNexus SMTP] Verification code email successfully dispatched to ${email}`);
   return { sent: true };
 }
 
@@ -4490,7 +4494,17 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     otpStore.set(normalizedEmail, { otp, expiresAt });
 
-    await sendOtpEmail(normalizedEmail, otp);
+    try {
+      await sendOtpEmail(normalizedEmail, otp);
+    } catch (sendErr: any) {
+      console.error("[ScholarNexus SMTP Error]", sendErr?.message || sendErr);
+      return new Response(
+        JSON.stringify({
+          error: "Failed to dispatch verification email. Please check your internet connection or email configuration and try again.",
+        }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
 
     return new Response(
       JSON.stringify({

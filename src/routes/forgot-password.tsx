@@ -5,7 +5,6 @@ import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { sendFirebasePasswordReset } from "@/lib/firebase";
 
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({ meta: [{ title: "Forgot Password — ScholarNexus AI" }] }),
@@ -33,7 +32,7 @@ function ForgotPage() {
     setIsSubmitting(true);
 
     try {
-      // 1. Verify registered user in MongoDB database
+      // 1. Verify registered user in database & dispatch OTP email via SMTP
       const response = await fetch("/api/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -50,14 +49,7 @@ function ForgotPage() {
         sessionStorage.setItem("resetEmail", email.trim());
         localStorage.setItem("resetEmail", email.trim());
 
-        // 2. Trigger Firebase Auth Email Dispatch directly to user's mail
-        try {
-          await sendFirebasePasswordReset(email.trim());
-        } catch (fbErr: any) {
-          console.warn("Firebase Auth email dispatch note:", fbErr);
-        }
-
-        setSuccessMessage("Verification code & password reset email sent from Firebase to your email address! Redirecting...");
+        setSuccessMessage("A 6-digit verification code has been sent to your email address! Redirecting...");
 
         setTimeout(() => {
           navigate({ to: "/verify-otp", search: { email: email.trim() } as any });
@@ -74,7 +66,7 @@ function ForgotPage() {
   return (
     <AuthLayout
       title="Reset Your Password"
-      subtitle="Enter your registered university email to receive a 6-digit verification code from Firebase"
+      subtitle="Enter your registered university email to receive a 6-digit verification code"
       footer={
         <div className="text-xs text-muted-foreground">
           Remembered your password?{" "}
@@ -121,7 +113,7 @@ function ForgotPage() {
           disabled={isSubmitting}
           className="w-full gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 shadow-md shadow-emerald-600/25 transition duration-150"
         >
-          {isSubmitting ? "Sending Code via Firebase..." : "Send Code via Firebase Email"}
+          {isSubmitting ? "Sending Verification Code..." : "Send Verification Code"}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </form>
