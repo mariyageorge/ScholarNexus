@@ -1,7 +1,13 @@
 import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
 import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
-import { extractPaperMetadataWithGemini, generatePaperSummaryWithGemini, generateResearchRoadmapWithGemini } from "./services/ai";
+import {
+  extractPaperMetadataWithGemini,
+  generatePaperSummaryWithGemini,
+  generateResearchRoadmapWithGemini,
+  generateWritingAssistWithGemini,
+  generateAssistantChatWithGemini,
+} from "./services/ai";
 
 const uri = process.env.MONGODB_URI ?? import.meta?.env?.VITE_MONGODB_URI ?? "";
 
@@ -2433,45 +2439,185 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let body: any = {};
       try { body = await request.json(); } catch {}
 
-      const { action, content, sectionTitle, projectTitle, domain } = body;
-      const inputContent = (content || "").trim();
-      const sTitle = sectionTitle || "Research Section";
-      const pTitle = projectTitle || "Academic Research Project";
+      const {
+        action,
+        content,
+        sectionTitle,
+        documentType,
+        workTitle,
+        documentAbstract,
+        documentSections,
+        projectTitle,
+        domain,
+        projectAbstract,
+        projectId,
+      } = body;
 
-      let suggestion = "";
+      let literatureContext: string[] = [];
+      if (projectId) {
+        try {
+          const papersCol = await getCollection<Document>("papers");
+          let pObjId: any = projectId;
+          if (ObjectId.isValid(projectId)) pObjId = new ObjectId(projectId);
+          const projectPapers = await papersCol.find({
+            $or: [{ projectId: String(projectId) }, { projectId: pObjId }]
+          }).limit(5).toArray();
 
-      if (action === "generate_abstract") {
-        suggestion = `This study investigates advanced methodologies in ${domain || "computer science & AI"}, focusing on ${pTitle}. We present a systematic framework to address current limitations in existing approaches. Empirical evaluations demonstrate significant improvements in scalability, precision, and performance over conventional benchmarks. The findings provide valuable insights for future academic research and practical deployment.`;
-      } else if (action === "improve_writing" || action === "academic_tone") {
-        if (!inputContent) {
-          suggestion = `In this section, we critically examine the fundamental principles underpinning ${pTitle}. The methodology relies upon empirical validation and structured analytical frameworks to ensure reproducibility and rigor.`;
-        } else {
-          suggestion = inputContent
-            .replace(/\bI think\b/gi, "It is posited that")
-            .replace(/\ba lot of\b/gi, "substantial")
-            .replace(/\bbig\b/gi, "significant")
-            .replace(/\bgood\b/gi, "advantageous")
-            .replace(/\bshow\b/gi, "demonstrate")
-            .replace(/\bfind out\b/gi, "determine");
-          if (!suggestion.endsWith(".")) suggestion += ".";
-          suggestion += ` Furthermore, these observations align with theoretical predictions and establish a robust foundation for further empirical investigation.`;
-        }
-      } else if (action === "expand_section") {
-        suggestion = `${inputContent ? inputContent + "\n\n" : ""}To elaborate further on ${sTitle}, it is crucial to recognize the operational constraints and mathematical properties governing system behavior. Specifically, comparative literature underscores the trade-offs between computational complexity and analytical precision. Incorporating robust evaluation metrics allows for a comprehensive assessment of experimental efficacy across variable operational parameters.`;
-      } else if (action === "generate_outline") {
-        suggestion = `• Overview of ${sTitle} in the context of ${pTitle}\n• Theoretical Foundations & Core Methodological Assumptions\n• Key Experimental Setup & Variables\n• Critical Comparative Analysis with Existing Benchmarks\n• Synthesis of Results & Limitations`;
-      } else if (action === "suggest_questions") {
-        suggestion = `1. What are the primary computational bottlenecks identified during experimental execution?\n2. How does the proposed model maintain accuracy when subjected to noisy data environments?\n3. What specific architectural modifications contribute to the observed efficiency gains?`;
-      } else if (action === "summarize_notes") {
-        suggestion = `Key Synthesis: The analyzed notes highlight critical operational dependencies in ${pTitle}. Methodological rigor is maintained through structured benchmarking, providing empirical validation for proposed hypotheses.`;
-      } else {
-        suggestion = `Enhanced academic draft for ${sTitle}: The proposed framework demonstrates rigorous empirical performance across key experimental benchmarks.`;
+          literatureContext = projectPapers.map(p => {
+            let summaryStr = p.aiSummary?.overview || p.abstract || "";
+            if (summaryStr.length > 250) summaryStr = summaryStr.slice(0, 250) + "...";
+            return `Paper: "${p.title}" (${p.publicationYear || p.year || "N/A"})\nAbstract/Overview: ${summaryStr}`;
+          });
+        } catch {}
       }
 
-      return new Response(JSON.stringify({ success: true, suggestion }), {
+      const result = await generateWritingAssistWithGemini({
+        action: action || "improve_writing",
+        content: content || "",
+        sectionTitle,
+        documentType,
+        workTitle,
+        documentAbstract,
+        documentSections,
+        projectTitle,
+        domain,
+        projectAbstract,
+        literatureContext,
+      });
+
+      if (!result.success) {
+        return new Response(JSON.stringify({ success: false, error: result.error || "AI writing assistance failed." }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true, suggestion: result.suggestion, modelUsed: result.modelUsed }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+  }
+
+  // ── AI Research Assistant Chat API Endpoint ──
+  if (url.pathname === "/api/ai/chat") {
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const { message, projectId, history, mentionedPaperIds } = body;
+      const userQuestion = (message || "").trim();
+
+      if (!userQuestion) {
+        return new Response(JSON.stringify({ error: "Message content is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      let projectContext: any = undefined;
+      let mentionedPapers: any[] = [];
+      let allProjectPapersSummary: any[] = [];
+
+      if (projectId) {
+        const projectsCol = await getCollection<Document>("projects");
+        const papersCol = await getCollection<Document>("papers");
+        const worksCol = await getCollection<Document>("research_work");
+
+        let pObjId: any = projectId;
+        if (ObjectId.isValid(projectId)) pObjId = new ObjectId(projectId);
+
+        const projectDoc = await projectsCol.findOne({
+          $or: [{ _id: pObjId }, { id: String(projectId) }]
+        });
+
+        if (projectDoc) {
+          const pIdStr = projectDoc._id.toString();
+
+          // Fetch papers for THIS project ONLY
+          const projectPapers = await papersCol.find({
+            $or: [{ projectId: pIdStr }, { projectId: String(projectId) }]
+          }).toArray();
+
+          const targetIds = new Set<string>(Array.isArray(mentionedPaperIds) ? mentionedPaperIds.map(String) : []);
+
+          for (const paper of projectPapers) {
+            const paperIdStr = paper._id.toString();
+            const titleLower = (paper.title || "").toLowerCase();
+            const userQTextLower = userQuestion.toLowerCase();
+
+            const isIdMentioned = targetIds.has(paperIdStr) || (paper.id && targetIds.has(String(paper.id)));
+            const isTitleMentioned = titleLower && (userQTextLower.includes(`@${titleLower}`) || userQTextLower.includes(titleLower));
+
+            if (isIdMentioned || isTitleMentioned) {
+              mentionedPapers.push({
+                id: paperIdStr,
+                title: paper.title,
+                authors: Array.isArray(paper.authorsList) ? paper.authorsList.join(", ") : paper.authors,
+                year: paper.publicationYear || paper.year,
+                journal: paper.journalOrConference || paper.journal,
+                doi: paper.doi,
+                abstract: paper.abstract,
+                keywords: paper.keywords,
+                url: paper.url,
+                aiSummary: paper.aiSummary,
+              });
+            }
+          }
+
+          allProjectPapersSummary = projectPapers.map(p => ({
+            id: p._id.toString(),
+            title: p.title,
+            year: p.publicationYear || p.year,
+            journal: p.journalOrConference || p.journal,
+            abstractSnippet: p.abstract ? (p.abstract.length > 200 ? p.abstract.slice(0, 200) + "..." : p.abstract) : "",
+          }));
+
+          const workDoc = await worksCol.findOne({ projectId: pIdStr });
+          let activeWorkDocSections: any[] = [];
+          if (workDoc && Array.isArray(workDoc.sections)) {
+            activeWorkDocSections = workDoc.sections.map((s: any) => ({
+              title: s.title || "Section",
+              contentSnippet: s.content ? (s.content.length > 300 ? s.content.slice(0, 300) + "..." : s.content) : "No content",
+            }));
+          }
+
+          projectContext = {
+            title: projectDoc.title,
+            domain: projectDoc.domain,
+            abstract: projectDoc.abstract || projectDoc.description,
+            status: projectDoc.status,
+            progress: projectDoc.progress,
+            activeWorkDocTitle: workDoc?.title,
+            activeWorkDocSections,
+          };
+        }
+      }
+
+      const result = await generateAssistantChatWithGemini({
+        userQuestion,
+        history,
+        projectContext,
+        mentionedPapers,
+        allProjectPapersSummary,
+      });
+
+      if (!result.success) {
+        return new Response(JSON.stringify({ success: false, error: result.error || "AI assistant call failed." }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response: result.response,
+          modelUsed: result.modelUsed,
+          mentionedPapers: mentionedPapers.map(p => ({ id: p.id, title: p.title })),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
     }
   }
 
