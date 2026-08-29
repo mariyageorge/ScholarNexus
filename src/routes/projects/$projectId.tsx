@@ -1238,6 +1238,263 @@ ${s.keyTakeaway}
     }
   };
 
+  // Section-specific dynamic AI action helper
+  const getSectionAiActions = (
+    sectionId: string,
+    sectionTitle: string,
+    docType: string,
+    hasContent: boolean
+  ) => {
+    const normalizedTitle = (sectionTitle || "").toLowerCase();
+
+    // 1. ABSTRACT
+    if (sectionId === "abstract" || /abstract/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "generate_abstract",
+          label: /conference/i.test(docType)
+            ? "Generate Concise Conference Abstract"
+            : /proposal/i.test(docType)
+            ? "Generate Proposal Abstract"
+            : "Generate Structured Academic Abstract",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Writing & Flow",
+        },
+        {
+          value: "academic_tone",
+          label: "Enhance Formal Scholarly Tone",
+        },
+        {
+          value: "expand_section",
+          label: "Elaborate Core Contribution Summary",
+        },
+      ];
+    }
+
+    // 2. INTRODUCTION / BACKGROUND
+    if (/introduction|background/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "improve_writing",
+          label: "Improve Academic Writing & Tone",
+        },
+        {
+          value: "expand_background",
+          label: "Expand Research Background & Motivation",
+        },
+        {
+          value: "clarify_objectives",
+          label: "Clarify Research Problem & Objectives",
+        },
+        {
+          value: "generate_outline",
+          label: "Generate Introduction Section Outline",
+        },
+        {
+          value: "expand_section",
+          label: "Elaborate Section Arguments",
+        },
+      ];
+    }
+
+    // 3. LITERATURE REVIEW / RELATED WORK / THEORETICAL FRAMEWORK
+    if (/literature|related work|theoretical|prior work/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "improve_synthesis",
+          label: "Improve Synthesis & Critical Flow",
+        },
+        {
+          value: "identify_themes",
+          label: "Identify Themes & Group Related Works",
+        },
+        {
+          value: "structure_literature",
+          label: "Structure Literature Discussion & Research Gaps",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Writing & Tone",
+        },
+        {
+          value: "expand_section",
+          label: "Expand Section with Literature Context",
+        },
+        {
+          value: "generate_outline",
+          label: "Generate Literature Review Outline",
+        },
+      ];
+    }
+
+    // 4. METHODOLOGY / METHODS / PROPOSED APPROACH / SYSTEM ARCHITECTURE
+    if (/method|architecture|approach|proposed|implementation|design|framework/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "improve_methodology",
+          label: "Improve Methodology & Technical Explanation",
+        },
+        {
+          value: "clarify_approach",
+          label: "Clarify Technical Steps & System Pipeline",
+        },
+        {
+          value: "structure_methodology",
+          label: "Structure Methodology Outline",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Clarity & Rigor",
+        },
+        {
+          value: "expand_section",
+          label: "Elaborate Technical Details",
+        },
+      ];
+    }
+
+    // 5. RESULTS / EXPERIMENTAL EVALUATION / FINDINGS
+    if (/result|finding|experiment|evaluation|performance/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "improve_results_presentation",
+          label: "Improve Presentation of Findings & Analysis",
+        },
+        {
+          value: "elaborate_discussion",
+          label: "Elaborate Interpretation (Preserving Data)",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Writing & Clarity",
+        },
+        {
+          value: "generate_outline",
+          label: "Generate Results & Analysis Outline",
+        },
+      ];
+    }
+
+    // 6. DISCUSSION
+    if (/discussion|implication/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "elaborate_discussion",
+          label: "Deepen Academic Discussion & Significance",
+        },
+        {
+          value: "clarify_significance",
+          label: "Highlight Research Significance & Impact",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Tone & Flow",
+        },
+        {
+          value: "expand_section",
+          label: "Expand Discussion Points",
+        },
+      ];
+    }
+
+    // 7. CONCLUSION / FUTURE WORK / RECOMMENDATIONS / SUMMARY
+    if (/conclusion|future work|recommendation|summary/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "improve_conclusion",
+          label: "Improve Conclusion & Synthesis",
+        },
+        {
+          value: "summarize_contributions",
+          label: "Summarize Core Research Contributions",
+        },
+        {
+          value: "refine_future_work",
+          label: "Refine Future Work & Open Challenges",
+        },
+        {
+          value: "improve_writing",
+          label: "Improve Academic Writing & Tone",
+        },
+      ];
+    }
+
+    // 8. REFERENCES / BIBLIOGRAPHY
+    if (/reference|bibliography|citation/i.test(normalizedTitle)) {
+      return [
+        {
+          value: "format_references",
+          label: "Format & Standardize Academic Citation Style",
+        },
+        {
+          value: "improve_writing",
+          label: "Clean & Align Citation Text",
+        },
+      ];
+    }
+
+    // 9. GENERIC / CUSTOM SECTIONS
+    return [
+      {
+        value: "improve_writing",
+        label: "Improve Academic Writing & Tone",
+      },
+      {
+        value: "academic_tone",
+        label: "Enhance Formal Scholarly Tone",
+      },
+      {
+        value: "expand_section",
+        label: "Expand Section & Elaborate Arguments",
+      },
+      {
+        value: "generate_outline",
+        label: "Generate Section Outline",
+      },
+      {
+        value: "clarify_objectives",
+        label: "Clarify Key Arguments & Structure",
+      },
+    ];
+  };
+
+  const handleOpenAiAssistForSection = (sectionId: string) => {
+    if (!activeWorkDoc) return;
+    const docType = activeWorkDoc.templateType || activeWorkDoc.documentType || "Research Paper";
+    let title = "Section";
+    let content = "";
+    if (sectionId === "abstract") {
+      title = "Abstract";
+      content = activeWorkDoc.abstract || "";
+    } else {
+      const sec = activeWorkDoc.sections?.find((s: any) => s.id === sectionId);
+      title = sec?.title || "Section";
+      content = sec?.content || "";
+    }
+    const actions = getSectionAiActions(sectionId, title, docType, !!content);
+    setAiAssistSectionId(sectionId);
+    setAiAssistAction(actions[0]?.value || "improve_writing");
+    setAiSuggestion(null);
+  };
+
+  const currentAssistSectionInfo = useMemo(() => {
+    if (!aiAssistSectionId || !activeWorkDoc) return null;
+    const docType = activeWorkDoc.templateType || activeWorkDoc.documentType || "Research Paper";
+    if (aiAssistSectionId === "abstract") {
+      const title = "Abstract";
+      const content = activeWorkDoc.abstract || "";
+      const actions = getSectionAiActions("abstract", title, docType, !!content);
+      return { id: "abstract", title, content, docType, actions };
+    }
+    const sec = activeWorkDoc.sections?.find((s: any) => s.id === aiAssistSectionId);
+    const title = sec?.title || "Section";
+    const content = sec?.content || "";
+    const actions = getSectionAiActions(aiAssistSectionId, title, docType, !!content);
+    return { id: aiAssistSectionId, title, content, docType, actions };
+  }, [aiAssistSectionId, activeWorkDoc]);
+
   const handleGenerateAiAssist = async () => {
     if (!aiAssistSectionId || !activeWorkDoc) return;
     setGeneratingAi(true);
@@ -1285,7 +1542,12 @@ ${s.keyTakeaway}
         const data = await res.json();
         if (data.suggestion) {
           setAiSuggestion(data.suggestion);
+        } else {
+          toast.error(data.error || "No suggestion could be generated.");
         }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Failed to generate AI suggestion.");
       }
     } catch (err) {
       console.error(err);
@@ -3060,11 +3322,7 @@ ${s.keyTakeaway}
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => {
-                              setAiAssistSectionId("abstract");
-                              setAiAssistAction("generate_abstract");
-                              setAiSuggestion(null);
-                            }}
+                            onClick={() => handleOpenAiAssistForSection("abstract")}
                             className="h-7 px-2.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded-xl gap-1"
                           >
                             <Sparkles className="h-3.5 w-3.5" /> AI Assist
@@ -3249,11 +3507,7 @@ ${s.keyTakeaway}
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                onClick={() => {
-                                  setAiAssistSectionId(sec.id);
-                                  setAiAssistAction("improve_writing");
-                                  setAiSuggestion(null);
-                                }}
+                                onClick={() => handleOpenAiAssistForSection(sec.id)}
                                 className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
                               >
                                 <Sparkles className="h-3 w-3" /> AI Assist Section
@@ -5150,15 +5404,22 @@ ${s.keyTakeaway}
         </DialogContent>
       </Dialog>
 
-      {/* Optional AI Assist Drawer Dialog */}
+      {/* Contextual Section AI Assist Modal Dialog */}
       <Dialog open={aiAssistSectionId !== null} onOpenChange={(open) => !open && setAiAssistSectionId(null)}>
         <DialogContent className="max-w-xl rounded-2xl border-border bg-card p-6 shadow-2xl max-h-[85vh] flex flex-col">
           <DialogHeader className="border-b border-border/60 pb-3 shrink-0">
-            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" /> AI Writing Assist
-            </DialogTitle>
+            <div className="flex items-center justify-between gap-2">
+              <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" /> AI Assist: {currentAssistSectionInfo?.title || "Section"}
+              </DialogTitle>
+              {currentAssistSectionInfo?.docType && (
+                <Badge variant="outline" className="border-primary/40 text-primary text-[0.65rem] font-bold rounded-full px-2">
+                  {currentAssistSectionInfo.docType}
+                </Badge>
+              )}
+            </div>
             <DialogDescription className="text-xs text-muted-foreground">
-              Optional AI co-pilot to improve, expand, or generate structured academic content.
+              Contextual AI actions tailored specifically for this {currentAssistSectionInfo?.title?.toLowerCase() || "document"} section.
             </DialogDescription>
           </DialogHeader>
 
@@ -5170,13 +5431,11 @@ ${s.keyTakeaway}
                 onChange={(e) => setAiAssistAction(e.target.value)}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                <option value="improve_writing">Improve Academic Writing & Clarity</option>
-                <option value="academic_tone">Enhance Formal Scholarly Tone</option>
-                <option value="expand_section">Expand Section & Elaborate Arguments</option>
-                <option value="generate_abstract">Generate Structured Abstract</option>
-                <option value="generate_outline">Generate Section Outline</option>
-                <option value="suggest_questions">Suggest Analytical Research Questions</option>
-                <option value="summarize_notes">Synthesize Research Notes</option>
+                {currentAssistSectionInfo?.actions?.map((act: any) => (
+                  <option key={act.value} value={act.value}>
+                    {act.label}
+                  </option>
+                ))}
               </select>
             </div>
 

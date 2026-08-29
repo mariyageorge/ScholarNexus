@@ -748,12 +748,61 @@ export async function generateWritingAssistWithGemini(options: {
   const pAbstract = options.projectAbstract || "";
   const docAbstract = options.documentAbstract || "";
   const existingContent = options.content ? options.content.trim() : "";
-  const isOutline = options.action === "generate_outline";
+  const isOutline =
+    options.action === "generate_outline" ||
+    options.action === "structure_literature" ||
+    options.action === "structure_methodology" ||
+    options.action === "identify_themes";
+
+  const isResultsSection = /result|finding|experiment|evaluation|performance/i.test(sTitle);
+  const isMethodologySection = /method|architecture|approach|proposed|implementation|design|framework/i.test(sTitle);
+  const isAbstractSection = sTitle.toLowerCase() === "abstract" || options.action === "generate_abstract";
+
+  // 1. DETERMINISTIC EMPTY-SECTION HANDLING FOR RESULTS / EVALUATION SECTIONS
+  if (isResultsSection && options.action !== "generate_outline") {
+    const hasEmpiricalData = Boolean(
+      existingContent &&
+      /\d+(\.\d+)?%|\baccuracy\b|\bprecision\b|\brecall\b|\bf1\b|\btable\b|\bfigure\b|\bmeasured\b|\btested\b|\bdataset of\b/i.test(existingContent)
+    );
+    if (!hasEmpiricalData) {
+      if (options.action === "elaborate_discussion") {
+        return {
+          success: true,
+          suggestion: "There are no experimental results or empirical data available to interpret in this section.",
+          modelUsed: "grounded-rule",
+        };
+      }
+      return {
+        success: true,
+        suggestion: "There are no existing experimental results or empirical findings in this section to analyze or improve.",
+        modelUsed: "grounded-rule",
+      };
+    }
+  }
+
+  // Generic empty section guard for rewrite actions
+  if (options.action === "improve_writing" || options.action === "academic_tone") {
+    if (!existingContent) {
+      return {
+        success: true,
+        suggestion: "There is no existing section content to improve. Please provide initial draft content or select an outline action.",
+        modelUsed: "grounded-rule",
+      };
+    }
+  }
+
+  if (options.action === "clarify_approach" && !existingContent && !pAbstract && !docAbstract) {
+    return {
+      success: true,
+      suggestion: "Insufficient system pipeline details are available in the project context to clarify technical workflow steps without fabricating implementation stages.",
+      modelUsed: "grounded-rule",
+    };
+  }
 
   // Document-type specific language & tense directives
   let docTypeGuidance = "";
   if (/proposal/i.test(docType)) {
-    docTypeGuidance = `Document Type is a Research Proposal. Use proposal-appropriate, future-oriented language ("proposes", "aims to", "will utilize", "is designed to"). DO NOT claim completed experimental results or invent accuracy rates.`;
+    docTypeGuidance = `Document Type is a Research Proposal. Use proposal-appropriate, future-oriented language ("proposes", "aims to", "will utilize", "is designed to"). DO NOT claim completed experimental results, completed implementations, or invent accuracy rates.`;
   } else if (/conference/i.test(docType)) {
     docTypeGuidance = `Document Type is a Conference Paper. Use concise, high-impact conference-style academic prose based strictly on the provided content.`;
   } else if (/literature/i.test(docType)) {
@@ -766,27 +815,143 @@ export async function generateWritingAssistWithGemini(options: {
   if (options.action === "generate_abstract") {
     actionInstruction = `Write ONE single, polished, high-quality academic abstract as a single unified paragraph (approx 150-250 words) for the ${docType} titled "${wTitle}".
 - Synthesize the research background, core objective, proposed methodology, and expected contribution into ONE coherent paragraph without breaking into multiple sections, bullet points, or multiple drafts.
-- Rely strictly on the actual project and document details provided.
+- Rely strictly on the actual project and document details provided. DO NOT invent unmentioned datasets, algorithms, external statistics, or accuracy rates.
 - Adapt tone to document type: ${docTypeGuidance}
 - Do NOT include any section labels or headings (such as "Research Problem:", "Objective:", "Methodology:", "Key Findings:", or "Conclusion:").
 - Do NOT include markdown bolding, asterisks, bullet points, multiple versions, or meta commentary.`;
+  } else if (options.action === "expand_background") {
+    actionInstruction = `Expand and enrich the research background and problem motivation for the "${sTitle}" section in the ${docType} titled "${wTitle}".
+- Contextualize the problem within the broader scientific domain strictly based on the provided project context.
+- DO NOT invent unverified facts, specific unmentioned benchmarks, or fabricated citations.
+- Adapt tone to document type: ${docTypeGuidance}
+- Return ONLY the improved scholarly background text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "clarify_objectives") {
+    actionInstruction = `Articulate and clarify the core research problem, objectives, and research questions for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Ensure clear, rigorous academic phrasing grounded strictly in the provided project scope.
+- Adapt tone to document type: ${docTypeGuidance}
+- Return ONLY the clear objectives and problem statement text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "improve_synthesis") {
+    actionInstruction = `Synthesize and improve the narrative flow of the literature review in "${sTitle}" for the ${docType} titled "${wTitle}".
+- Connect related research threads and establish critical relationships strictly from the provided literature and project context without inventing non-existent citations or claims.
+- Return ONLY the synthesized scholarly text block.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "identify_themes") {
+    actionInstruction = `Identify and group core thematic areas, methodologies, and literature trends for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY a clean, structured bulleted list of thematic groupings based strictly on the provided context.
+- Do NOT include meta commentary or introductory filler.`;
+  } else if (options.action === "structure_literature") {
+    actionInstruction = `Structure the literature review outline and explicitly highlight research gaps for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY a structured bulleted outline with key themes and gap analyses grounded in provided context.
+- Do NOT include meta commentary or introductory filler.`;
+  } else if (options.action === "improve_methodology") {
+    actionInstruction = `Refine and improve the technical explanation and procedural rigor for "${sTitle}" in the ${docType} titled "${wTitle}".
+- STRICT GROUNDING: Elaborate only upon the confirmed methodology explicitly provided. DO NOT invent or assume unmentioned implementation details such as data augmentation, normalization, class balancing, specific unnamed datasets, specific model layer counts/architectures, optimizers, knowledge bases, or experimental accuracy figures.
+- Adapt tone to document type: ${docTypeGuidance}
+- Return ONLY the improved methodology text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "clarify_approach") {
+    actionInstruction = `Clarify the step-by-step technical approach and system workflow for "${sTitle}" in the ${docType} titled "${wTitle}".
+- STRICT GROUNDING: Structure and explain the confirmed workflow steps logically without introducing unmentioned pipeline stages, data preprocessing techniques, or algorithms.
+- Return ONLY the clarified technical text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "structure_methodology") {
+    actionInstruction = `Generate a structured methodology framework outline for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY a clean bulleted outline of the confirmed technical phases and methods.
+- Do NOT include meta commentary or introductory filler.`;
+  } else if (options.action === "improve_results_presentation") {
+    actionInstruction = `Improve the scholarly presentation and academic discussion of findings for "${sTitle}" in the ${docType} titled "${wTitle}".
+- STRICT GROUNDING: Ground all discussion strictly in the provided content. DO NOT invent, fabricate, or assume experimental accuracy rates, precision/recall figures, or new results.
+- If empirical data is present, interpret only that specific data.
+- Return ONLY the improved results presentation text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "elaborate_discussion") {
+    actionInstruction = `Deepen the academic discussion, implications, and analytical significance for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Ground all discussion strictly in provided project context without inventing non-existent metrics or external experimental validations.
+- Return ONLY the polished discussion text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "clarify_significance") {
+    actionInstruction = `Articulate the broader academic and practical significance for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY the refined scholarly text block grounded in the stated project purpose.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "improve_conclusion") {
+    actionInstruction = `Write a polished, conclusive synthesis summarizing the contributions and closing insights for "${sTitle}" in the ${docType} titled "${wTitle}".
+    - Synthesize the work's primary impact cleanly based strictly on the provided research scope.
+    - Return ONLY the improved conclusion text.
+    - Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "summarize_contributions") {
+    actionInstruction = `Synthesize and summarize the core research contributions for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY the concise contributions summary text without fabricating unmentioned findings.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "refine_future_work") {
+    actionInstruction = `Articulate promising future research directions, open challenges, and prospective extensions for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Return ONLY the refined future work text.
+- Do NOT include markdown bolding, asterisks, section headings, or meta commentary.`;
+  } else if (options.action === "format_references") {
+    actionInstruction = `Format and standardize the reference citations in "${sTitle}" to standard academic style (consistent APA or IEEE format).
+- Preserve all existing citation details. Do not invent fake DOIs, titles, or authors.
+- Return ONLY the formatted reference list text.
+- Do NOT include meta commentary or introductory filler.`;
   } else if (options.action === "improve_writing" || options.action === "academic_tone") {
-    actionInstruction = `Rewrite and polish the provided section text for "${sTitle}" in the ${docType} titled "${wTitle}".
+    if (isAbstractSection) {
+      actionInstruction = `Improve and polish the academic writing and clarity of the supplied abstract for the ${docType} titled "${wTitle}".
+- CRITICAL RULE: Improve ONLY the supplied abstract content and preserve its exact factual meaning and scope.
+- ABSOLUTELY DO NOT replace it with a newly researched or generated abstract based on external general knowledge.
+- ABSOLUTELY DO NOT introduce external statistics, domain loss figures (such as "20–40% of crops are lost annually"), unmentioned citations, external datasets, specific layer architectures, leaf color/texture claims, or experimental performance metrics that are not explicitly present in the supplied abstract.
+- Ensure the output is ONE unified, coherent academic paragraph (no headings, no labels like "Research Problem:", "Objective:", etc., no bullet points, no markdown bolding, no meta-commentary).
+- Use proposal/development-stage language if the existing abstract describes a proposed or developing system.
+- Return ONLY the polished single-paragraph abstract.`;
+    } else {
+      actionInstruction = `Rewrite and polish the provided section text for "${sTitle}" in the ${docType} titled "${wTitle}".
+- CRITICAL RULE: Improve ONLY the provided text and preserve its exact factual meaning and technical scope.
+- ABSOLUTELY DO NOT introduce external statistics, percentages, unmentioned datasets, or fabricated claims not present in the supplied text.
 - Adapt tone to document type: ${docTypeGuidance}
 - Return ONLY the improved scholarly text block.
 - Preserve all existing technical facts without inventing fabricated metrics or unsupported claims.
 - Do NOT include markdown bolding, asterisks, bullet points, section headings, or meta commentary.`;
+    }
   } else if (options.action === "expand_section") {
-    actionInstruction = `Elaborate upon the provided section text for "${sTitle}" in the ${docType} titled "${wTitle}" by adding technical depth and analytical context.
+    if (isMethodologySection && !existingContent) {
+      actionInstruction = `Provide a high-level conceptual proposed methodology draft for "${sTitle}" in the ${docType} titled "${wTitle}" based ONLY on confirmed project facts.
+- STRICT GROUNDING: Stay strictly at the confirmed conceptual level (e.g., uploaded plant leaf images → deep learning / CNN-based disease classification → disease diagnostic information → actionable preventive guidance → early detection and agricultural decision support).
+- ABSOLUTELY DO NOT invent procedural stages or technical pipeline steps such as preprocessing, image normalization, data augmentation, feature extraction layers, filtering operations, dataset preparation, cross-validation, optimizers, loss functions, model backbones, or hardware unless explicitly named in the context.
+- Use strictly proposal/development-stage language such as "the proposed system", "will utilize", "aims to", "is designed to", and "the proposed framework".
+- The output must clearly remain a proposed conceptual framework, NOT a claim about completed implementation or an invented technical pipeline.
+- Adapt tone to document type: ${docTypeGuidance}
+- Return ONLY the proposed conceptual methodology text block.
+- Do NOT include markdown bolding, asterisks, bullet points, section headings, or meta commentary.`;
+    } else if (isMethodologySection && existingContent) {
+      actionInstruction = `Elaborate upon the student's existing methodology in "${sTitle}" for the ${docType} titled "${wTitle}" with academic depth and rigorous prose.
+- STRICT GROUNDING: Expand ONLY the confirmed methodology and concepts explicitly provided in the student's existing text and project context.
+- ABSOLUTELY DO NOT INVENT or assume implementation details or unmentioned procedural stages (such as preprocessing, normalization, filtering operations, feature extraction layers, augmentation, class balancing, specific unnamed datasets, specific model architectures/layers like ResNet or U-Net unless named, optimizers, loss functions, hardware, or experimental accuracy metrics).
 - Adapt tone to document type: ${docTypeGuidance}
 - Return ONLY the expanded academic text.
 - Do NOT include markdown bolding, asterisks, bullet points, section headings, or meta commentary.`;
+    } else {
+      actionInstruction = `Elaborate upon the section "${sTitle}" in the ${docType} titled "${wTitle}" with academic depth and rigorous prose.
+- STRICT GROUNDING: Elaborate ONLY upon the confirmed concepts explicitly provided in the student's text and project context.
+- ABSOLUTELY DO NOT INVENT or assume implementation details (such as data augmentation, normalization, class balancing, specific unnamed datasets, specific model architectures/layers unless named, optimizers, hardware, or experimental accuracy metrics).
+- If the section is empty, describe only the high-level confirmed research concept from the project scope using proposal/development-stage language rather than fabricating specific pipeline choices.
+- Adapt tone to document type: ${docTypeGuidance}
+- Return ONLY the expanded academic text.
+- Do NOT include markdown bolding, asterisks, bullet points, section headings, or meta commentary.`;
+    }
   } else if (options.action === "generate_outline") {
-    actionInstruction = `Generate a structured section outline with key technical points for "${sTitle}" in the ${docType} titled "${wTitle}".
+    if (isResultsSection) {
+      actionInstruction = `Generate a structured outline of proposed evaluation categories for "${sTitle}" in the ${docType} titled "${wTitle}".
+- Clearly frame evaluation items as suggested/planned possibilities directly relevant to the project (e.g., Proposed Evaluation of Classification Accuracy, Potential Evaluation Metrics, Planned Assessment of Diagnostic Performance, Proposed Error and Misclassification Review, Verification of Practical Usability).
+- DO NOT automatically introduce specific unmentioned experimental techniques such as cross-validation, confusion-matrix analysis, baseline model comparisons, or statistical significance testing unless already specified in the Research Work context.
+- DO NOT claim that the project has committed to specific implementation decisions, and NEVER fabricate accuracy numbers or completed results.
+- Return ONLY a clean bulleted outline.
+- Do NOT include meta commentary or introductory filler.`;
+    } else {
+      actionInstruction = `Generate a structured section outline with key technical points for "${sTitle}" in the ${docType} titled "${wTitle}".
 - Return ONLY the clean bulleted outline.
 - Do NOT include meta commentary or introductory filler.`;
+    }
   } else {
-    actionInstruction = `Refine and polish the academic text for "${sTitle}" to publication standard. Do NOT include markdown, headings, or meta commentary.`;
+    actionInstruction = `Refine and polish the academic text for "${sTitle}" to publication standard strictly based on provided context. Do NOT include markdown, headings, or meta commentary.`;
   }
 
   const literatureStr =
@@ -804,17 +969,32 @@ export async function generateWritingAssistWithGemini(options: {
 
   const systemInstructions = `You are a professional academic manuscript editor and text generator.
 STRICT MANDATORY OUTPUT CONSTRAINTS:
-1. OUTPUT ONLY THE FINAL REQUESTED TEXT.
-2. ABSOLUTELY NEVER OUTPUT:
+1. OUTPUT ONLY THE FINAL REQUESTED TEXT FOR THE SELECTED SECTION ("${sTitle}").
+2. STRICT GROUNDING & ZERO-FABRICATION RULE:
+   - Use ONLY the technical components, architectures, datasets, and methods explicitly present in the provided context.
+   - ABSOLUTELY NEVER INVENT or assume implementation details or external statistics that are not provided, such as:
+     * External statistics, estimates, or domain figures (e.g. agricultural crop loss percentages such as "20–40%", disease prevalence stats) unless explicitly in the input text
+     * Procedural pipeline stages (e.g. preprocessing, normalization, filtering operations, feature extraction layers, cross-validation) unless explicitly named
+     * Data augmentation techniques (e.g. rotation, shearing, flipping, zooming)
+     * Image normalization, scaling, or color space transformations
+     * Class balancing techniques (e.g. SMOTE, oversampling, class weighting)
+     * Specific unnamed datasets or benchmarks (e.g. PlantVillage, ImageNet, COCO)
+     * Specific model backbones or layer counts (e.g. ResNet, VGG, MobileNet, U-Net) unless explicitly named by the student
+     * Specific optimizers, learning rates, epochs, or loss functions (e.g. Adam, SGD, Cross-Entropy)
+     * Knowledge bases, ontologies, or expert systems
+     * Experimental results, accuracy figures, precision/recall percentages, or validation metrics
+     * Completed system performance claims when the work is in proposed or development stage
+   - If technical specifics are missing from the student's text, elaborate solely on the confirmed methodology and procedural principles at a formal academic level without inventing extra pipeline techniques or fabricated numbers.
+3. ABSOLUTELY NEVER OUTPUT:
    - System/prompt instructions or repetition of the task
    - Reasoning, chain-of-thought, internal logic, or self-correction
-   - Drafting process, word-count checks, or planning notes
+   - Drafting process, word-count checks, planning notes, or checklist verifications
    - Labels such as "Final Draft", "Refined Draft", "Opening", "Methodology", "Conclusion", "Research Problem:", "Objective:" unless part of a requested outline format
    - Multiple versions, options, or alternative drafts
    - Meta-commentary or explanations of what you wrote
-   - Fabricated facts, accuracy percentages, datasets, citations, or findings not present in the provided project context
-3. NO MARKDOWN (no **, #, *, _) and NO SECTION LABELS (no "Research Problem:", "Objective:", etc.) unless generating a bulleted outline.
-4. TENSE & STAGE ADAPTATION: ${docTypeGuidance}`;
+   - Notes or explanations about the prompt
+4. NO MARKDOWN (no **, #, *, _) and NO SECTION LABELS (no "Research Problem:", "Objective:", etc.) unless generating a bulleted outline.
+5. TENSE & STAGE ADAPTATION: ${docTypeGuidance}`;
 
   const userPrompt = `TASK:
 ${actionInstruction}
@@ -832,7 +1012,9 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
 
   let availableModels: string[] = [];
   try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+      signal: AbortSignal.timeout(4000),
+    });
     if (listRes.ok) {
       const listData = await listRes.json();
       if (listData && Array.isArray(listData.models)) {
@@ -843,8 +1025,8 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
     }
   } catch {}
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  const priorityModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"];
+  const candidateModels = [...new Set([...priorityModels, ...availableModels])].filter((m) => m !== "gemini-pro" && !m.includes("embedding"));
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -853,6 +1035,7 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(12000),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemInstructions }] },
           contents: [{ parts: [{ text: userPrompt }] }],
@@ -871,6 +1054,7 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
         const fallbackRes = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(12000),
           body: JSON.stringify({
             contents: [{ parts: [{ text: `${systemInstructions}\n\n${userPrompt}` }] }],
             generationConfig: { temperature: 0.1 },
@@ -895,7 +1079,7 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
         text = text.replace(/^```[a-z]*\n?/gi, "").replace(/\n?```$/gi, "").trim();
 
         // 2. Look for explicit final text markers produced by chain-of-thought models
-        const finalMarkerRegex = /(?:Final Text Construction|Final Text|Final Polish|Final Version|Final Draft):\s*([\s\S]+)$/i;
+        const finalMarkerRegex = /(?:Final Text Construction|Final Text|Final Polish|Final Version|Final Draft|Self-Correction during final check.*?Text|Text):\s*([\s\S]+)$/i;
         const markerMatch = text.match(finalMarkerRegex);
         if (markerMatch && markerMatch[1] && markerMatch[1].trim().length > 30) {
           text = markerMatch[1].trim();
@@ -911,19 +1095,33 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
         const cleanLines = lines.filter((line: string) => {
           const trimmed = line.trim();
           if (!trimmed) return true;
+          if (/\?\s*Yes\.?$/i.test(trimmed)) return false;
           if (
-            /^(?:\*\s*)?(?:Task|Constraints|Draft|Word Count|Word count|Markdown Check|Content Check|Refining|Final Polish|Check constraints|Double check|One detail|One last check|Check for|Wait,|Ready\.?|The text is ready|Final Text Construction|Final Text|Background|Objective|Methodology|Key Findings|Conclusion|Reasoning|Meta|Internal note|Output Rules|Document Type|Expansion strategy|Revision strategy)/i.test(
+            /^(?:\*\s*)?(?:Final check|One more check|One last check|Check on|The user said|The prompt says|Self-Correction|Check constraints|Final Polish)/i.test(
               trimmed
             )
           ) {
             return false;
           }
           if (
-            /^(?:Here is|Below is|Sure,|Certainly,|As requested,|Final Draft|Refined Draft|Draft 1|Draft 2|Option 1|Option 2|Revised Draft)/i.test(
+            /^(?:Task|Constraints|Title:|Current Content:|Output ONLY|No markdown|No section labels|No meta-commentary|No fabricated|Tone:|Broad context:|Problem:|Solution\/Trend:|Specific focus:|Refining|Draft|Word Count|Word count|Markdown Check|Content Check|Double check|One detail|Check for|Wait,|Ready\.?|The text is ready|Final Text Construction|Final Text|Background|Objective|Methodology|Key Findings|Conclusion|Reasoning|Meta|Internal note|Output Rules|Document Type|Expansion strategy|Revision strategy)/i.test(
+              trimmed
+            )
+          ) {
+            return false;
+          }
+          if (/(?:Draft\s*\d|Refining\s+for|Mental\s+Draft)/i.test(trimmed)) {
+            return false;
+          }
+          if (
+            /^(?:Here is|Below is|Sure,|Certainly,|As requested,|Final Draft|Refined Draft|Draft 1|Draft 2|Option 1|Option 2|Revised Draft|Text:)/i.test(
               trimmed
             ) &&
             lines.length > 1
           ) {
+            return false;
+          }
+          if (!isOutline && /^\s*[\*\-]\s+/i.test(trimmed)) {
             return false;
           }
           if (/\(Word count:\s*\d+/i.test(trimmed) || /words\.\s*I need to expand/i.test(trimmed)) {
@@ -932,9 +1130,23 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
           return true;
         });
 
-        text = cleanLines.join("\n").trim();
+        // 5. If multiple paragraphs exist and the first is an isolated headline without verbs, filter it
+        const rawParagraphs = cleanLines.join("\n").split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+        const uniqueParagraphs: string[] = [];
+        for (const p of rawParagraphs) {
+          if (!uniqueParagraphs.includes(p)) {
+            uniqueParagraphs.push(p);
+          }
+        }
 
-        // 5. If NOT outline, strip markdown bolding, section labels, and headers
+        // If first paragraph is a short headline (e.g. "Global food security...") and there is a longer main paragraph
+        if (uniqueParagraphs.length > 1 && uniqueParagraphs[0].split(/\s+/).length < 12 && !uniqueParagraphs[0].endsWith(".")) {
+          uniqueParagraphs.shift();
+        }
+
+        text = uniqueParagraphs.join("\n\n").trim();
+
+        // 6. If NOT outline, strip markdown bolding, section labels, and headers
         if (!isOutline) {
           // Strip section labels like "Research Problem:", "Objective:", "Methodology:", "Key Findings:", "Conclusion:"
           text = text.replace(
@@ -1201,7 +1413,9 @@ STRICT GROUNDING & CONTEXT RULES:
   // Inject system prompt into first item or systemInstruction parameter
   let availableModels: string[] = [];
   try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+      signal: AbortSignal.timeout(4000),
+    });
     if (listRes.ok) {
       const listData = await listRes.json();
       if (listData && Array.isArray(listData.models)) {
@@ -1212,8 +1426,8 @@ STRICT GROUNDING & CONTEXT RULES:
     }
   } catch {}
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  const priorityModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"];
+  const candidateModels = [...new Set([...priorityModels, ...availableModels])].filter((m) => m !== "gemini-pro" && !m.includes("embedding"));
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1222,6 +1436,7 @@ STRICT GROUNDING & CONTEXT RULES:
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(12000),
         body: JSON.stringify({
           systemInstruction: { parts: [systemPromptPart] },
           contents,
@@ -1251,6 +1466,7 @@ STRICT GROUNDING & CONTEXT RULES:
         const resFallback = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(12000),
           body: JSON.stringify({
             contents: fallbackContents,
             generationConfig: { temperature: 0.2 },
