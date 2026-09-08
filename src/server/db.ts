@@ -2212,6 +2212,10 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         reviewStatus: w.reviewStatus || "Draft",
         feedback: w.feedback || "",
         sectionFeedback: w.sectionFeedback || [],
+        roadmap: w.roadmap || null,
+        roadmapDurationWeeks: w.roadmapDurationWeeks || null,
+        roadmapGeneratedAt: w.roadmapGeneratedAt || null,
+        roadmapSyncedToTasks: Boolean(w.roadmapSyncedToTasks),
         lastSaved: w.lastSaved || w.updatedAt || new Date().toISOString(),
         createdAt: w.createdAt || new Date().toISOString(),
         updatedAt: w.updatedAt || new Date().toISOString(),
@@ -4408,7 +4412,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let body: any = {};
       try { body = await request.json(); } catch {}
 
-      const { projectId, durationWeeks } = body;
+      const { projectId, researchWorkId, durationWeeks } = body;
       if (!projectId) {
         return new Response(JSON.stringify({ error: "Project ID is required." }), {
           status: 400,
@@ -4431,38 +4435,50 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         });
       }
 
-      if (projectDoc.status === "Completed") {
+      if (projectDoc.status === "Completed" || projectDoc.status === "Approved") {
         return new Response(
-          JSON.stringify({ error: "Cannot generate or modify a research roadmap for a completed project." }),
+          JSON.stringify({ error: `Cannot generate or modify a research roadmap for a ${projectDoc.status.toLowerCase()} project.` }),
           { status: 400, headers: { "content-type": "application/json" } }
         );
       }
 
       const duration = Number(durationWeeks) || 6;
       const pIdStr = projectDoc._id.toString();
-      const researchWorksCol = await getCollection<Document>("research_works");
+      const workCol = await getCollection<Document>("research_work");
       const papersCol = await getCollection<Document>("papers");
 
+      let selectedWorkDoc: any = null;
+      if (researchWorkId) {
+        let wObjId: any = researchWorkId;
+        if (ObjectId.isValid(researchWorkId)) wObjId = new ObjectId(researchWorkId);
+        selectedWorkDoc = await workCol.findOne({
+          $or: [{ _id: wObjId }, { id: String(researchWorkId) }],
+        });
+      }
+
+      if (!selectedWorkDoc) {
+        return new Response(JSON.stringify({ error: "Please select a valid research work to generate a roadmap." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
       const [researchWorks, savedPapersCount] = await Promise.all([
-        researchWorksCol.find({ projectId: pIdStr }).toArray(),
+        workCol.find({ projectId: pIdStr }).toArray(),
         papersCol.countDocuments({ projectId: pIdStr }),
       ]);
 
       const hasResearchPaper = researchWorks.some(
-        (rw) => rw.workType === "Research Paper" || (rw.title && rw.title.toLowerCase().includes("paper"))
+        (rw) => rw.templateType === "Research Paper" || (rw.title && rw.title.toLowerCase().includes("paper"))
       );
       const pendingReview = researchWorks.find((rw) => rw.reviewStatus === "Pending Review");
       const reviewed = researchWorks.find((rw) => rw.reviewStatus === "Reviewed");
-      const reviewStatus = pendingReview
-        ? "Pending Review"
-        : reviewed
-        ? "Reviewed"
-        : "None";
+      const reviewStatus = selectedWorkDoc.reviewStatus || (pendingReview ? "Pending Review" : reviewed ? "Reviewed" : "None");
 
       const result = await generateResearchRoadmapWithGemini({
-        projectTitle: projectDoc.title || "Academic Research Project",
+        projectTitle: selectedWorkDoc.title || projectDoc.title || "Academic Research Project",
         domain: projectDoc.domain || projectDoc.category || "",
-        abstract: projectDoc.abstract || projectDoc.description || "",
+        abstract: selectedWorkDoc.abstract || projectDoc.abstract || projectDoc.description || "",
         durationWeeks: duration,
         progress: Number(projectDoc.progress) || 0,
         status: projectDoc.status || "Planning",
@@ -4491,20 +4507,36 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         updatedAt: now,
       };
 
+      // Update the specific research work
+      await workCol.updateOne(
+        { _id: selectedWorkDoc._id },
+        { $set: updatePayload }
+      );
+
+      // Update the project document as well for backward compatibility
       await projectsCol.updateOne(
         { _id: projectDoc._id },
         { $set: updatePayload }
       );
 
-      const updatedDoc = await projectsCol.findOne({ _id: projectDoc._id });
+      const [updatedDoc, updatedWork] = await Promise.all([
+        projectsCol.findOne({ _id: projectDoc._id }),
+        workCol.findOne({ _id: selectedWorkDoc._id }),
+      ]);
+
       const formatted = updatedDoc
         ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+        : null;
+
+      const formattedWork = updatedWork
+        ? { ...updatedWork, id: updatedWork._id.toString(), _id: updatedWork._id.toString() }
         : null;
 
       return new Response(
         JSON.stringify({
           success: true,
           project: formatted,
+          researchWork: formattedWork,
           roadmap: result.roadmap,
           durationWeeks: duration,
           modelUsed: result.modelUsed,
@@ -4517,7 +4549,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       let body: any = {};
       try { body = await request.json(); } catch {}
 
-      const { projectId, userEmail, userName } = body;
+      const { projectId, researchWorkId, userEmail, userName } = body;
       if (!projectId) {
         return new Response(JSON.stringify({ error: "Project ID is required." }), {
           status: 400,
@@ -4526,6 +4558,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
 
       const projectsCol = await getCollection<Document>("projects");
+      const workCol = await getCollection<Document>("research_work");
       const tasksCol = await getCollection<Document>("tasks");
 
       let pObjId: any = projectId;
@@ -4535,8 +4568,28 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         $or: [{ _id: pObjId }, { id: String(projectId) }],
       });
 
-      if (!projectDoc || !Array.isArray(projectDoc.roadmap)) {
-        return new Response(JSON.stringify({ error: "Project or roadmap not found." }), {
+      if (!projectDoc) {
+        return new Response(JSON.stringify({ error: "Project not found." }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      let selectedWorkDoc: any = null;
+      if (researchWorkId) {
+        let wObjId: any = researchWorkId;
+        if (ObjectId.isValid(researchWorkId)) wObjId = new ObjectId(researchWorkId);
+        selectedWorkDoc = await workCol.findOne({
+          $or: [{ _id: wObjId }, { id: String(researchWorkId) }],
+        });
+      }
+
+      const activeRoadmap = selectedWorkDoc && Array.isArray(selectedWorkDoc.roadmap) && selectedWorkDoc.roadmap.length > 0
+        ? selectedWorkDoc.roadmap
+        : (Array.isArray(projectDoc.roadmap) ? projectDoc.roadmap : null);
+
+      if (!activeRoadmap || activeRoadmap.length === 0) {
+        return new Response(JSON.stringify({ error: "Roadmap not found for conversion." }), {
           status: 404,
           headers: { "content-type": "application/json" },
         });
@@ -4547,7 +4600,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       const uEmail = (userEmail || projectDoc.userEmail || "").trim().toLowerCase();
       let createdCount = 0;
 
-      for (const item of projectDoc.roadmap) {
+      for (const item of activeRoadmap) {
         const weekNum = Number(item.week) || 1;
         const dueDateObj = new Date(now.getTime() + weekNum * 7 * 24 * 60 * 60 * 1000);
         const dueDateStr = dueDateObj.toISOString().split("T")[0];
@@ -4584,14 +4637,30 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         }
       }
 
+      const nowIso = new Date().toISOString();
+      if (selectedWorkDoc) {
+        await workCol.updateOne(
+          { _id: selectedWorkDoc._id },
+          { $set: { roadmapSyncedToTasks: true, updatedAt: nowIso } }
+        );
+      }
+
       await projectsCol.updateOne(
         { _id: projectDoc._id },
-        { $set: { roadmapSyncedToTasks: true, updatedAt: new Date().toISOString() } }
+        { $set: { roadmapSyncedToTasks: true, updatedAt: nowIso } }
       );
 
-      const updatedDoc = await projectsCol.findOne({ _id: projectDoc._id });
+      const [updatedDoc, updatedWork] = await Promise.all([
+        projectsCol.findOne({ _id: projectDoc._id }),
+        selectedWorkDoc ? workCol.findOne({ _id: selectedWorkDoc._id }) : Promise.resolve(null),
+      ]);
+
       const formatted = updatedDoc
         ? { ...updatedDoc, id: updatedDoc._id.toString(), _id: updatedDoc._id.toString() }
+        : null;
+
+      const formattedWork = updatedWork
+        ? { ...updatedWork, id: updatedWork._id.toString(), _id: updatedWork._id.toString() }
         : null;
 
       return new Response(
@@ -4600,6 +4669,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           message: `Successfully synced ${createdCount} weekly milestone tasks to your project task board.`,
           createdCount,
           project: formatted,
+          researchWork: formattedWork,
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       );

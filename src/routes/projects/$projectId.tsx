@@ -148,7 +148,7 @@ export const Route = createFileRoute("/projects/$projectId")({
   component: ProjectWorkspacePage,
 });
 
-export type ProjectStatus = "Planning" | "In Progress" | "Under Review" | "Completed" | "On Hold";
+export type ProjectStatus = "Planning" | "In Progress" | "Under Review" | "Completed" | "Approved" | "On Hold";
 
 export interface Project {
   id: string;
@@ -563,6 +563,7 @@ function ProjectWorkspacePage() {
   const [copiedSummaryState, setCopiedSummaryState] = useState(false);
 
   // AI Research Roadmap Generator State
+  const [selectedRoadmapWorkId, setSelectedRoadmapWorkId] = useState<string>("");
   const [isGenerateRoadmapModalOpen, setIsGenerateRoadmapModalOpen] = useState(false);
   const [roadmapDurationWeeks, setRoadmapDurationWeeks] = useState<number>(6);
   const [isGeneratingRoadmap, setIsGeneratingRoadmap] = useState(false);
@@ -574,6 +575,11 @@ function ProjectWorkspacePage() {
   const [globalSearchResults, setGlobalSearchResults] = useState<any[]>([]);
   const [isSearchingGlobalPapers, setIsSearchingGlobalPapers] = useState(false);
   const [importingPaperId, setImportingPaperId] = useState<string | null>(null);
+
+  const selectedRoadmapWork = useMemo(() => {
+    if (!selectedRoadmapWorkId) return null;
+    return researchWorkList.find((w) => (w.id === selectedRoadmapWorkId || w._id === selectedRoadmapWorkId)) || null;
+  }, [researchWorkList, selectedRoadmapWorkId]);
 
   const handleExecuteGlobalSearch = async (overrideQuery?: string) => {
     const q = (overrideQuery !== undefined ? overrideQuery : globalSearchQuery).trim();
@@ -668,6 +674,14 @@ function ProjectWorkspacePage() {
 
   const handleGenerateRoadmap = async () => {
     if (!project) return;
+    if (!selectedRoadmapWorkId) {
+      toast.error("Please select a research work first.");
+      return;
+    }
+    if (project.status === "Completed" || project.status === "Approved") {
+      toast.error(`Cannot generate or modify roadmap for a ${project.status.toLowerCase()} project.`);
+      return;
+    }
     setIsGeneratingRoadmap(true);
 
     try {
@@ -676,13 +690,39 @@ function ProjectWorkspacePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: project.id || project._id || projectId,
+          researchWorkId: selectedRoadmapWorkId,
           durationWeeks: roadmapDurationWeeks,
         }),
       });
 
       const data = await res.json();
-      if (res.ok && data.success && data.project) {
-        setProject(data.project);
+      if (res.ok && data.success) {
+        if (data.project) {
+          setProject(data.project);
+        }
+        if (data.researchWork) {
+          setResearchWorkList((prev) =>
+            prev.map((w) =>
+              (w.id === data.researchWork.id || w._id === data.researchWork.id || w.id === data.researchWork._id || w._id === data.researchWork._id)
+                ? { ...w, ...data.researchWork }
+                : w
+            )
+          );
+        } else if (data.roadmap) {
+          setResearchWorkList((prev) =>
+            prev.map((w) =>
+              (w.id === selectedRoadmapWorkId || w._id === selectedRoadmapWorkId)
+                ? {
+                    ...w,
+                    roadmap: data.roadmap,
+                    roadmapDurationWeeks: roadmapDurationWeeks,
+                    roadmapGeneratedAt: new Date().toISOString(),
+                    roadmapSyncedToTasks: false,
+                  }
+                : w
+            )
+          );
+        }
         setIsGenerateRoadmapModalOpen(false);
         toast.success(`Generated ${roadmapDurationWeeks}-Week AI Research Roadmap with Gemini!`);
       } else {
@@ -697,7 +737,8 @@ function ProjectWorkspacePage() {
   };
 
   const handleSyncRoadmapToTasks = async () => {
-    if (!project || !Array.isArray(project.roadmap) || project.roadmap.length === 0) {
+    const activeRoadmap = selectedRoadmapWork?.roadmap || project?.roadmap;
+    if (!project || !Array.isArray(activeRoadmap) || activeRoadmap.length === 0) {
       toast.error("No active roadmap steps to convert.");
       return;
     }
@@ -709,6 +750,7 @@ function ProjectWorkspacePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: project.id || project._id || projectId,
+          researchWorkId: selectedRoadmapWorkId,
           userEmail: user?.email,
           userName: user?.name,
         }),
@@ -719,6 +761,13 @@ function ProjectWorkspacePage() {
         if (data.project) {
           setProject(data.project);
         }
+        setResearchWorkList((prev) =>
+          prev.map((w) =>
+            (w.id === selectedRoadmapWorkId || w._id === selectedRoadmapWorkId)
+              ? { ...w, roadmapSyncedToTasks: true }
+              : w
+          )
+        );
         toast.success(data.message || `Roadmap items converted into project tasks!`);
       } else {
         toast.error(data.error || "Failed to convert roadmap to tasks.");
@@ -866,6 +915,7 @@ ${s.keyTakeaway}
     }
 
     setUser(session);
+    setSelectedRoadmapWorkId("");
     fetchProject(session.email, projectId);
     fetchFacultyList();
     fetchSupervisionRequest(projectId);
@@ -3739,76 +3789,130 @@ ${s.keyTakeaway}
           {/* TAB: AI RESEARCH ROADMAP */}
           <TabsContent value="roadmap" className="space-y-6">
             <Card className="surface-elevated rounded-2xl border-border bg-card p-6 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-border">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-border">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="gap-1.5 rounded-full border-primary/30 bg-primary/10 text-primary px-3 py-1 text-xs font-bold">
                       <Sparkles className="h-3.5 w-3.5" /> AI Mentor Roadmap
                     </Badge>
-                    {project.roadmapGeneratedAt && (
+                    {selectedRoadmapWork?.roadmapGeneratedAt && (
                       <span className="text-xs text-muted-foreground">
-                        Generated {formatDisplayDate(project.roadmapGeneratedAt)}
+                        Generated {formatDisplayDate(selectedRoadmapWork.roadmapGeneratedAt)}
                       </span>
                     )}
                   </div>
                   <h3 className="text-xl font-bold text-foreground">AI Research Mentor Roadmap</h3>
                   <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-                    Custom step-by-step academic plan generated by Gemini AI for <strong>"{project.title}"</strong>.
+                    Custom step-by-step academic plan generated by Gemini AI for {selectedRoadmapWork ? (
+                      <strong>"{selectedRoadmapWork.title}"</strong>
+                    ) : (
+                      <strong>"{project.title}"</strong>
+                    )}.
                     Follow these weekly milestones to structure your literature review, methodology, and implementation.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <Button
-                    onClick={() => {
-                      if (project.status === "Completed") {
-                        toast.error("Cannot modify roadmap for a completed project.");
-                        return;
-                      }
-                      setIsGenerateRoadmapModalOpen(true);
-                    }}
-                    disabled={project.status === "Completed"}
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 rounded-xl text-xs font-semibold disabled:opacity-50"
-                  >
-                    <RefreshCcw className="h-3.5 w-3.5 text-primary" />
-                    {project.status === "Completed"
-                      ? "Roadmap Locked (Completed)"
-                      : Array.isArray(project.roadmap) && project.roadmap.length > 0
-                      ? "Regenerate Plan"
-                      : "Generate Roadmap"}
-                  </Button>
-
-                  {Array.isArray(project.roadmap) && project.roadmap.length > 0 && (
-                    <Button
-                      onClick={handleSyncRoadmapToTasks}
-                      disabled={isSyncingRoadmapTasks || Boolean(project.roadmapSyncedToTasks)}
-                      size="sm"
-                      className={`gap-2 rounded-xl text-xs font-bold shadow-xs transition-all ${
-                        project.roadmapSyncedToTasks
-                          ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 dark:text-emerald-400 cursor-not-allowed opacity-90"
-                          : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                      }`}
+                <div className="flex flex-col sm:flex-row sm:items-end gap-3 shrink-0">
+                  {/* Research Work Dropdown Above / Next to Generate Roadmap button */}
+                  <div className="space-y-1.5 min-w-[240px]">
+                    <Label htmlFor="roadmapWorkSelect" className="text-xs font-semibold text-foreground">
+                      Research Work
+                    </Label>
+                    <Select
+                      value={selectedRoadmapWorkId}
+                      onValueChange={(val) => setSelectedRoadmapWorkId(val)}
+                      disabled={researchWorkList.length === 0}
                     >
-                      {isSyncingRoadmapTasks ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : project.roadmapSyncedToTasks ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <Target className="h-3.5 w-3.5 shrink-0" />
-                      )}
-                      {project.roadmapSyncedToTasks ? "✓ Tasks Synced to Board" : "Convert Roadmap to Tasks"}
-                    </Button>
-                  )}
+                      <SelectTrigger id="roadmapWorkSelect" className="h-9 rounded-xl text-xs bg-background border-border">
+                        <SelectValue placeholder="Select a research work" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl text-xs">
+                        {researchWorkList.length === 0 ? (
+                          <div className="p-2 text-xs text-muted-foreground text-center">
+                            No research works in this project
+                          </div>
+                        ) : (
+                          researchWorkList.map((work) => {
+                            const wId = work.id || work._id;
+                            return (
+                              <SelectItem key={wId} value={wId} className="text-xs cursor-pointer">
+                                <span className="truncate">{work.title || "Untitled Work"}</span>{" "}
+                                <span className="text-[0.68rem] text-muted-foreground">
+                                  ({work.templateType || "Document"})
+                                </span>
+                              </SelectItem>
+                            );
+                          })
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Generate / Regenerate Roadmap Button */}
+                    {project.status === "Completed" || project.status === "Approved" ? (
+                      <Button
+                        disabled
+                        variant="outline"
+                        size="sm"
+                        className="h-9 gap-2 rounded-xl text-xs font-semibold opacity-60 cursor-not-allowed"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Roadmap Locked ({project.status})
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => {
+                          if (!selectedRoadmapWorkId) {
+                            toast.error("Please select a research work first.");
+                            return;
+                          }
+                          setIsGenerateRoadmapModalOpen(true);
+                        }}
+                        disabled={!selectedRoadmapWorkId || researchWorkList.length === 0}
+                        variant="outline"
+                        size="sm"
+                        className="h-9 gap-2 rounded-xl text-xs font-semibold disabled:opacity-50"
+                      >
+                        <RefreshCcw className="h-3.5 w-3.5 text-primary" />
+                        {selectedRoadmapWork && Array.isArray(selectedRoadmapWork.roadmap) && selectedRoadmapWork.roadmap.length > 0
+                          ? "Regenerate Plan"
+                          : "Generate Roadmap"}
+                      </Button>
+                    )}
+
+                    {/* Convert Roadmap to Tasks */}
+                    {selectedRoadmapWork && Array.isArray(selectedRoadmapWork.roadmap) && selectedRoadmapWork.roadmap.length > 0 && (
+                      <Button
+                        onClick={handleSyncRoadmapToTasks}
+                        disabled={isSyncingRoadmapTasks || Boolean(selectedRoadmapWork.roadmapSyncedToTasks)}
+                        size="sm"
+                        className={`h-9 gap-2 rounded-xl text-xs font-bold shadow-xs transition-all ${
+                          selectedRoadmapWork.roadmapSyncedToTasks
+                            ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 dark:text-emerald-400 cursor-not-allowed opacity-90"
+                            : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                        }`}
+                      >
+                        {isSyncingRoadmapTasks ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : selectedRoadmapWork.roadmapSyncedToTasks ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                        ) : (
+                          <Target className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        {selectedRoadmapWork.roadmapSyncedToTasks ? "✓ Tasks Synced to Board" : "Convert Roadmap to Tasks"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Roadmap Timeline View */}
-              {Array.isArray(project.roadmap) && project.roadmap.length > 0 ? (
+              {/* Roadmap Content: Timeline View or Appropriate Empty State */}
+              {selectedRoadmapWork && Array.isArray(selectedRoadmapWork.roadmap) && selectedRoadmapWork.roadmap.length > 0 ? (
+                /* Timeline View for Selected Research Work's Roadmap */
                 <div className="pt-6 space-y-6">
                   <div className="relative pl-6 md:pl-8 border-l-2 border-primary/30 space-y-8">
-                    {project.roadmap.map((step: any, idx: number) => (
+                    {selectedRoadmapWork.roadmap.map((step: any, idx: number) => (
                       <div key={idx} className="relative group">
                         {/* Stepper Node Dot */}
                         <div className="absolute -left-[37px] md:-left-[45px] top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-xs shadow-md border-2 border-background">
@@ -3878,16 +3982,17 @@ ${s.keyTakeaway}
                     ))}
                   </div>
                 </div>
-              ) : project.status === "Completed" ? (
-                /* Empty State for Completed Project */
+              ) : project.status === "Completed" || project.status === "Approved" ? (
+                /* Empty State for Completed or Approved Project with no roadmap */
                 <div className="py-16 text-center space-y-4 max-w-md mx-auto">
-                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-500">
-                    <CheckCircle2 className="h-8 w-8" />
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                    <Lock className="h-8 w-8" />
                   </div>
                   <div className="space-y-1">
-                    <h4 className="text-lg font-bold text-foreground">Project Completed</h4>
+                    <h4 className="text-lg font-bold text-foreground">Roadmap Generation Unavailable</h4>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      This research project has been completed. Roadmap generation is locked for completed projects.
+                      This research project is marked as <strong>{project.status}</strong>. Roadmap generation is unavailable because the project is {project.status.toLowerCase()}.
+                      {researchWorkList.length > 0 && " If another research work has a roadmap, select it from the dropdown above to view it."}
                     </p>
                   </div>
 
@@ -3896,11 +4001,53 @@ ${s.keyTakeaway}
                     variant="outline"
                     className="gap-2 rounded-xl text-xs font-bold border-border text-muted-foreground opacity-60 cursor-not-allowed px-6 py-2.5"
                   >
-                    <Lock className="h-4 w-4" /> Roadmap Locked (Project Completed)
+                    <Lock className="h-4 w-4" /> Roadmap Generation Locked ({project.status})
+                  </Button>
+                </div>
+              ) : researchWorkList.length === 0 ? (
+                /* Empty State when Project has No Research Works */
+                <div className="py-16 text-center space-y-4 max-w-md mx-auto">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                    <FolderKanban className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-lg font-bold text-foreground">No Research Works Found</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      This project has no Research Works yet. Create a research document in the <strong>Research Work</strong> tab first before generating a roadmap.
+                    </p>
+                  </div>
+
+                  <Button
+                    disabled
+                    variant="outline"
+                    className="gap-2 rounded-xl text-xs font-bold border-border text-muted-foreground opacity-60 cursor-not-allowed px-6 py-2.5"
+                  >
+                    <Sparkles className="h-4 w-4" /> Generate Roadmap (Requires Research Work)
+                  </Button>
+                </div>
+              ) : !selectedRoadmapWorkId ? (
+                /* Empty State when No Research Work is Selected Yet */
+                <div className="py-16 text-center space-y-4 max-w-md mx-auto">
+                  <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+                    <FileText className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-lg font-bold text-foreground">Select a Research Work</h4>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Please select a research work from the dropdown above to view or generate its tailored academic roadmap.
+                    </p>
+                  </div>
+
+                  <Button
+                    disabled
+                    variant="outline"
+                    className="gap-2 rounded-xl text-xs font-bold border-border text-muted-foreground opacity-60 cursor-not-allowed px-6 py-2.5"
+                  >
+                    <Sparkles className="h-4 w-4" /> Generate Roadmap (Select Work First)
                   </Button>
                 </div>
               ) : (
-                /* Empty State for Active Projects */
+                /* Empty State for Selected Active Research Work with No Roadmap Yet */
                 <div className="py-16 text-center space-y-4 max-w-md mx-auto">
                   <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary">
                     <Compass className="h-8 w-8" />
@@ -3908,7 +4055,7 @@ ${s.keyTakeaway}
                   <div className="space-y-1">
                     <h4 className="text-lg font-bold text-foreground">No Research Roadmap Generated Yet</h4>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Let Gemini AI create a tailored, step-by-step weekly research plan based on your project topic and research goals.
+                      Let Gemini AI create a tailored, step-by-step weekly research plan for <strong>"{selectedRoadmapWork.title}"</strong> ({selectedRoadmapWork.templateType || "Research Document"}).
                     </p>
                   </div>
 
@@ -5847,11 +5994,36 @@ ${s.keyTakeaway}
               Generate AI Research Roadmap
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Gemini AI will analyze <strong>"{project?.title}"</strong> and create a week-by-week research roadmap tailored for your project.
+              Gemini AI will analyze <strong>"{selectedRoadmapWork?.title || project?.title}"</strong> and create a week-by-week research roadmap tailored for your research work.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-foreground">Research Work</Label>
+              <Select
+                value={selectedRoadmapWorkId}
+                onValueChange={(val) => setSelectedRoadmapWorkId(val)}
+              >
+                <SelectTrigger className="rounded-xl text-xs bg-background border-border">
+                  <SelectValue placeholder="Select a research work" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl text-xs">
+                  {researchWorkList.map((work) => {
+                    const wId = work.id || work._id;
+                    return (
+                      <SelectItem key={wId} value={wId} className="text-xs cursor-pointer">
+                        <span className="truncate">{work.title || "Untitled Work"}</span>{" "}
+                        <span className="text-[0.68rem] text-muted-foreground">
+                          ({work.templateType || "Document"})
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-foreground">Project Topic</Label>
               <div className="rounded-xl border border-border/80 bg-muted/40 p-3 text-xs font-medium text-foreground">
@@ -5910,7 +6082,7 @@ ${s.keyTakeaway}
             </Button>
             <Button
               onClick={handleGenerateRoadmap}
-              disabled={isGeneratingRoadmap}
+              disabled={isGeneratingRoadmap || !selectedRoadmapWorkId}
               className="gap-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-sm"
             >
               {isGeneratingRoadmap ? (
