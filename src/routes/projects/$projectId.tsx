@@ -2315,7 +2315,7 @@ ${s.keyTakeaway}
     }
   };
 
-  // Citation Formatter
+  // Academic Citation Formatter Helpers & State
   const activeCitationPaper = useMemo(() => {
     if (!selectedCitationPaperId && papers.length > 0) return papers[0];
     return papers.find((p) => p.id === selectedCitationPaperId) || papers[0] || null;
@@ -2323,24 +2323,278 @@ ${s.keyTakeaway}
 
   const formattedCitationText = useMemo(() => {
     if (!activeCitationPaper) return "No research paper selected for citation.";
-    const { authors, year, title, journal } = activeCitationPaper;
-    const authorStr = authors && authors.trim() ? authors.trim() : "Unknown Author";
-    const yearStr = year && year.trim() ? year.trim() : "n.d.";
-    const journalStr = journal && journal.trim() ? journal.trim() : "Unpublished manuscript";
+
+    interface ParsedAuthor {
+      family: string;
+      given: string;
+      initials: string;
+    }
+
+    const extractInitials = (given: string): string => {
+      if (!given) return "";
+      const parts = given.split(/[\s.-]+/).filter(Boolean);
+      return parts
+        .map((p) => (p.length === 1 || p.endsWith(".") ? (p.endsWith(".") ? p : `${p}.`) : `${p[0].toUpperCase()}.`))
+        .join(" ");
+    };
+
+    const parseAuthors = (rawAuthors: string | string[] | undefined): { authors: ParsedAuthor[]; hasEtAl: boolean } => {
+      if (!rawAuthors) return { authors: [], hasEtAl: false };
+
+      let authorList: string[] = [];
+      let hasEtAl = false;
+
+      if (Array.isArray(rawAuthors)) {
+        authorList = rawAuthors.map((a) => String(a).trim()).filter(Boolean);
+      } else if (typeof rawAuthors === "string") {
+        let str = rawAuthors.trim();
+        if (!str) return { authors: [], hasEtAl: false };
+
+        if (/(\bet\s+al\.?|\band\s+others)\b/i.test(str)) {
+          hasEtAl = true;
+          str = str.replace(/,?\s*(\bet\s+al\.?|\band\s+others)\b/gi, "").trim();
+        }
+
+        if (str.includes(";")) {
+          authorList = str.split(";").map((s) => s.trim()).filter(Boolean);
+        } else if (/\s+and\s+/i.test(str) || /\s+&\s+/.test(str)) {
+          const parts = str.split(/\s+and\s+|\s+&\s+/i);
+          authorList = parts.map((s) => s.trim()).filter(Boolean);
+        } else if (str.includes(",")) {
+          const commaParts = str.split(",").map((s) => s.trim()).filter(Boolean);
+          const allHaveSpaces = commaParts.every((p) => p.includes(" "));
+          if (allHaveSpaces) {
+            authorList = commaParts;
+          } else if (commaParts.length === 2 && !commaParts[0].includes(" ") && commaParts[1].includes(" ")) {
+            authorList = [`${commaParts[0]}, ${commaParts[1]}`];
+          } else if (commaParts.length % 2 === 0 && commaParts.every((p, i) => (i % 2 === 0 ? !p.includes(" ") : true))) {
+            authorList = [];
+            for (let i = 0; i < commaParts.length; i += 2) {
+              authorList.push(`${commaParts[i]}, ${commaParts[i + 1]}`);
+            }
+          } else {
+            authorList = commaParts;
+          }
+        } else {
+          authorList = [str];
+        }
+      }
+
+      const parsed: ParsedAuthor[] = authorList
+        .map((authorStr) => {
+          const raw = authorStr.trim().replace(/^&\s*/, "").replace(/,\s*$/, "").trim();
+          if (!raw) return null;
+
+          if (raw.includes(",")) {
+            const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+            const family = parts[0] || "";
+            const given = parts.slice(1).join(" ") || "";
+            const initials = extractInitials(given);
+            return { family, given, initials };
+          } else {
+            const parts = raw.split(/\s+/).filter(Boolean);
+            if (parts.length === 1) {
+              return { family: parts[0], given: "", initials: "" };
+            }
+            const family = parts[parts.length - 1];
+            const given = parts.slice(0, parts.length - 1).join(" ");
+            const initials = extractInitials(given);
+            return { family, given, initials };
+          }
+        })
+        .filter((a): a is ParsedAuthor => a !== null && (a.family.length > 0 || a.given.length > 0));
+
+      return { authors: parsed, hasEtAl };
+    };
+
+    const title = (activeCitationPaper.title || "Untitled Document").trim();
+    const year = (activeCitationPaper.year || activeCitationPaper.publicationYear || "").trim();
+    const journal = (activeCitationPaper.journal || activeCitationPaper.journalOrConference || "").trim();
+    const doi = (activeCitationPaper.doi || "").trim();
+    const url = (activeCitationPaper.url || "").trim();
+    const anyPaper = activeCitationPaper as any;
+    const volume = (anyPaper.volume ? String(anyPaper.volume) : "").trim();
+    const issue = (anyPaper.issue ? String(anyPaper.issue) : "").trim();
+    const pages = (anyPaper.pages ? String(anyPaper.pages) : "").trim();
+
+    const parsed = parseAuthors(activeCitationPaper.authorsList || activeCitationPaper.authors);
+    const cleanTitle = title.replace(/[.!?]+$/, "");
+    const titleEnding = /[.!?]$/.test(title) ? title.slice(-1) : ".";
+    const cleanDoi = doi ? (doi.startsWith("http") ? doi : `https://doi.org/${doi}`) : "";
 
     if (citationStyle === "APA") {
-      return `${authorStr} (${yearStr}). ${title}. ${journalStr}.`;
+      // APA (7th Edition): Lastname, Initials. (Year). Title. Journal, Volume(Issue), Pages. DOI/URL
+      let authorsStr = "";
+      if (parsed.authors.length > 0) {
+        const formatted = parsed.authors.map((a) => {
+          if (!a.initials) return a.family || a.given;
+          return `${a.family}, ${a.initials}`;
+        });
+
+        if (parsed.hasEtAl || formatted.length > 20) {
+          authorsStr = `${formatted.slice(0, 19).join(", ")}, ... ${formatted[formatted.length - 1]}`;
+        } else if (formatted.length === 1) {
+          authorsStr = formatted[0];
+        } else if (formatted.length === 2) {
+          authorsStr = `${formatted[0]}, & ${formatted[1]}`;
+        } else {
+          authorsStr = `${formatted.slice(0, -1).join(", ")}, & ${formatted[formatted.length - 1]}`;
+        }
+      }
+
+      const dateStr = year ? `(${year})` : "(n.d.)";
+      const fullTitleStr = `${cleanTitle}${titleEnding}`;
+
+      let sourceStr = "";
+      if (journal) {
+        sourceStr = journal;
+        if (volume) {
+          sourceStr += `, ${volume}`;
+          if (issue) sourceStr += `(${issue})`;
+        }
+        if (pages) sourceStr += `, ${pages}`;
+        sourceStr += ".";
+      }
+
+      let linkStr = "";
+      if (cleanDoi) {
+        linkStr = ` ${cleanDoi}`;
+      } else if (url) {
+        linkStr = ` ${url}`;
+      }
+
+      if (authorsStr) {
+        return `${authorsStr} ${dateStr}. ${fullTitleStr}${sourceStr ? ` ${sourceStr}` : ""}${linkStr}`;
+      } else {
+        return `${fullTitleStr} ${dateStr}.${sourceStr ? ` ${sourceStr}` : ""}${linkStr}`;
+      }
     }
+
     if (citationStyle === "MLA") {
-      return `${authorStr}. "${title}." ${journalStr}, ${yearStr}.`;
+      // MLA (9th Edition): Lastname, Firstname, and Firstname Lastname. "Title." Journal, vol. X, no. Y, Year, pp. Z. DOI/URL
+      let authorsStr = "";
+      if (parsed.authors.length > 0) {
+        const first = parsed.authors[0];
+        const firstStr = first.given ? `${first.family}, ${first.given}` : first.family;
+
+        if (parsed.hasEtAl || parsed.authors.length >= 3) {
+          authorsStr = `${firstStr}, et al. `;
+        } else if (parsed.authors.length === 2) {
+          const second = parsed.authors[1];
+          const secondStr = second.given ? `${second.given} ${second.family}` : second.family;
+          authorsStr = `${firstStr}, and ${secondStr}. `;
+        } else {
+          authorsStr = `${firstStr}. `;
+        }
+      }
+
+      const titleStr = `"${cleanTitle}."`;
+      let containerStr = "";
+      if (journal) containerStr += `${journal}, `;
+      if (volume) containerStr += `vol. ${volume}, `;
+      if (issue) containerStr += `no. ${issue}, `;
+      if (pages) containerStr += `pp. ${pages}, `;
+      if (year) containerStr += `${year}.`;
+      else if (containerStr.endsWith(", ")) containerStr = containerStr.slice(0, -2) + ".";
+
+      let linkStr = "";
+      if (cleanDoi) {
+        linkStr = ` ${cleanDoi}`;
+      } else if (url) {
+        linkStr = ` ${url}`;
+      }
+
+      return `${authorsStr}${titleStr}${containerStr ? ` ${containerStr}` : ""}${linkStr}`;
     }
+
     if (citationStyle === "Chicago") {
-      return `${authorStr}. "${title}." ${journalStr} (${yearStr}).`;
+      // Chicago (17th Edition): Lastname, Firstname, and Firstname Lastname. "Title." Journal Volume, no. Issue (Year): Pages. DOI/URL
+      let authorsStr = "";
+      if (parsed.authors.length > 0) {
+        const first = parsed.authors[0];
+        const firstStr = first.given ? `${first.family}, ${first.given}` : first.family;
+
+        if (parsed.hasEtAl || parsed.authors.length >= 4) {
+          authorsStr = `${firstStr}, et al. `;
+        } else if (parsed.authors.length === 2) {
+          const second = parsed.authors[1];
+          const secondStr = second.given ? `${second.given} ${second.family}` : second.family;
+          authorsStr = `${firstStr}, and ${secondStr}. `;
+        } else if (parsed.authors.length === 3) {
+          const second = parsed.authors[1];
+          const secondStr = second.given ? `${second.given} ${second.family}` : second.family;
+          const third = parsed.authors[2];
+          const thirdStr = third.given ? `${third.given} ${third.family}` : third.family;
+          authorsStr = `${firstStr}, ${secondStr}, and ${thirdStr}. `;
+        } else {
+          authorsStr = `${firstStr}. `;
+        }
+      }
+
+      const titleStr = `"${cleanTitle}."`;
+      let containerStr = "";
+      if (journal) {
+        containerStr += journal;
+        if (volume) containerStr += ` ${volume}`;
+        if (issue) containerStr += `, no. ${issue}`;
+        if (year) containerStr += ` (${year})`;
+        if (pages) containerStr += `: ${pages}`;
+        containerStr += ".";
+      } else if (year) {
+        containerStr += ` (${year}).`;
+      }
+
+      let linkStr = "";
+      if (cleanDoi) {
+        linkStr = ` ${cleanDoi}`;
+      } else if (url) {
+        linkStr = ` ${url}`;
+      }
+
+      return `${authorsStr}${titleStr}${containerStr ? ` ${containerStr}` : ""}${linkStr}`;
     }
+
     if (citationStyle === "IEEE") {
-      return `${authorStr}, "${title}," ${journalStr}, ${yearStr}.`;
+      // IEEE: J. Kalezhi and L. Shumba, "Title," Journal, vol. X, no. Y, pp. Z, Year. doi: DOI
+      let authorsStr = "";
+      if (parsed.authors.length > 0) {
+        const formatted = parsed.authors.map((a) => {
+          if (!a.initials) return a.given ? `${a.given} ${a.family}` : a.family;
+          return `${a.initials} ${a.family}`;
+        });
+
+        if (parsed.hasEtAl || formatted.length > 6) {
+          authorsStr = `${formatted[0]} et al., `;
+        } else if (formatted.length === 1) {
+          authorsStr = `${formatted[0]}, `;
+        } else if (formatted.length === 2) {
+          authorsStr = `${formatted[0]} and ${formatted[1]}, `;
+        } else {
+          authorsStr = `${formatted.slice(0, -1).join(", ")}, and ${formatted[formatted.length - 1]}, `;
+        }
+      }
+
+      const titleStr = `"${cleanTitle},"`;
+      let containerStr = "";
+      if (journal) containerStr += `${journal}`;
+      if (volume) containerStr += `, vol. ${volume}`;
+      if (issue) containerStr += `, no. ${issue}`;
+      if (pages) containerStr += `, pp. ${pages}`;
+      if (year) containerStr += `${containerStr ? ", " : ""}${year}`;
+      if (containerStr) containerStr += ".";
+
+      let linkStr = "";
+      if (doi) {
+        const doiVal = doi.replace(/^https?:\/\/doi\.org\//i, "");
+        linkStr = ` doi: ${doiVal}.`;
+      } else if (url) {
+        linkStr = ` [Online]. Available: ${url}.`;
+      }
+
+      return `${authorsStr}${titleStr}${containerStr ? ` ${containerStr}` : ""}${linkStr}`;
     }
-    return `${authorStr} (${yearStr}). ${title}. ${journalStr}.`;
+
+    return `${cleanTitle}.`;
   }, [activeCitationPaper, citationStyle]);
 
   const handleCopyCitation = () => {
