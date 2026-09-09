@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import {
   LayoutDashboard,
   Users,
@@ -334,6 +337,84 @@ function AdminPage() {
   });
 
   const [reportSubTab, setReportSubTab] = useState("students");
+  const [reportSearch, setReportSearch] = useState("");
+
+  // ── Derived Reports & Analytics Computed Values ──
+  const studentUsers = useMemo(() => users.filter((u) => u.role === "student"), [users]);
+  const facultyUsers = useMemo(() => users.filter((u) => u.role === "faculty"), [users]);
+
+  // Distinct students who own / are associated with at least one project
+  const distinctParticipatingStudentsCount = useMemo(() => {
+    const studentEmails = new Set(studentUsers.map((u) => u.email?.toLowerCase()).filter(Boolean));
+    const distinctEmails = new Set(
+      projects
+        .map((p) => p.userEmail?.toLowerCase())
+        .filter((email): email is string => Boolean(email && studentEmails.has(email)))
+    );
+    return distinctEmails.size;
+  }, [studentUsers, projects]);
+
+  const distinctStudentParticipationRate = useMemo(() => {
+    const total = studentUsers.length || stats?.totalStudents || 0;
+    if (total === 0) return 0;
+    return Math.min(100, Math.round((distinctParticipatingStudentsCount / total) * 100));
+  }, [studentUsers.length, stats?.totalStudents, distinctParticipatingStudentsCount]);
+
+  const avgPapersPerStudent = useMemo(() => {
+    const totalStudentsCount = studentUsers.length || stats?.totalStudents || 0;
+    if (totalStudentsCount === 0) return "0.0";
+    const totalPapersCount = papers.length || stats?.totalPapers || 0;
+    return (totalPapersCount / totalStudentsCount).toFixed(1);
+  }, [studentUsers.length, stats?.totalStudents, papers.length, stats?.totalPapers]);
+
+  // Faculty Metrics
+  const verifiedFacultyCount = useMemo(() => {
+    return facultyUsers.filter((f) => f.status === "Active").length || (stats?.totalFaculty ?? 0);
+  }, [facultyUsers, stats?.totalFaculty]);
+
+  const facultyApprovalRate = useMemo(() => {
+    const total = facultyUsers.length || stats?.totalFaculty || 0;
+    if (total === 0) return 0;
+    const pending = facultyUsers.filter((f) => f.status === "Pending").length || stats?.pendingFacultyApprovals || 0;
+    return Math.max(0, Math.min(100, Math.round(((total - pending) / total) * 100)));
+  }, [facultyUsers, stats?.totalFaculty, stats?.pendingFacultyApprovals]);
+
+  const avgProjectsSupervised = useMemo(() => {
+    const totalFacultyCount = facultyUsers.length || stats?.totalFaculty || 0;
+    if (totalFacultyCount === 0) return "0.0";
+    const supervisedCount = projects.filter((p) => p.faculty || (p as any).facultyId).length;
+    return (supervisedCount / totalFacultyCount).toFixed(1);
+  }, [facultyUsers.length, stats?.totalFaculty, projects]);
+
+  // Project Metrics
+  const projectStatusCounts = useMemo(() => {
+    return {
+      Planning: projects.filter((p) => p.status === "Planning").length,
+      "In Progress": projects.filter((p) => p.status === "In Progress").length,
+      "Under Review": projects.filter((p) => p.status === "Under Review").length,
+      Completed: projects.filter((p) => p.status === "Completed").length,
+      "On Hold": projects.filter((p) => p.status === "On Hold").length,
+    };
+  }, [projects]);
+
+  const projectDomainCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of projects) {
+      const d = p.domain || "General Science";
+      counts[d] = (counts[d] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [projects]);
+
+  // Paper Metrics
+  const paperDomainCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of papers) {
+      const d = p.domain || "General Research";
+      counts[d] = (counts[d] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [papers]);
 
   // Admin Settings Form
   const [adminProfile, setAdminProfile] = useState({
@@ -936,8 +1017,338 @@ function AdminPage() {
 
   /* ── Export Handlers ── */
   const handleExportReport = (type: "pdf" | "excel") => {
-    const filename = `ScholarNexus_${reportSubTab}_report_${new Date().toISOString().split("T")[0]}.${type === "pdf" ? "pdf" : "xlsx"}`;
-    toast.success(`Exporting ${reportSubTab.toUpperCase()} report as ${type.toUpperCase()} (${filename})`);
+    try {
+      const dateStr = new Date().toISOString().split("T")[0];
+      const titleCaseTab = reportSubTab.charAt(0).toUpperCase() + reportSubTab.slice(1);
+      const filename = `ScholarNexus_${titleCaseTab}_Report_${dateStr}`;
+
+      if (type === "pdf") {
+        const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+        const pageWidth = doc.internal.pageSize.getWidth();
+
+        // Header Banner
+        doc.setFillColor(15, 23, 42); // slate-900
+        doc.rect(0, 0, pageWidth, 75, "F");
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(15);
+        doc.setFont("helvetica", "bold");
+        doc.text("SCHOLARNEXUS ACADEMIC PORTAL", 30, 30);
+
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184); // slate-400
+        doc.text(`ADMINISTRATIVE INTELLIGENCE REPORT • ${reportSubTab.toUpperCase()} COHORT`, 30, 46);
+        doc.text(`Generated: ${new Date().toLocaleString()} | Admin: ${session?.displayName || session?.name || "System Administrator"}`, 30, 60);
+
+        let currentY = 95;
+
+        // Executive Summary Header
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text("Executive Summary Metrics", 30, currentY);
+        currentY += 10;
+
+        let summaryHead: string[][] = [];
+        let summaryBody: string[][] = [];
+        let tableHead: string[][] = [];
+        let tableBody: string[][] = [];
+
+        if (reportSubTab === "students") {
+          summaryHead = [["Key Metric", "Calculated Value", "Administrative Context"]];
+          summaryBody = [
+            ["Total Registered Students", String(studentUsers.length || stats?.totalStudents || 0), "Total student scholars registered in platform"],
+            ["Project Participation Rate", `${distinctStudentParticipationRate}%`, `Distinct students associated with >= 1 project (${distinctParticipatingStudentsCount} students)`],
+            ["Avg Papers Per Student", avgPapersPerStudent, "Average repository manuscript uploads per enrolled student"],
+          ];
+
+          tableHead = [["#", "Student Name", "Email", "Department / Affiliation", "Projects", "Papers", "Account Status"]];
+          tableBody = studentUsers.length === 0
+            ? [["—", "No student records available", "—", "—", "0", "0", "—"]]
+            : studentUsers.map((u, i) => {
+                const sProjects = projects.filter((p) => p.userEmail?.toLowerCase() === u.email?.toLowerCase());
+                const sPapers = papers.filter((p) => p.uploaderEmail?.toLowerCase() === u.email?.toLowerCase());
+                return [
+                  String(i + 1),
+                  u.name || "Student Scholar",
+                  u.email || "—",
+                  u.department || u.affiliation || "Unspecified",
+                  String(sProjects.length),
+                  String(sPapers.length),
+                  u.status || "Active",
+                ];
+              });
+        } else if (reportSubTab === "faculty") {
+          summaryHead = [["Key Metric", "Calculated Value", "Administrative Context"]];
+          summaryBody = [
+            ["Total Faculty Members", String(facultyUsers.length || stats?.totalFaculty || 0), "Total faculty advisors on record"],
+            ["Faculty Approval Rate", `${facultyApprovalRate}%`, "Percentage of verified and active faculty accounts"],
+            ["Avg Projects Supervised", avgProjectsSupervised, "Average active student research projects per faculty advisor"],
+          ];
+
+          tableHead = [["#", "Faculty Name", "Email", "Department", "Designation", "Supervised", "Status"]];
+          tableBody = facultyUsers.length === 0
+            ? [["—", "No faculty records available", "—", "—", "—", "0", "—"]]
+            : facultyUsers.map((u, i) => {
+                const supervised = projects.filter(
+                  (p) => (p.faculty && p.faculty.toLowerCase() === u.name.toLowerCase()) ||
+                         (p.faculty && p.faculty.toLowerCase() === u.email.toLowerCase()) ||
+                         (p as any).facultyId === u.email ||
+                         (p as any).facultyId === u.id
+                );
+                return [
+                  String(i + 1),
+                  u.name || "Faculty Member",
+                  u.email || "—",
+                  u.department || u.affiliation || "Computer Science",
+                  u.designation || "Faculty Guide",
+                  String(supervised.length),
+                  u.status || "Active",
+                ];
+              });
+        } else if (reportSubTab === "projects") {
+          summaryHead = [["Key Metric", "Calculated Value", "Administrative Context"]];
+          summaryBody = [
+            ["Total Research Projects", String(projects.length || stats?.totalProjects || 0), "Total academic research projects created"],
+            ["Average Pipeline Progress", `${projects.length ? Math.round(projects.reduce((acc, p) => acc + (p.progress || 0), 0) / projects.length) : 0}%`, "Mean milestone progress across all registered projects"],
+            ["Active Pipeline Volume", String(projects.filter((p) => p.status === "In Progress" || p.status === "Under Review").length), "Projects actively In Progress or Under Review"],
+          ];
+
+          tableHead = [["#", "Project Title", "Lead Student", "Domain", "Status", "Progress", "Faculty Guide"]];
+          tableBody = projects.length === 0
+            ? [["—", "No research projects available", "—", "—", "—", "0%", "—"]]
+            : projects.map((p, i) => [
+                String(i + 1),
+                p.title || "Academic Project",
+                p.userEmail || "—",
+                p.domain || "General",
+                p.status || "Planning",
+                `${p.progress ?? 0}%`,
+                p.faculty || (p as any).facultyId || "Unassigned",
+              ]);
+        } else {
+          // Papers Report
+          summaryHead = [["Key Metric", "Calculated Value", "Administrative Context"]];
+          summaryBody = [
+            ["Total Repository Papers", String(papers.length || stats?.totalPapers || 0), "Total research papers indexed in repository"],
+            ["Active Manuscript Papers", String(papers.length), "Available manuscript documents"],
+            ["Covered Research Domains", String(paperDomainCounts.length || stats?.researchDomains?.length || 0), "Distinct scientific research disciplines"],
+          ];
+
+          tableHead = [["#", "Paper Title", "Authors", "Domain", "Uploader Email", "Upload Date"]];
+          tableBody = papers.length === 0
+            ? [["—", "No research papers available", "—", "—", "—", "—"]]
+            : papers.map((p, i) => [
+                String(i + 1),
+                p.title || "Research Paper",
+                p.authors || "Primary Author",
+                p.domain || "General",
+                p.uploaderEmail || "—",
+                p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "—",
+              ]);
+        }
+
+        autoTable(doc, {
+          startY: currentY,
+          head: summaryHead,
+          body: summaryBody,
+          theme: "grid",
+          headStyles: { fillColor: [51, 65, 85], textColor: 255, fontStyle: "bold", fontSize: 8.5 },
+          styles: { fontSize: 8, cellPadding: 4, textColor: [30, 41, 59] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          margin: { left: 30, right: 30 },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 20;
+
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text("Detailed Cohort Breakdown Records", 30, currentY);
+        currentY += 10;
+
+        autoTable(doc, {
+          startY: currentY,
+          head: tableHead,
+          body: tableBody,
+          theme: "striped",
+          headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "bold", fontSize: 8 },
+          styles: { fontSize: 7.5, cellPadding: 3.5, textColor: [15, 23, 42], overflow: "linebreak" },
+          alternateRowStyles: { fillColor: [241, 245, 249] },
+          margin: { left: 30, right: 30 },
+          didDrawPage: (data) => {
+            doc.setFontSize(8);
+            doc.setTextColor(148, 163, 184);
+            doc.text(
+              `ScholarNexus Confidential Administrative Report • Page ${data.pageNumber}`,
+              pageWidth / 2,
+              doc.internal.pageSize.getHeight() - 15,
+              { align: "center" }
+            );
+          },
+        });
+
+        doc.save(`${filename}.pdf`);
+        toast.success(`Exported ${titleCaseTab} report as PDF (${filename}.pdf)`);
+      } else {
+        // Excel Export
+        const wb = XLSX.utils.book_new();
+
+        let summaryData: (string | number)[][] = [];
+        let recordsData: (string | number)[][] = [];
+
+        if (reportSubTab === "students") {
+          summaryData = [
+            ["SCHOLARNEXUS ADMINISTRATIVE REPORT - STUDENTS COHORT"],
+            ["Generated Date", new Date().toLocaleString()],
+            ["Generated By", session?.displayName || session?.name || "ScholarNexus Admin"],
+            [""],
+            ["KEY METRIC", "VALUE", "NOTES"],
+            ["Total Registered Students", studentUsers.length || stats?.totalStudents || 0, "Enrolled student scholars"],
+            ["Project Participation Rate", `${distinctStudentParticipationRate}%`, `Distinct students with >= 1 project (${distinctParticipatingStudentsCount} students)`],
+            ["Avg Papers Per Student", avgPapersPerStudent, "Repository papers per student"],
+            [""],
+            ["DETAILED STUDENT RECORDS"],
+          ];
+
+          recordsData = [
+            ["ID / Index", "Student Name", "Email Address", "Department / Affiliation", "Projects Count", "Papers Uploaded", "Account Status", "Registration Date"],
+            ...(studentUsers.length === 0
+              ? [["1", "No student records available", "", "", "0", "0", "", ""]]
+              : studentUsers.map((u, i) => {
+                  const sProjects = projects.filter((p) => p.userEmail?.toLowerCase() === u.email?.toLowerCase());
+                  const sPapers = papers.filter((p) => p.uploaderEmail?.toLowerCase() === u.email?.toLowerCase());
+                  return [
+                    i + 1,
+                    u.name || "Student Scholar",
+                    u.email || "",
+                    u.department || u.affiliation || "Unspecified",
+                    sProjects.length,
+                    sPapers.length,
+                    u.status || "Active",
+                    u.createdAt ? new Date(u.createdAt).toISOString().split("T")[0] : "",
+                  ];
+                })),
+          ];
+        } else if (reportSubTab === "faculty") {
+          summaryData = [
+            ["SCHOLARNEXUS ADMINISTRATIVE REPORT - FACULTY ADVISORS"],
+            ["Generated Date", new Date().toLocaleString()],
+            ["Generated By", session?.displayName || session?.name || "ScholarNexus Admin"],
+            [""],
+            ["KEY METRIC", "VALUE", "NOTES"],
+            ["Total Faculty Members", facultyUsers.length || stats?.totalFaculty || 0, "Registered faculty advisors"],
+            ["Faculty Approval Rate", `${facultyApprovalRate}%`, "Verified active faculty accounts"],
+            ["Avg Projects Supervised", avgProjectsSupervised, "Average supervised projects per advisor"],
+            [""],
+            ["DETAILED FACULTY RECORDS"],
+          ];
+
+          recordsData = [
+            ["ID / Index", "Faculty Name", "Email Address", "Department", "Designation", "Supervised Projects Count", "Verification Status", "Joining Date"],
+            ...(facultyUsers.length === 0
+              ? [["1", "No faculty records available", "", "", "", "0", "", ""]]
+              : facultyUsers.map((u, i) => {
+                  const supervised = projects.filter(
+                    (p) => (p.faculty && p.faculty.toLowerCase() === u.name.toLowerCase()) ||
+                           (p.faculty && p.faculty.toLowerCase() === u.email.toLowerCase()) ||
+                           (p as any).facultyId === u.email ||
+                           (p as any).facultyId === u.id
+                  );
+                  return [
+                    i + 1,
+                    u.name || "Faculty Member",
+                    u.email || "",
+                    u.department || u.affiliation || "Computer Science",
+                    u.designation || "Faculty Guide",
+                    supervised.length,
+                    u.status || "Active",
+                    u.createdAt ? new Date(u.createdAt).toISOString().split("T")[0] : "",
+                  ];
+                })),
+          ];
+        } else if (reportSubTab === "projects") {
+          summaryData = [
+            ["SCHOLARNEXUS ADMINISTRATIVE REPORT - RESEARCH PROJECTS"],
+            ["Generated Date", new Date().toLocaleString()],
+            ["Generated By", session?.displayName || session?.name || "ScholarNexus Admin"],
+            [""],
+            ["KEY METRIC", "VALUE", "NOTES"],
+            ["Total Research Projects", projects.length || stats?.totalProjects || 0, "Total academic research projects"],
+            ["Average Progress", `${projects.length ? Math.round(projects.reduce((acc, p) => acc + (p.progress || 0), 0) / projects.length) : 0}%`, "Mean milestone progress"],
+            ["Active Pipeline Volume", projects.filter((p) => p.status === "In Progress" || p.status === "Under Review").length, "Active in-flight projects"],
+            ["Status - Planning", projectStatusCounts.Planning, ""],
+            ["Status - In Progress", projectStatusCounts["In Progress"], ""],
+            ["Status - Under Review", projectStatusCounts["Under Review"], ""],
+            ["Status - Completed", projectStatusCounts.Completed, ""],
+            ["Status - On Hold", projectStatusCounts["On Hold"], ""],
+            [""],
+            ["DETAILED PROJECT RECORDS"],
+          ];
+
+          recordsData = [
+            ["ID / Index", "Project Title", "Lead Student Email", "Research Domain", "Pipeline Status", "Progress %", "Supervisor / Guide", "Start Date", "Expected Completion"],
+            ...(projects.length === 0
+              ? [["1", "No research projects available", "", "", "", "0%", "", "", ""]]
+              : projects.map((p, i) => [
+                  i + 1,
+                  p.title || "Academic Project",
+                  p.userEmail || "",
+                  p.domain || "General",
+                  p.status || "Planning",
+                  `${p.progress ?? 0}%`,
+                  p.faculty || (p as any).facultyId || "Unassigned",
+                  p.startDate ? new Date(p.startDate).toISOString().split("T")[0] : "",
+                  p.expectedCompletionDate ? new Date(p.expectedCompletionDate).toISOString().split("T")[0] : "",
+                ])),
+          ];
+        } else {
+          // Papers Report
+          summaryData = [
+            ["SCHOLARNEXUS ADMINISTRATIVE REPORT - RESEARCH PAPERS"],
+            ["Generated Date", new Date().toLocaleString()],
+            ["Generated By", session?.displayName || session?.name || "ScholarNexus Admin"],
+            [""],
+            ["KEY METRIC", "VALUE", "NOTES"],
+            ["Total Repository Papers", papers.length || stats?.totalPapers || 0, "Total indexed papers"],
+            ["Active Repository Papers", papers.length, "Available manuscripts"],
+            ["Covered Research Domains", paperDomainCounts.length || stats?.researchDomains?.length || 0, "Distinct domains"],
+            [""],
+            ["DETAILED PAPER RECORDS"],
+          ];
+
+          recordsData = [
+            ["ID / Index", "Paper Title", "Authors", "Domain", "Uploader Email", "Uploaded Date", "File Size"],
+            ...(papers.length === 0
+              ? [["1", "No research papers available", "", "", "", "", ""]]
+              : papers.map((p, i) => [
+                  i + 1,
+                  p.title || "Research Paper",
+                  p.authors || "Primary Author",
+                  p.domain || "General",
+                  p.uploaderEmail || "",
+                  p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "",
+                  p.fileSize || "—",
+                ])),
+          ];
+        }
+
+        const combinedSheetData = [...summaryData, ...recordsData];
+        const ws = XLSX.utils.aoa_to_sheet(combinedSheetData);
+
+        // Column widths
+        const colWidths = [{ wch: 12 }, { wch: 32 }, { wch: 30 }, { wch: 25 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 }];
+        ws["!cols"] = colWidths;
+
+        XLSX.utils.book_append_sheet(wb, ws, `${titleCaseTab} Report`);
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+        toast.success(`Exported ${titleCaseTab} report as Excel (${filename}.xlsx)`);
+      }
+    } catch (err: any) {
+      console.error("Export generation error:", err);
+      toast.error(`Failed to export report: ${err?.message || "Unknown error"}`);
+    }
   };
 
   /* ── RBAC Protection Guard ── */
@@ -2540,19 +2951,28 @@ function AdminPage() {
                   <p className="text-xs text-muted-foreground mt-1">Exportable administrative intelligence reports and cohort summaries.</p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleExportReport("pdf")} className="gap-2 rounded-xl text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative w-full sm:w-56">
+                    <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search cohort records..."
+                      value={reportSearch}
+                      onChange={(e) => setReportSearch(e.target.value)}
+                      className="pl-8 h-8 rounded-xl text-xs"
+                    />
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => handleExportReport("pdf")} className="gap-2 rounded-xl text-xs h-8">
                     <FilePdfIcon className="h-4 w-4 text-red-500" />
                     Export PDF
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleExportReport("excel")} className="gap-2 rounded-xl text-xs">
+                  <Button variant="outline" size="sm" onClick={() => handleExportReport("excel")} className="gap-2 rounded-xl text-xs h-8">
                     <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
                     Export Excel
                   </Button>
                 </div>
               </div>
 
-              <Tabs value={reportSubTab} onValueChange={setReportSubTab} className="mt-6">
+              <Tabs value={reportSubTab} onValueChange={(val) => { setReportSubTab(val); setReportSearch(""); }} className="mt-6">
                 <TabsList className="rounded-xl border border-border bg-background p-1">
                   <TabsTrigger value="students" className="rounded-lg text-xs font-medium">Students Report</TabsTrigger>
                   <TabsTrigger value="faculty" className="rounded-lg text-xs font-medium">Faculty Report</TabsTrigger>
@@ -2560,83 +2980,523 @@ function AdminPage() {
                   <TabsTrigger value="papers" className="rounded-lg text-xs font-medium">Papers Report</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="students" className="mt-6 space-y-4">
+                {/* ── Sub-Tab 1: Students Report ── */}
+                <TabsContent value="students" className="mt-6 space-y-6">
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Active Student Enrolment</span>
-                      <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalStudents ?? 0}</p>
+                      <span className="text-xs text-muted-foreground">Total Registered Students</span>
+                      <p className="text-2xl font-bold text-foreground mt-1">{studentUsers.length || stats?.totalStudents || 0}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Enrolled student scholars</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Project Participation Rate</span>
                       <p className="text-2xl font-bold text-emerald-500 mt-1">
-                        {stats?.totalStudents ? `${Math.round((projects.length / stats.totalStudents) * 100)}%` : "0%"}
+                        {distinctStudentParticipationRate}%
+                      </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">
+                        {distinctParticipatingStudentsCount} of {studentUsers.length || stats?.totalStudents || 0} students with projects
                       </p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Avg Papers Per Student</span>
                       <p className="text-2xl font-bold text-purple-500 mt-1">
-                        {stats?.totalStudents ? (stats.totalPapers / stats.totalStudents).toFixed(1) : "0.0"}
+                        {avgPapersPerStudent}
                       </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Repository manuscript uploads</p>
                     </Card>
+                  </div>
+
+                  {/* Detailed Student Participation Breakdown Table */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">Student Participation & Cohort Activity Breakdown</h3>
+                        <p className="text-xs text-muted-foreground">Granular status of research participation, projects, and manuscripts per student.</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {studentUsers.filter((u) => {
+                          if (!reportSearch) return true;
+                          const q = reportSearch.toLowerCase();
+                          return u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || (u.department && u.department.toLowerCase().includes(q));
+                        }).length} Scholars
+                      </Badge>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-2xl border border-border">
+                      <Table>
+                        <TableHeader className="bg-muted/40">
+                          <TableRow>
+                            <TableHead className="text-xs font-semibold">Student Scholar</TableHead>
+                            <TableHead className="text-xs font-semibold">Department / Affiliation</TableHead>
+                            <TableHead className="text-xs font-semibold text-center">Active Projects</TableHead>
+                            <TableHead className="text-xs font-semibold text-center">Papers Uploaded</TableHead>
+                            <TableHead className="text-xs font-semibold text-center">Participation Status</TableHead>
+                            <TableHead className="text-xs font-semibold text-right">Account Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {studentUsers
+                            .filter((u) => {
+                              if (!reportSearch) return true;
+                              const q = reportSearch.toLowerCase();
+                              return u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || (u.department && u.department.toLowerCase().includes(q));
+                            })
+                            .map((u) => {
+                              const sProjects = projects.filter((p) => p.userEmail?.toLowerCase() === u.email?.toLowerCase());
+                              const sPapers = papers.filter((p) => p.uploaderEmail?.toLowerCase() === u.email?.toLowerCase());
+                              const isParticipating = sProjects.length > 0;
+                              return (
+                                <TableRow key={u.id}>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2.5">
+                                      <Avatar className="h-7 w-7 text-xs border border-border">
+                                        <AvatarFallback className="bg-primary/10 text-primary font-bold">
+                                          {(u.name || "S").slice(0, 2).toUpperCase()}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-semibold text-foreground">{u.name}</span>
+                                        <span className="text-[0.7rem] text-muted-foreground">{u.email}</span>
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">{u.department || u.affiliation || "Unspecified"}</TableCell>
+                                  <TableCell className="text-xs text-center font-semibold">
+                                    <Badge variant="outline" className={sProjects.length > 0 ? "bg-primary/5 text-primary border-primary/20" : "text-muted-foreground"}>
+                                      {sProjects.length} {sProjects.length === 1 ? "project" : "projects"}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-xs text-center font-semibold">
+                                    <Badge variant="outline" className={sPapers.length > 0 ? "bg-purple-500/5 text-purple-500 border-purple-500/20" : "text-muted-foreground"}>
+                                      {sPapers.length} {sPapers.length === 1 ? "paper" : "papers"}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[0.65rem] ${
+                                        isParticipating
+                                          ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 font-medium"
+                                          : "bg-muted text-muted-foreground font-normal"
+                                      }`}
+                                    >
+                                      {isParticipating ? "Active Participant" : "No Projects"}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[0.65rem] ${
+                                        u.status === "Active"
+                                          ? "border-emerald-500/30 text-emerald-500"
+                                          : u.status === "Suspended"
+                                          ? "border-destructive/30 text-destructive"
+                                          : "border-muted text-muted-foreground"
+                                      }`}
+                                    >
+                                      {u.status}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          {studentUsers.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">
+                                No registered student scholars found in database.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="faculty" className="mt-6 space-y-4">
+                {/* ── Sub-Tab 2: Faculty Report ── */}
+                <TabsContent value="faculty" className="mt-6 space-y-6">
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Verified Faculty Advisors</span>
-                      <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalFaculty ?? 0}</p>
+                      <span className="text-xs text-muted-foreground">Total Faculty Advisors</span>
+                      <p className="text-2xl font-bold text-foreground mt-1">{facultyUsers.length || stats?.totalFaculty || 0}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">{verifiedFacultyCount} verified active</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Faculty Approval Rate</span>
                       <p className="text-2xl font-bold text-emerald-500 mt-1">
-                        {stats?.totalFaculty ? `${Math.round(((stats.totalFaculty - stats.pendingFacultyApprovals) / stats.totalFaculty) * 100)}%` : "0%"}
+                        {facultyApprovalRate}%
                       </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Verified advisor ratio</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Avg Projects Supervised</span>
                       <p className="text-2xl font-bold text-blue-500 mt-1">
-                        {stats?.totalFaculty ? (stats.totalProjects / stats.totalFaculty).toFixed(1) : "0.0"}
+                        {avgProjectsSupervised}
                       </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Supervision workload load per guide</p>
                     </Card>
+                  </div>
+
+                  {/* Detailed Faculty Workload Table */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">Faculty Workload & Supervision Distribution</h3>
+                        <p className="text-xs text-muted-foreground">Supervised student projects, department, and verification credentials per advisor.</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {facultyUsers.filter((f) => {
+                          if (!reportSearch) return true;
+                          const q = reportSearch.toLowerCase();
+                          return f.name?.toLowerCase().includes(q) || f.email?.toLowerCase().includes(q) || (f.department && f.department.toLowerCase().includes(q));
+                        }).length} Advisors
+                      </Badge>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-2xl border border-border">
+                      <Table>
+                        <TableHeader className="bg-muted/40">
+                          <TableRow>
+                            <TableHead className="text-xs font-semibold">Faculty Advisor</TableHead>
+                            <TableHead className="text-xs font-semibold">Department / Affiliation</TableHead>
+                            <TableHead className="text-xs font-semibold">Designation</TableHead>
+                            <TableHead className="text-xs font-semibold text-center">Supervised Projects</TableHead>
+                            <TableHead className="text-xs font-semibold text-center">Verification</TableHead>
+                            <TableHead className="text-xs font-semibold text-right">Joining Date</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {facultyUsers
+                            .filter((f) => {
+                              if (!reportSearch) return true;
+                              const q = reportSearch.toLowerCase();
+                              return f.name?.toLowerCase().includes(q) || f.email?.toLowerCase().includes(q) || (f.department && f.department.toLowerCase().includes(q));
+                            })
+                            .map((f) => {
+                              const supervised = projects.filter(
+                                (p) => (p.faculty && p.faculty.toLowerCase() === f.name.toLowerCase()) ||
+                                       (p.faculty && p.faculty.toLowerCase() === f.email.toLowerCase()) ||
+                                       (p as any).facultyId === f.email ||
+                                       (p as any).facultyId === f.id
+                              );
+                              return (
+                                <TableRow key={f.id}>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2.5">
+                                      <Avatar className="h-7 w-7 text-xs border border-border">
+                                        <AvatarFallback className="bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold">
+                                          {(f.name || "F").slice(0, 2).toUpperCase()}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-semibold text-foreground">{f.name}</span>
+                                        <span className="text-[0.7rem] text-muted-foreground">{f.email}</span>
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">{f.department || f.affiliation || "Computer Science"}</TableCell>
+                                  <TableCell className="text-xs text-foreground font-medium">{f.designation || "Faculty Guide"}</TableCell>
+                                  <TableCell className="text-xs text-center font-semibold">
+                                    <Badge variant="outline" className={supervised.length > 0 ? "bg-blue-500/10 text-blue-500 border-blue-500/30" : "text-muted-foreground"}>
+                                      {supervised.length} {supervised.length === 1 ? "project" : "projects"}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[0.65rem] ${
+                                        f.status === "Active"
+                                          ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                                          : f.status === "Pending"
+                                          ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
+                                          : "bg-destructive/10 text-destructive border-destructive/30"
+                                      }`}
+                                    >
+                                      {f.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-xs text-right text-muted-foreground font-mono">
+                                    {f.createdAt ? new Date(f.createdAt).toISOString().split("T")[0] : "—"}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          {facultyUsers.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">
+                                No registered faculty advisors found in database.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="projects" className="mt-6 space-y-4">
+                {/* ── Sub-Tab 3: Projects Report ── */}
+                <TabsContent value="projects" className="mt-6 space-y-6">
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Total Projects</span>
-                      <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalProjects ?? 0}</p>
+                      <span className="text-xs text-muted-foreground">Total Research Projects</span>
+                      <p className="text-2xl font-bold text-foreground mt-1">{projects.length || stats?.totalProjects || 0}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Platform-wide academic projects</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Average Progress</span>
                       <p className="text-2xl font-bold text-emerald-500 mt-1">
                         {projects.length ? `${Math.round(projects.reduce((acc, p) => acc + (p.progress || 0), 0) / projects.length)}%` : "0%"}
                       </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Across all milestone pipelines</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Active Pipeline</span>
                       <p className="text-2xl font-bold text-amber-500 mt-1">
                         {projects.filter((p) => p.status === "In Progress" || p.status === "Under Review").length}
                       </p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">In Progress & Under Review</p>
                     </Card>
+                  </div>
+
+                  {/* Project Pipeline Status & Domain Breakdown Matrices */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Card className="p-4 rounded-2xl border-border bg-background space-y-3">
+                      <h4 className="text-xs font-semibold text-foreground flex items-center justify-between">
+                        <span>Project Status Breakdown</span>
+                        <span className="text-[0.7rem] text-muted-foreground">{projects.length} Total</span>
+                      </h4>
+                      <div className="space-y-2">
+                        {(["Planning", "In Progress", "Under Review", "Completed", "On Hold"] as const).map((st) => {
+                          const count = projectStatusCounts[st] || 0;
+                          const pct = projects.length > 0 ? Math.round((count / projects.length) * 100) : 0;
+                          return (
+                            <div key={st} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">{st}</span>
+                                <span className="font-semibold text-foreground">{count} ({pct}%)</span>
+                              </div>
+                              <Progress value={pct} className="h-1.5" />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Card>
+
+                    <Card className="p-4 rounded-2xl border-border bg-background space-y-3">
+                      <h4 className="text-xs font-semibold text-foreground flex items-center justify-between">
+                        <span>Research Domain Allocation</span>
+                        <span className="text-[0.7rem] text-muted-foreground">{projectDomainCounts.length} Domains</span>
+                      </h4>
+                      <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                        {projectDomainCounts.map(([domain, count]) => {
+                          const pct = projects.length > 0 ? Math.round((count / projects.length) * 100) : 0;
+                          return (
+                            <div key={domain} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground truncate max-w-[200px]">{domain}</span>
+                                <span className="font-semibold text-foreground">{count} ({pct}%)</span>
+                              </div>
+                              <Progress value={pct} className="h-1.5" />
+                            </div>
+                          );
+                        })}
+                        {projectDomainCounts.length === 0 && (
+                          <p className="text-xs text-muted-foreground py-4 text-center">No project domain data recorded.</p>
+                        )}
+                      </div>
+                    </Card>
+                  </div>
+
+                  {/* Detailed Projects Pipeline Table */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">Research Projects Inventory</h3>
+                        <p className="text-xs text-muted-foreground">Current status, completion progress, and faculty advisor assignment per project.</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {projects.filter((p) => {
+                          if (!reportSearch) return true;
+                          const q = reportSearch.toLowerCase();
+                          return p.title?.toLowerCase().includes(q) || p.userEmail?.toLowerCase().includes(q) || p.domain?.toLowerCase().includes(q);
+                        }).length} Projects
+                      </Badge>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-2xl border border-border">
+                      <Table>
+                        <TableHeader className="bg-muted/40">
+                          <TableRow>
+                            <TableHead className="text-xs font-semibold">Project Title</TableHead>
+                            <TableHead className="text-xs font-semibold">Lead Student</TableHead>
+                            <TableHead className="text-xs font-semibold">Domain</TableHead>
+                            <TableHead className="text-xs font-semibold">Status</TableHead>
+                            <TableHead className="text-xs font-semibold">Progress</TableHead>
+                            <TableHead className="text-xs font-semibold text-right">Faculty Guide</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {projects
+                            .filter((p) => {
+                              if (!reportSearch) return true;
+                              const q = reportSearch.toLowerCase();
+                              return p.title?.toLowerCase().includes(q) || p.userEmail?.toLowerCase().includes(q) || p.domain?.toLowerCase().includes(q);
+                            })
+                            .map((p) => (
+                              <TableRow key={p.id}>
+                                <TableCell className="max-w-[240px]">
+                                  <span className="text-xs font-semibold text-foreground line-clamp-1">{p.title}</span>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{p.userEmail || "—"}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className="text-[0.65rem] border-primary/20 text-primary">
+                                    {p.domain || "General"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[0.65rem] ${
+                                      p.status === "Completed"
+                                        ? "border-emerald-500/30 text-emerald-500"
+                                        : p.status === "In Progress"
+                                        ? "border-blue-500/30 text-blue-500"
+                                        : p.status === "Under Review"
+                                        ? "border-amber-500/30 text-amber-500"
+                                        : "border-muted text-muted-foreground"
+                                    }`}
+                                  >
+                                    {p.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="w-28">
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-[0.7rem] text-muted-foreground font-semibold">
+                                      <span>{p.progress ?? 0}%</span>
+                                    </div>
+                                    <Progress value={p.progress ?? 0} className="h-1.5" />
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-xs text-right text-muted-foreground">
+                                  {p.faculty || (p as any).facultyId || "Unassigned"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          {projects.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">
+                                No research projects found in database.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="papers" className="mt-6 space-y-4">
+                {/* ── Sub-Tab 4: Papers Report ── */}
+                <TabsContent value="papers" className="mt-6 space-y-6">
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Total Repository Papers</span>
-                      <p className="text-2xl font-bold text-foreground mt-1">{stats?.totalPapers ?? 0}</p>
+                      <p className="text-2xl font-bold text-foreground mt-1">{papers.length || stats?.totalPapers || 0}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Indexed research manuscripts</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
-                      <span className="text-xs text-muted-foreground">Active Papers</span>
+                      <span className="text-xs text-muted-foreground">Active Repository Papers</span>
                       <p className="text-2xl font-bold text-emerald-500 mt-1">{papers.length}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Available for institutional access</p>
                     </Card>
                     <Card className="p-4 rounded-2xl border-border bg-background">
                       <span className="text-xs text-muted-foreground">Research Domains</span>
-                      <p className="text-2xl font-bold text-indigo-500 mt-1">{stats?.researchDomains?.length ?? 0}</p>
+                      <p className="text-2xl font-bold text-indigo-500 mt-1">{paperDomainCounts.length || stats?.researchDomains?.length || 0}</p>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1">Distinct academic fields</p>
                     </Card>
+                  </div>
+
+                  {/* Research Domains Breakdown Chips */}
+                  <Card className="p-4 rounded-2xl border-border bg-background space-y-3">
+                    <h4 className="text-xs font-semibold text-foreground flex items-center justify-between">
+                      <span>Repository Manuscripts by Scientific Domain</span>
+                      <span className="text-[0.7rem] text-muted-foreground">{paperDomainCounts.length} Active Domains</span>
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {paperDomainCounts.map(([dom, count]) => (
+                        <div key={dom} className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-1.5 text-xs">
+                          <span className="font-medium text-foreground">{dom}</span>
+                          <Badge variant="secondary" className="h-5 px-1.5 text-[0.65rem] font-bold">
+                            {count} {count === 1 ? "paper" : "papers"}
+                          </Badge>
+                        </div>
+                      ))}
+                      {paperDomainCounts.length === 0 && (
+                        <p className="text-xs text-muted-foreground py-2">No papers categorized by domain yet.</p>
+                      )}
+                    </div>
+                  </Card>
+
+                  {/* Detailed Papers Inventory Table */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">Indexed Research Papers Inventory</h3>
+                        <p className="text-xs text-muted-foreground">Verified author credits, research disciplines, and upload timestamps.</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {papers.filter((p) => {
+                          if (!reportSearch) return true;
+                          const q = reportSearch.toLowerCase();
+                          return p.title?.toLowerCase().includes(q) || p.authors?.toLowerCase().includes(q) || p.domain?.toLowerCase().includes(q) || p.uploaderEmail?.toLowerCase().includes(q);
+                        }).length} Papers
+                      </Badge>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-2xl border border-border">
+                      <Table>
+                        <TableHeader className="bg-muted/40">
+                          <TableRow>
+                            <TableHead className="text-xs font-semibold">Paper Title</TableHead>
+                            <TableHead className="text-xs font-semibold">Authors</TableHead>
+                            <TableHead className="text-xs font-semibold">Domain</TableHead>
+                            <TableHead className="text-xs font-semibold">Uploader Email</TableHead>
+                            <TableHead className="text-xs font-semibold text-right">Upload Date</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {papers
+                            .filter((p) => {
+                              if (!reportSearch) return true;
+                              const q = reportSearch.toLowerCase();
+                              return p.title?.toLowerCase().includes(q) || p.authors?.toLowerCase().includes(q) || p.domain?.toLowerCase().includes(q) || p.uploaderEmail?.toLowerCase().includes(q);
+                            })
+                            .map((p) => (
+                              <TableRow key={p.id}>
+                                <TableCell className="max-w-[260px]">
+                                  <span className="text-xs font-semibold text-foreground line-clamp-1">{p.title}</span>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">{p.authors || "Primary Author"}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className="text-[0.65rem] border-indigo-500/20 text-indigo-400">
+                                    {p.domain || "General"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{p.uploaderEmail || "—"}</TableCell>
+                                <TableCell className="text-xs text-right text-muted-foreground font-mono">
+                                  {p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "—"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          {papers.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center py-8 text-xs text-muted-foreground">
+                                No research papers found in database.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>
