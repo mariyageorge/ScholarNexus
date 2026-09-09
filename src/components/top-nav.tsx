@@ -25,7 +25,6 @@ const titles: Record<string, string> = {
   "/assistant": "AI Research Assistant",
   "/comparison": "Paper Comparison",
   "/citations": "Citation Generator",
-  "/similarity": "Similarity Checker",
   "/collaboration": "Faculty Collaboration",
   "/faculty": "Faculty Workspace",
   "/admin": "Admin Console",

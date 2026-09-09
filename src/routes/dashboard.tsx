@@ -24,7 +24,6 @@ import {
   Pencil,
   Plus,
   Quote,
-  ScanSearch,
   Send,
   Settings,
   Sparkles,

@@ -6,7 +6,6 @@ import {
   FileText,
   Sparkles,
   Quote,
-  ScanSearch,
   Users,
   Bell,
   Settings,

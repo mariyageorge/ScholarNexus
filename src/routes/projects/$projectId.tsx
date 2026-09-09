@@ -40,7 +40,6 @@ import {
   ArrowUp,
   ArrowDown,
   FileEdit,
-  ScanSearch,
   Search,
   Send,
   Settings,
@@ -2655,7 +2654,6 @@ ${s.keyTakeaway}
     { id: "summaries", label: "Literature Summaries", icon: BookOpen },
     { id: "comparison", label: "Literature Comparison", icon: GitCompareArrows },
     { id: "citations", label: "Citation Generator", icon: Quote },
-    { id: "similarity", label: "Similarity Checker", icon: ScanSearch },
     { id: "settings", label: "Project Settings", icon: Settings },
   ];
 
@@ -2791,7 +2789,7 @@ ${s.keyTakeaway}
           {/* TAB 1: OVERVIEW */}
           <TabsContent value="overview" className="space-y-6">
             {/* Overview Metric Cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-3">
               <Card className="group surface-elevated rounded-2xl border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
@@ -2827,19 +2825,6 @@ ${s.keyTakeaway}
                   </div>
                   <div className="grid h-11 w-11 place-items-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
                     <Quote className="h-5 w-5" />
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="group surface-elevated rounded-2xl border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Similarity Reports</p>
-                    <p className="text-3xl font-bold tracking-tight text-foreground">{papers.length > 0 ? 1 : 0}</p>
-                    <p className="text-[0.725rem] text-muted-foreground pt-1">Academic overlap analysis</p>
-                  </div>
-                  <div className="grid h-11 w-11 place-items-center rounded-2xl border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">
-                    <ScanSearch className="h-5 w-5" />
                   </div>
                 </div>
               </Card>
@@ -5099,30 +5084,7 @@ ${s.keyTakeaway}
             )}
           </TabsContent>
 
-          {/* TAB 7: SIMILARITY CHECKER */}
-          <TabsContent value="similarity" className="space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-                <ScanSearch className="h-5 w-5 text-primary" /> Academic Similarity Checker
-              </h2>
-              <p className="text-xs text-muted-foreground">Overlap analysis and original literature verification reports.</p>
-            </div>
-
-            <Card className="surface-elevated rounded-2xl border-border bg-card p-8 text-center space-y-4">
-              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-cyan-500/10 text-cyan-400 mx-auto">
-                <ScanSearch className="h-7 w-7" />
-              </div>
-              <h3 className="text-base font-bold text-foreground">Project Literature Originality Scan</h3>
-              <p className="max-w-md text-xs text-muted-foreground mx-auto">
-                {papers.length > 0
-                  ? `Similarity scan report initialized for ${papers.length} paper(s) linked to "${project.title}". Originality score: 98% Clear.`
-                  : "Upload project drafts or papers to run academic similarity scans."}
-              </p>
-            </Card>
-          </TabsContent>
-
-
-          {/* TAB 9: PROJECT SETTINGS */}
+          {/* TAB 8: PROJECT SETTINGS */}
           <TabsContent value="settings">
             <div className="grid gap-6 lg:grid-cols-2">
               <Card className="surface-elevated rounded-2xl border-border bg-card p-6 space-y-4">
