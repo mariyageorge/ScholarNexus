@@ -197,7 +197,7 @@ function DashboardPage() {
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         if (Array.isArray(data)) {
-          setAnnouncements(data.filter((a) => a.targetAudience === "All" || a.targetAudience === "Students"));
+          setAnnouncements(data.filter((a) => a.targetAudience === "All" || a.targetAudience === "Students" || a.targetAudience === "Student"));
         }
       })
       .catch(() => {});

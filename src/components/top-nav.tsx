@@ -95,7 +95,26 @@ export function TopNav() {
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         if (Array.isArray(data)) {
-          setAnnouncements(data.filter((a) => a.published && (a.targetAudience === "All" || a.targetAudience === "Students")));
+          const role = activeSession?.role;
+          if (role === "admin") {
+            setAnnouncements(data.filter((a) => a.published));
+          } else if (role === "faculty") {
+            setAnnouncements(
+              data.filter(
+                (a) => a.published && (a.targetAudience === "All" || a.targetAudience === "Faculty")
+              )
+            );
+          } else {
+            setAnnouncements(
+              data.filter(
+                (a) =>
+                  a.published &&
+                  (a.targetAudience === "All" ||
+                    a.targetAudience === "Students" ||
+                    a.targetAudience === "Student")
+              )
+            );
+          }
         }
       })
       .catch(() => {});
