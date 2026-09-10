@@ -334,16 +334,8 @@ function FacultyStudentsPage() {
       if (res.ok) {
         toast.success(`Faculty review [${decision}] submitted for "${selectedWorkDoc.title}".`);
         const updatedFeedback = feedbackText.trim();
-        setSelectedWorkDoc((prev: any) =>
-          prev
-            ? {
-                ...prev,
-                reviewStatus: decision,
-                feedback: updatedFeedback,
-                sectionFeedback: sectionFeedbackArray,
-              }
-            : null
-        );
+
+        // Update workspace research work list so the updated status is immediately visible
         setWorkspaceData((prev: any) => {
           if (!prev) return prev;
           return {
@@ -355,6 +347,11 @@ function FacultyStudentsPage() {
             ),
           };
         });
+
+        // Automatically close the review/document viewer and reset feedback inputs
+        setSelectedWorkDoc(null);
+        setFeedbackText("");
+        setSectionComments({});
 
         // Re-fetch review history for this document to refresh versioning & snapshots
         fetch(`/api/reviews?documentId=${encodeURIComponent(targetDocId)}`)
