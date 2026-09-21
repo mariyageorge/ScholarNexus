@@ -2183,7 +2183,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     if (request.method === "GET") {
       const projectId = url.searchParams.get("projectId");
-      const studentEmail = url.searchParams.get("studentEmail")?.trim().toLowerCase();
+      const studentEmail = (url.searchParams.get("studentEmail") || url.searchParams.get("email"))?.trim().toLowerCase();
       const id = url.searchParams.get("id");
 
       const query: Record<string, any> = {};
@@ -2191,9 +2191,13 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         let objId: any = id;
         if (ObjectId.isValid(id)) objId = new ObjectId(id);
         query.$or = [{ _id: objId }, { id: String(id) }];
-      } else {
-        if (projectId) query.projectId = String(projectId);
-        if (studentEmail) query.studentEmail = studentEmail;
+      } else if (projectId) {
+        query.projectId = String(projectId);
+      } else if (studentEmail) {
+        const projectsCol = await getCollection<Document>("projects");
+        const userProjects = await projectsCol.find({ userEmail: studentEmail }).toArray();
+        const projectIds = userProjects.map((p) => p._id.toString()).concat(userProjects.map((p) => String(p.id || "")).filter(Boolean));
+        query.$or = [{ studentEmail: studentEmail }, { projectId: { $in: projectIds } }];
       }
 
       const docs = await workCol.find(query).sort({ updatedAt: -1, createdAt: -1 }).toArray();
@@ -4836,11 +4840,17 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     if (request.method === "GET") {
       const projectIdParam = url.searchParams.get("projectId");
-      const userEmail = url.searchParams.get("email") || request.headers.get("x-user-email");
+      const userEmail = (url.searchParams.get("email") || url.searchParams.get("userEmail") || request.headers.get("x-user-email"))?.trim().toLowerCase();
 
       const query: Record<string, any> = {};
-      if (projectIdParam) query.projectId = projectIdParam;
-      if (userEmail) query.userEmail = userEmail.trim().toLowerCase();
+      if (projectIdParam) {
+        query.projectId = projectIdParam;
+      } else if (userEmail) {
+        const projectsCol = await getCollection<Document>("projects");
+        const userProjects = await projectsCol.find({ userEmail }).toArray();
+        const projectIds = userProjects.map((p) => p._id.toString()).concat(userProjects.map((p) => String(p.id || "")).filter(Boolean));
+        query.$or = [{ userEmail }, { projectId: { $in: projectIds } }];
+      }
 
       const docs = await papersCol.find(query).sort({ uploadDate: -1 }).toArray();
       const formatted = docs.map((p) => ({ ...p, id: p._id.toString(), _id: p._id.toString() }));

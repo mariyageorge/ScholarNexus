@@ -156,6 +156,10 @@ function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
+  const [totalPapersCount, setTotalPapersCount] = useState(0);
+  const [totalDocumentsCount, setTotalDocumentsCount] = useState(0);
+  const [loadingPapersCount, setLoadingPapersCount] = useState(true);
+  const [loadingDocumentsCount, setLoadingDocumentsCount] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -192,6 +196,36 @@ function DashboardPage() {
         setProjects([]);
       })
       .finally(() => setLoadingProjects(false));
+
+    fetch(`/api/papers?email=${encodeURIComponent(session.email)}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setTotalPapersCount(data.length);
+        } else {
+          setTotalPapersCount(0);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setTotalPapersCount(0);
+      })
+      .finally(() => setLoadingPapersCount(false));
+
+    fetch(`/api/research-work?studentEmail=${encodeURIComponent(session.email)}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setTotalDocumentsCount(data.length);
+        } else {
+          setTotalDocumentsCount(0);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setTotalDocumentsCount(0);
+      })
+      .finally(() => setLoadingDocumentsCount(false));
 
     fetch("/api/announcements")
       .then((res) => (res.ok ? res.json() : []))
@@ -250,14 +284,14 @@ function DashboardPage() {
       label: "Active Projects",
       icon: FolderKanban,
       value: loadingProjects ? "…" : activeProjects.length,
-      hint: `${safeProjects.length} total projects active`,
+      hint: `${safeProjects.length} total research projects`,
       color: "text-blue-500",
       bg: "bg-blue-500/10 border-blue-500/20",
     },
     {
       label: "Reference Papers",
       icon: BookOpen,
-      value: "0",
+      value: loadingPapersCount ? "…" : totalPapersCount,
       hint: "Collected reference literature",
       color: "text-amber-500",
       bg: "bg-amber-500/10 border-amber-500/20",
@@ -265,7 +299,7 @@ function DashboardPage() {
     {
       label: "Research Documents",
       icon: Pencil,
-      value: "1",
+      value: loadingDocumentsCount ? "…" : totalDocumentsCount,
       hint: "Student academic writing documents",
       color: "text-purple-500",
       bg: "bg-purple-500/10 border-purple-500/20",
