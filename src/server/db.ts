@@ -167,12 +167,13 @@ export async function recordUserActivity(
 export async function findUserByEmail(email: string, dbName = "scholarnexus") {
   const collection = await getCollection<UserRecord>("users", dbName);
   const normalized = email.trim().toLowerCase();
-  return collection.findOne({
-    $or: [
-      { email: normalized },
-      { email: { $regex: `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
-    ],
-  });
+  let user = await collection.findOne({ email: normalized });
+  if (!user) {
+    user = await collection.findOne({
+      email: { $regex: `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+    });
+  }
+  return user;
 }
 
 export async function findUserByProvider(
@@ -942,7 +943,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
   // ── Public Announcements API ──
   if (url.pathname === "/api/announcements") {
     if (request.method === "GET") {
-      await ensureAdminSeedData();
       const col = await getCollection<Document>("announcements");
       const list = await col.find({ published: true }).sort({ pinned: -1, createdAt: -1 }).toArray();
       const formatted = list.map((doc) => ({ ...doc, id: doc._id.toString() }));
@@ -956,7 +956,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
   // ── Admin Stats & Analytics API ──
   if (url.pathname === "/api/admin/stats") {
     if (request.method === "GET") {
-      await ensureAdminSeedData();
       const usersCol = await getCollection<UserRecord>("users");
       const projectsCol = await getCollection<Document>("projects");
       const papersCol = await getCollection<Document>("papers");
@@ -1051,7 +1050,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin User Management API ──
   if (url.pathname === "/api/admin/users") {
-    await ensureAdminSeedData();
     const col = await getCollection<UserRecord>("users");
 
     if (request.method === "GET") {
@@ -1203,7 +1201,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin User Details API ──
   if (url.pathname === "/api/admin/users/details") {
-    await ensureAdminSeedData();
     const email = url.searchParams.get("email")?.trim().toLowerCase();
     if (!email) {
       return new Response(JSON.stringify({ error: "Email param is required." }), { status: 400 });
@@ -1293,7 +1290,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Faculty Dashboard API ──
   if (url.pathname === "/api/faculty/dashboard") {
-    await ensureAdminSeedData();
     const email = url.searchParams.get("email")?.trim().toLowerCase();
 
     const usersCol = await getCollection<UserRecord>("users");
@@ -1312,7 +1308,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       ? await supCol.find({
           $or: [
             { facultyEmail: email },
-            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+            { facultyEmail: email.toLowerCase() },
           ],
         }).sort({ createdAt: -1 }).toArray()
       : [];
@@ -1326,7 +1322,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           $or: [
             { facultyEmail: email },
             { facultyId: email },
-            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+            { facultyEmail: email.toLowerCase() },
           ],
           supervisionStatus: "Under Supervision",
         }).sort({ updatedAt: -1 }).toArray()
@@ -1348,26 +1344,44 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       }
     }
 
+    const missingProjectFilters: any[] = [];
     for (const req of approvedSupReqs) {
       const pIdStr = String(req.projectId);
       if (pIdStr && !seenProjectIds.has(pIdStr)) {
-        seenProjectIds.add(pIdStr);
-        let pFilterId: any = pIdStr;
-        if (ObjectId.isValid(pIdStr)) pFilterId = new ObjectId(pIdStr);
-        const proj = await projectsCol.findOne({ $or: [{ _id: pFilterId }, { id: pIdStr }] });
-        if (proj) {
-          approvedProjectEntries.push({
-            studentEmail: (proj.userEmail || req.studentEmail || "").toLowerCase(),
-            project: proj,
-            supReq: req,
-          });
+        if (ObjectId.isValid(pIdStr)) {
+          missingProjectFilters.push({ _id: new ObjectId(pIdStr) });
+        }
+        missingProjectFilters.push({ _id: pIdStr }, { id: pIdStr });
+      }
+    }
+
+    if (missingProjectFilters.length > 0) {
+      const fetchedProjects = await projectsCol.find({ $or: missingProjectFilters }).toArray();
+      const projMap = new Map<string, any>();
+      for (const p of fetchedProjects) {
+        projMap.set(p._id.toString(), p);
+        if (p.id) projMap.set(String(p.id), p);
+      }
+
+      for (const req of approvedSupReqs) {
+        const pIdStr = String(req.projectId);
+        if (pIdStr && !seenProjectIds.has(pIdStr)) {
+          const proj = projMap.get(pIdStr);
+          if (proj) {
+            seenProjectIds.add(pIdStr);
+            approvedProjectEntries.push({
+              studentEmail: (proj.userEmail || req.studentEmail || "").toLowerCase(),
+              project: proj,
+              supReq: req,
+            });
+          }
         }
       }
     }
 
     const studentEmails = Array.from(new Set(approvedProjectEntries.map((e) => e.studentEmail).filter(Boolean)));
     const studentUsers = studentEmails.length > 0
-      ? await usersCol.find({ email: { $in: studentEmails } }).toArray()
+      ? await usersCol.find({ email: { $in: studentEmails } }, { projection: { verificationDocument: 0, password: 0 } }).toArray()
       : [];
     const studentUserMap = new Map<string, any>();
     for (const u of studentUsers) {
@@ -1399,12 +1413,15 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
     // 3. Reviews for THIS faculty
     const reviewDocs = email
-      ? await revCol.find({
-          $or: [
-            { facultyEmail: email },
-            { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
-          ],
-        }).toArray()
+      ? await revCol.find(
+          {
+            $or: [
+              { facultyEmail: email },
+              { facultyEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+            ],
+          },
+          { projection: { status: 1 } }
+        ).toArray()
       : [];
 
     const pendingReviewsCount = reviewDocs.filter((r: any) => r.status === "Pending Review").length;
@@ -1442,7 +1459,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Student-Faculty Supervision Requests API ──
   if (url.pathname === "/api/supervision-requests" || url.pathname === "/api/faculty/supervision-requests") {
-    await ensureAdminSeedData();
     const supCol = await getCollection<Document>("supervision_requests");
     const projectsCol = await getCollection<Document>("projects");
     const workCol = await getCollection<Document>("research_work");
@@ -1768,7 +1784,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Faculty Supervised Students & Workspace API ──
   if (url.pathname === "/api/faculty/students") {
-    await ensureAdminSeedData();
     const facultyEmail = (url.searchParams.get("facultyEmail") || url.searchParams.get("email"))?.trim().toLowerCase();
     const studentId = url.searchParams.get("studentId");
     const targetProjectId = url.searchParams.get("projectId");
@@ -2178,7 +2193,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── My Research Work Academic Writing API ──
   if (url.pathname === "/api/research-work") {
-    await ensureAdminSeedData();
     const workCol = await getCollection<Document>("research_work");
 
     if (request.method === "GET") {
@@ -2631,7 +2645,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Faculty Reviews & Academic Feedback API ──
   if (url.pathname === "/api/reviews" || url.pathname === "/api/faculty/reviews") {
-    await ensureAdminSeedData();
     const revCol = await getCollection<Document>("reviews");
     const projectsCol = await getCollection<Document>("projects");
     const papersCol = await getCollection<Document>("papers");
@@ -2652,7 +2665,9 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       if (documentId) query.documentId = documentId;
       if (status && status !== "All") query.status = status;
 
-      const docs = await revCol.find(query).sort({ requestedAt: -1, createdAt: -1 }).toArray();
+      const includeFileData = url.searchParams.get("includeFileData") === "true";
+      const projection = includeFileData ? {} : { fileData: 0 };
+      const docs = await revCol.find(query, { projection }).sort({ requestedAt: -1, createdAt: -1 }).toArray();
 
       const reviews = docs.map((r) => ({
         id: r._id.toString(),
@@ -3021,7 +3036,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin Faculty Approvals API ──
   if (url.pathname === "/api/admin/faculty/approval") {
-    await ensureAdminSeedData();
     const col = await getCollection<UserRecord>("users");
 
     if (request.method === "GET") {
@@ -3075,7 +3089,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin Research Projects API ──
   if (url.pathname === "/api/admin/projects") {
-    await ensureAdminSeedData();
     const col = await getCollection<Document>("projects");
 
     if (request.method === "GET") {
@@ -3177,7 +3190,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin Research Papers API ──
   if (url.pathname === "/api/admin/papers") {
-    await ensureAdminSeedData();
     const col = await getCollection<Document>("papers");
 
     if (request.method === "GET") {
@@ -3243,7 +3255,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Notifications System API ──
   if (url.pathname === "/api/notifications") {
-    await ensureAdminSeedData();
     const notifCol = await getCollection<Document>("notifications");
 
     if (request.method === "GET") {
@@ -3359,7 +3370,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin Announcements API ──
   if (url.pathname === "/api/admin/announcements") {
-    await ensureAdminSeedData();
     const col = await getCollection<Document>("announcements");
 
     if (request.method === "GET") {
@@ -3492,7 +3502,6 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
   // ── Admin Activity Logs API ──
   if (url.pathname === "/api/admin/activity-logs") {
-    await ensureAdminSeedData();
     const col = await getCollection<Document>("activity_logs");
 
     if (request.method === "GET") {
@@ -5819,7 +5828,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           headers: { "content-type": "application/json" },
         });
       }
-      const { password: _, ...profileData } = user;
+      const { password: _p, verificationDocument: _v, ...profileData } = user as any;
       return new Response(JSON.stringify(profileData), {
         status: 200,
         headers: { "content-type": "application/json" },
