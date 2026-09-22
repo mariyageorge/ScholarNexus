@@ -16,6 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { getUserSession, UserSession } from "@/lib/session";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/assistant")({
@@ -438,7 +439,11 @@ function AssistantPage() {
                           ))}
                         </div>
                       )}
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      {msg.role === "assistant" ? (
+                        <MarkdownRenderer content={msg.content} />
+                      ) : (
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                      )}
                       <div
                         className={`text-[0.65rem] text-right ${
                           msg.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground"

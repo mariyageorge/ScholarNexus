@@ -88,6 +88,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import {
   Dialog,
   DialogContent,
@@ -4472,7 +4473,11 @@ ${s.keyTakeaway}
                             ))}
                           </div>
                         )}
-                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                        {msg.role === "assistant" ? (
+                          <MarkdownRenderer content={msg.content} />
+                        ) : (
+                          <div className="whitespace-pre-wrap">{msg.content}</div>
+                        )}
                         <div
                           className={`text-[0.65rem] text-right ${
                             msg.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground"

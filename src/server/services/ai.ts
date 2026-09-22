@@ -1435,6 +1435,17 @@ STRICT GROUNDING & CONTEXT RULES:
       ""
     );
 
+    // 5. Strip unprompted leading title echo (e.g. if assistant printed the exact paper title on line 1 before greeting)
+    if (options.mentionedPapers && options.mentionedPapers.length > 0) {
+      for (const mp of options.mentionedPapers) {
+        if (mp.title && mp.title.trim().length > 3) {
+          const escaped = mp.title.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const leadingTitleRegex = new RegExp(`^(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*\\n+`, "i");
+          resultText = resultText.replace(leadingTitleRegex, "").trim();
+        }
+      }
+    }
+
     return resultText.trim();
   };
 
