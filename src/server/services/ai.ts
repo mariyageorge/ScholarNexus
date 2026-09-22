@@ -123,8 +123,20 @@ CRITICAL RULES:
     }
   } catch {}
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
+  const candidateModels = [
+    ...new Set([
+      ...priorityModels,
+      ...availableModels.filter(
+        (m) =>
+          m.startsWith("gemini-") &&
+          !m.includes("embedding") &&
+          !m.includes("image") &&
+          !m.includes("tts") &&
+          !m.includes("transcribe")
+      ),
+    ]),
+  ];
 
   let lastError = "";
 
@@ -446,8 +458,20 @@ Return ONLY a valid JSON object matching this exact schema:
     }
   } catch {}
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
+  const candidateModels = [
+    ...new Set([
+      ...priorityModels,
+      ...availableModels.filter(
+        (m) =>
+          m.startsWith("gemini-") &&
+          !m.includes("embedding") &&
+          !m.includes("image") &&
+          !m.includes("tts") &&
+          !m.includes("transcribe")
+      ),
+    ]),
+  ];
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -640,8 +664,20 @@ CRITICAL RULES:
     }
   } catch {}
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-  const candidateModels = [...new Set([...availableModels, ...fallbackList])].filter((m) => m !== "gemini-pro");
+  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
+  const candidateModels = [
+    ...new Set([
+      ...priorityModels,
+      ...availableModels.filter(
+        (m) =>
+          m.startsWith("gemini-") &&
+          !m.includes("embedding") &&
+          !m.includes("image") &&
+          !m.includes("tts") &&
+          !m.includes("transcribe")
+      ),
+    ]),
+  ];
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1025,8 +1061,20 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
     }
   } catch {}
 
-  const priorityModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"];
-  const candidateModels = [...new Set([...priorityModels, ...availableModels])].filter((m) => m !== "gemini-pro" && !m.includes("embedding"));
+  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
+  const candidateModels = [
+    ...new Set([
+      ...priorityModels,
+      ...availableModels.filter(
+        (m) =>
+          m.startsWith("gemini-") &&
+          !m.includes("embedding") &&
+          !m.includes("image") &&
+          !m.includes("tts") &&
+          !m.includes("transcribe")
+      ),
+    ]),
+  ];
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1426,8 +1474,20 @@ STRICT GROUNDING & CONTEXT RULES:
     }
   } catch {}
 
-  const priorityModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"];
-  const candidateModels = [...new Set([...priorityModels, ...availableModels])].filter((m) => m !== "gemini-pro" && !m.includes("embedding"));
+  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
+  const candidateModels = [
+    ...new Set([
+      ...priorityModels,
+      ...availableModels.filter(
+        (m) =>
+          m.startsWith("gemini-") &&
+          !m.includes("embedding") &&
+          !m.includes("image") &&
+          !m.includes("tts") &&
+          !m.includes("transcribe")
+      ),
+    ]),
+  ];
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1441,7 +1501,7 @@ STRICT GROUNDING & CONTEXT RULES:
           systemInstruction: { parts: [systemPromptPart] },
           contents,
           generationConfig: {
-            temperature: 0.2,
+            temperature: 0.3,
           },
         }),
       });
@@ -1449,7 +1509,9 @@ STRICT GROUNDING & CONTEXT RULES:
       if (res.ok) {
         const data = await res.json();
         const candidate = data.candidates?.[0];
-        const text = candidate?.content?.parts?.[0]?.text;
+        const parts = candidate?.content?.parts;
+        const textParts = parts?.filter((p: any) => !p.thought);
+        const text = textParts?.map((p: any) => p.text).filter(Boolean).join("\n") || parts?.[0]?.text;
 
         if (text) {
           return {
@@ -1469,13 +1531,16 @@ STRICT GROUNDING & CONTEXT RULES:
           signal: AbortSignal.timeout(12000),
           body: JSON.stringify({
             contents: fallbackContents,
-            generationConfig: { temperature: 0.2 },
+            generationConfig: { temperature: 0.3 },
           }),
         });
 
         if (resFallback.ok) {
           const data = await resFallback.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          const candidate = data.candidates?.[0];
+          const parts = candidate?.content?.parts;
+          const textParts = parts?.filter((p: any) => !p.thought);
+          const text = textParts?.map((p: any) => p.text).filter(Boolean).join("\n") || parts?.[0]?.text;
           if (text) {
             return {
               success: true,
