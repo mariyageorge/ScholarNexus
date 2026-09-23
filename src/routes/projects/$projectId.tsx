@@ -57,8 +57,9 @@ import {
   Compass,
   Award,
   MoreVertical,
-  MoreHorizontal,
   History,
+  PanelLeftClose,
+  PanelLeftOpen,
   FileCheck2,
   Info,
   Lock,
@@ -458,10 +459,39 @@ function ProjectWorkspacePage() {
     }[]
   >([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [showHistorySidebar, setShowHistorySidebar] = useState(true);
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingActiveConversation, setLoadingActiveConversation] = useState(false);
   const chatMessagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const groupedConversations = useMemo(() => {
+    const groups: { [key: string]: typeof conversations } = {
+      Today: [],
+      Yesterday: [],
+      "Previous 7 Days": [],
+      Older: [],
+    };
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    const startOfSevenDaysAgo = startOfToday - 7 * 86400000;
+
+    conversations.forEach((conv) => {
+      const d = new Date(conv.updatedAt || conv.createdAt).getTime();
+      if (d >= startOfToday) {
+        groups["Today"].push(conv);
+      } else if (d >= startOfYesterday) {
+        groups["Yesterday"].push(conv);
+      } else if (d >= startOfSevenDaysAgo) {
+        groups["Previous 7 Days"].push(conv);
+      } else {
+        groups["Older"].push(conv);
+      }
+    });
+
+    return Object.entries(groups).filter(([_, items]) => items.length > 0);
+  }, [conversations]);
 
   const scrollToBottomChat = () => {
     chatMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -4425,159 +4455,158 @@ ${s.keyTakeaway}
 
           {/* TAB: AI RESEARCH ASSISTANT */}
           <TabsContent value="assistant">
-            <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card flex flex-col min-h-[580px] shadow-sm">
-              {/* Header */}
-              <div className="border-b border-border bg-muted/40 p-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/15 text-primary shadow-xs">
-                    <Bot className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                      AI Research Assistant
-                      <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary bg-primary/10">
-                        <Sparkles className="h-3 w-3 mr-1" /> Project Grounded
-                      </Badge>
-                      {activeConversationId && (
-                        <Badge variant="secondary" className="rounded-full text-[0.65rem] font-normal text-muted-foreground bg-muted">
-                          <Clock className="h-3 w-3 mr-1 text-primary" /> Active Session
-                        </Badge>
-                      )}
-                    </h3>
-                    <p className="text-[0.7rem] text-muted-foreground">Context: {project.title}</p>
-                  </div>
-                </div>
+            <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card flex flex-col md:flex-row min-h-[640px] shadow-sm">
+              {/* Left Fixed Sidebar (ChatGPT style) */}
+              {showHistorySidebar && (
+                <aside className="w-full md:w-72 border-b md:border-b-0 md:border-r border-border bg-muted/20 flex flex-col shrink-0 max-h-[350px] md:max-h-none overflow-hidden transition-all duration-200">
+                  {/* Sidebar Header with New Chat & Collapse button */}
+                  <div className="p-3 border-b border-border/80 bg-muted/40 flex items-center justify-between gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleNewChat}
+                      className="flex-1 h-8 text-xs font-semibold bg-background hover:bg-muted/80 text-foreground rounded-lg justify-start gap-2 shadow-xs border-border/80"
+                    >
+                      <Plus className="h-3.5 w-3.5 text-primary" />
+                      <span>New Chat</span>
+                    </Button>
 
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={handleNewChat}
-                    className="h-7 text-[0.725rem] font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg gap-1 shadow-xs"
-                    title="Start a fresh conversation"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> New Chat
-                  </Button>
-
-                  <Button
-                    variant={showHistorySidebar ? "secondary" : "outline"}
-                    size="sm"
-                    onClick={() => setShowHistorySidebar(!showHistorySidebar)}
-                    className="h-7 text-[0.725rem] font-medium rounded-lg gap-1.5 border-border"
-                    title="View past conversation sessions"
-                  >
-                    <History className="h-3.5 w-3.5 text-primary" />
-                    <span>Past Chats</span>
-                    {conversations.length > 0 && (
-                      <span className="rounded-full bg-primary/15 text-primary text-[0.65rem] px-1.5 py-0.2 font-bold">
-                        {conversations.length}
-                      </span>
-                    )}
-                  </Button>
-
-                  <Badge variant="outline" className="hidden sm:inline-flex rounded-full text-[0.65rem] border-border text-foreground font-semibold px-2.5 py-1">
-                    {papers.length} Paper{papers.length === 1 ? "" : "s"} Indexed
-                  </Badge>
-
-                  {chatMessages.length > 0 && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setChatMessages([])}
-                      className="h-7 text-[0.7rem] text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowHistorySidebar(false)}
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground rounded-lg"
+                      title="Collapse sidebar"
                     >
-                      Clear View
+                      <PanelLeftClose className="h-4 w-4" />
                     </Button>
-                  )}
-                </div>
-              </div>
+                  </div>
 
-              {/* Main Workspace: History Drawer + Chat View */}
-              <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative min-h-[480px]">
-                {/* Past Conversations Drawer / Sidebar */}
-                {showHistorySidebar && (
-                  <div className="w-full md:w-72 border-b md:border-b-0 md:border-r border-border bg-muted/20 flex flex-col shrink-0 max-h-[350px] md:max-h-[550px] overflow-hidden animate-in fade-in slide-in-from-left-2 duration-200">
-                    <div className="p-3 border-b border-border bg-muted/30 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
-                        <History className="h-3.5 w-3.5 text-primary" />
-                        <span>Past Conversations</span>
+                  {/* Sidebar Chat List with Date Groups */}
+                  <div className="p-2.5 overflow-y-auto flex-1 space-y-4">
+                    {loadingConversations ? (
+                      <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
+                        <Loader2 className="h-4 w-4 animate-spin mx-auto text-primary" />
+                        <p>Loading history...</p>
                       </div>
+                    ) : conversations.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
+                        <MessageSquare className="h-6 w-6 mx-auto text-muted-foreground/40" />
+                        <p className="font-semibold text-foreground">No Past Chats Yet</p>
+                        <p className="text-[0.7rem] leading-relaxed">
+                          Start asking research queries to build your conversation history.
+                        </p>
+                      </div>
+                    ) : (
+                      groupedConversations.map(([groupTitle, items]) => (
+                        <div key={groupTitle} className="space-y-1">
+                          <div className="px-2 py-1 text-[0.65rem] font-bold tracking-wider text-muted-foreground uppercase">
+                            {groupTitle}
+                          </div>
+                          <div className="space-y-1">
+                            {items.map((conv) => {
+                              const isActive = activeConversationId === conv.id;
+                              return (
+                                <div
+                                  key={conv.id}
+                                  onClick={() => handleSelectConversation(conv.id)}
+                                  className={`group relative flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-all ${
+                                    isActive
+                                      ? "bg-primary/15 text-primary font-medium border border-primary/25 shadow-xs"
+                                      : "text-foreground/80 hover:bg-muted/70 hover:text-foreground"
+                                  }`}
+                                  title={conv.title}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                                    <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                                    <span className="truncate text-xs">
+                                      {conv.title || "Untitled Conversation"}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteConversation(e, conv.id)}
+                                    className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-opacity rounded shrink-0"
+                                    title="Delete chat"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </aside>
+              )}
+
+              {/* Main Chat Pane */}
+              <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                {/* Header Bar */}
+                <div className="border-b border-border bg-muted/40 p-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    {!showHistorySidebar && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setShowHistorySidebar(false)}
-                        className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowHistorySidebar(true)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground rounded-lg mr-1"
+                        title="Open chat history sidebar"
                       >
-                        <X className="h-3.5 w-3.5" />
+                        <PanelLeftOpen className="h-4 w-4" />
                       </Button>
+                    )}
+
+                    <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary/15 text-primary shadow-xs">
+                      <Bot className="h-4 w-4" />
                     </div>
-
-                    <div className="p-2 overflow-y-auto flex-1 space-y-1">
-                      {loadingConversations ? (
-                        <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
-                          <Loader2 className="h-4 w-4 animate-spin mx-auto text-primary" />
-                          <p>Loading history...</p>
-                        </div>
-                      ) : conversations.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
-                          <MessageSquare className="h-6 w-6 mx-auto text-muted-foreground/50" />
-                          <p className="font-medium text-foreground">No Past Chats Yet</p>
-                          <p className="text-[0.7rem] leading-relaxed">
-                            Start asking research questions and your conversation threads will be saved here.
-                          </p>
-                        </div>
-                      ) : (
-                        conversations.map((conv) => {
-                          const isActive = activeConversationId === conv.id;
-                          const dateObj = new Date(conv.updatedAt || conv.createdAt);
-                          const formattedDate = dateObj.toLocaleDateString([], {
-                            month: "short",
-                            day: "numeric",
-                          });
-
-                          return (
-                            <div
-                              key={conv.id}
-                              onClick={() => handleSelectConversation(conv.id)}
-                              className={`group relative flex flex-col p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
-                                isActive
-                                  ? "bg-primary/10 border-primary/40 text-foreground shadow-xs"
-                                  : "bg-card border-border/70 hover:bg-muted/60 text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-1.5">
-                                <span className={`font-semibold line-clamp-1 text-[0.775rem] ${isActive ? "text-primary" : "text-foreground"}`}>
-                                  {conv.title}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleDeleteConversation(e, conv.id)}
-                                  className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-opacity rounded"
-                                  title="Delete conversation"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-
-                              {conv.lastMessageSnippet && (
-                                <p className="text-[0.675rem] text-muted-foreground line-clamp-1 mt-0.5">
-                                  {conv.lastMessageSnippet}
-                                </p>
-                              )}
-
-                              <div className="flex items-center justify-between mt-1.5 text-[0.65rem] text-muted-foreground/70">
-                                <span>{formattedDate}</span>
-                                <span className="bg-muted px-1.5 py-0.2 rounded-full font-medium">
-                                  {conv.messageCount} msg{conv.messageCount === 1 ? "" : "s"}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-bold text-foreground flex items-center gap-2">
+                        AI Research Assistant
+                        <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary bg-primary/10">
+                          <Sparkles className="h-3 w-3 mr-1" /> Project Grounded
+                        </Badge>
+                        {activeConversationId && (
+                          <Badge variant="secondary" className="rounded-full text-[0.65rem] font-normal text-muted-foreground bg-muted">
+                            <Clock className="h-3 w-3 mr-1 text-primary" /> Active Session
+                          </Badge>
+                        )}
+                      </h3>
+                      <p className="text-[0.68rem] text-muted-foreground line-clamp-1">Context: {project.title}</p>
                     </div>
                   </div>
-                )}
+
+                  <div className="flex items-center gap-2">
+                    {!showHistorySidebar && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleNewChat}
+                        className="h-7 text-[0.725rem] font-bold bg-background text-foreground hover:bg-muted rounded-lg gap-1 shadow-xs border-border"
+                        title="Start a fresh conversation"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-primary" /> New Chat
+                      </Button>
+                    )}
+
+                    <Badge variant="outline" className="hidden sm:inline-flex rounded-full text-[0.65rem] border-border text-foreground font-semibold px-2.5 py-1">
+                      {papers.length} Paper{papers.length === 1 ? "" : "s"} Indexed
+                    </Badge>
+
+                    {chatMessages.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setChatMessages([])}
+                        className="h-7 text-[0.7rem] text-muted-foreground hover:text-foreground"
+                      >
+                        Clear View
+                      </Button>
+                    )}
+                  </div>
+                </div>
 
                 {/* Chat Area */}
                 <div className="flex-1 flex flex-col overflow-hidden">
@@ -4872,10 +4901,10 @@ ${s.keyTakeaway}
                   </Button>
                 </form>
               </div>
-                </div>
-              </div>
-            </Card>
-          </TabsContent>
+            </div>
+          </div>
+        </Card>
+      </TabsContent>
 
           {/* TAB 4: LITERATURE SUMMARIES (AI Literature Analysis Workspace) */}
           <TabsContent value="summaries" className="space-y-8">

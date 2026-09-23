@@ -1327,8 +1327,8 @@ STRICT GROUNDING & CONTEXT RULES:
      • If asked about **Objective / Purpose**: Focus strictly on the problem statement and research objective. Do NOT dump the full methodology or results.
      • If asked about **Dataset**: Focus strictly on the dataset characteristics, sample size, or data sources.
      • If asked about **Findings / Results**: Focus strictly on key findings and conclusions.
-     • If asked about **Limitations / Future Work**: Focus strictly on the stated limitations and future directions.
-   - If the stored paper information does NOT contain sufficient detail to answer a specific question (e.g. exact training hardware, specific hyperparameter values, or datasets not stated in stored data), CLEARLY state: "The stored information for [Paper Title] does not specify [missing details]." Do NOT hallucinate, guess, or invent non-existent details.
+   - If the stored paper information does NOT explicitly state the requested detail (e.g. exact training hyperparameters or explicit paper limitations not detailed in the stored abstract):
+     First clarify that the stored abstract does not explicitly list these details, and then provide a rigorous academic analysis based on the paper's specific methodology, domain, and models (e.g. inherent challenges of object detection on field crops such as variable lighting, leaf occlusions, small symptom localization, dataset class imbalance, and edge deployment constraints). Clearly distinguish between what is explicitly reported in the text vs. analytical domain considerations.
    - If multiple papers are mentioned (e.g., comparing methodologies or limitations), present a clear, structured comparison explicitly distinguishing between each paper.
 2. GENERAL RESEARCH QUESTIONS:
    - When no specific @ paper is mentioned, use the overall project context, draft research document, and reference library to answer methodology questions, explain concepts, highlight research gaps, and suggest project improvements.
