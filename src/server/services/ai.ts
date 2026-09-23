@@ -25,6 +25,85 @@ function getGeminiApiKey(): string | null {
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Model Resilience & Performance Optimization Engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PRIMARY_CANDIDATE_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3-flash-preview",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-flash-latest",
+];
+
+let lastWorkingModel = "gemini-3.5-flash";
+const modelCooldownMap = new Map<string, number>();
+let cachedAvailableModels: { timestamp: number; models: string[] } | null = null;
+
+function recordWorkingModel(model: string): void {
+  lastWorkingModel = model;
+  modelCooldownMap.delete(model);
+}
+
+function recordModelFailure(model: string, status: number, errorMsg?: string): void {
+  const now = Date.now();
+  if (status === 404) {
+    // Model doesn't exist or is deprecated: cooldown for 2 hours
+    modelCooldownMap.set(model, now + 2 * 60 * 60 * 1000);
+  } else if (status === 429) {
+    // Quota exceeded / rate limited: cooldown for 60 seconds
+    modelCooldownMap.set(model, now + 60 * 1000);
+  } else if (status === 400) {
+    // Bad request or unsupported parameters: cooldown for 5 minutes
+    modelCooldownMap.set(model, now + 5 * 60 * 1000);
+  } else {
+    // Transient or timeout: cooldown for 30 seconds
+    modelCooldownMap.set(model, now + 30 * 1000);
+  }
+}
+
+async function getCandidateModels(apiKey: string): Promise<string[]> {
+  const now = Date.now();
+  let discovered: string[] = [];
+
+  if (cachedAvailableModels && now - cachedAvailableModels.timestamp < 1000 * 60 * 30) {
+    discovered = cachedAvailableModels.models;
+  } else {
+    try {
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+        signal: AbortSignal.timeout(2500),
+      });
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        if (listData && Array.isArray(listData.models)) {
+          discovered = listData.models
+            .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
+            .map((m: any) => m.name.replace(/^models\//, ""))
+            .filter(
+              (m: string) =>
+                m.startsWith("gemini-") &&
+                !m.includes("embedding") &&
+                !m.includes("image") &&
+                !m.includes("tts") &&
+                !m.includes("transcribe") &&
+                !m.includes("robotics")
+            );
+          cachedAvailableModels = { timestamp: now, models: discovered };
+        }
+      }
+    } catch {}
+  }
+
+  const unique = Array.from(new Set([lastWorkingModel, ...PRIMARY_CANDIDATE_MODELS, ...discovered]));
+  return unique.filter((m) => {
+    const cooldownUntil = modelCooldownMap.get(m);
+    return !cooldownUntil || cooldownUntil < now;
+  });
+}
+
 export interface ExtractedPaperMetadata {
   title: string | null;
   authors: string[];
@@ -110,34 +189,7 @@ CRITICAL RULES:
   }
 
   // Discover working model
-  let availableModels: string[] = [];
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData && Array.isArray(listData.models)) {
-        availableModels = listData.models
-          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m: any) => m.name.replace(/^models\//, ""));
-      }
-    }
-  } catch {}
-
-  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
-  const candidateModels = [
-    ...new Set([
-      ...priorityModels,
-      ...availableModels.filter(
-        (m) =>
-          m.startsWith("gemini-") &&
-          !m.includes("embedding") &&
-          !m.includes("image") &&
-          !m.includes("tts") &&
-          !m.includes("transcribe")
-      ),
-    ]),
-  ];
-
+  const candidateModels = await getCandidateModels(apiKey);
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -146,6 +198,7 @@ CRITICAL RULES:
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10000),
         body: JSON.stringify({
           contents: [{ parts }],
           generationConfig: {
@@ -186,6 +239,7 @@ CRITICAL RULES:
               : [],
           };
 
+          recordWorkingModel(model);
           return {
             success: true,
             metadata,
@@ -193,11 +247,13 @@ CRITICAL RULES:
           };
         }
       } else {
+        recordModelFailure(model, res.status);
         const errBody = await res.text();
         const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
         lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
       }
     } catch (e: any) {
+      recordModelFailure(model, 500);
       const msg = e?.message || String(e);
       const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
       lastError = `Error (${model}): ${sanitizedErr}`;
@@ -445,45 +501,16 @@ Return ONLY a valid JSON object matching this exact schema:
   }
 
   // Discover working models
-  let availableModels: string[] = [];
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData && Array.isArray(listData.models)) {
-        availableModels = listData.models
-          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m: any) => m.name.replace(/^models\//, ""));
-      }
-    }
-  } catch {}
-
-  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
-  const candidateModels = [
-    ...new Set([
-      ...priorityModels,
-      ...availableModels.filter(
-        (m) =>
-          m.startsWith("gemini-") &&
-          !m.includes("embedding") &&
-          !m.includes("image") &&
-          !m.includes("tts") &&
-          !m.includes("transcribe")
-      ),
-    ]),
-  ];
+  const candidateModels = await getCandidateModels(apiKey);
   let lastError = "";
 
   for (const model of candidateModels) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60-second strict timeout
-
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           contents: [{ parts }],
           generationConfig: {
@@ -492,8 +519,6 @@ Return ONLY a valid JSON object matching this exact schema:
           },
         }),
       });
-
-      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -524,6 +549,7 @@ Return ONLY a valid JSON object matching this exact schema:
             keyTakeaway: parsed.keyTakeaway ? String(parsed.keyTakeaway).trim() : "Not specified in the paper.",
           };
 
+          recordWorkingModel(model);
           return {
             success: true,
             summary,
@@ -531,12 +557,14 @@ Return ONLY a valid JSON object matching this exact schema:
           };
         }
       } else {
+        recordModelFailure(model, res.status);
         const errBody = await res.text();
         const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
         lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
       }
     } catch (e: any) {
-      const msg = e?.name === "AbortError" ? "Request timed out after 60s" : e?.message || String(e);
+      recordModelFailure(model, 500);
+      const msg = e?.name === "AbortError" ? "Request timed out after 15s" : e?.message || String(e);
       const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
       lastError = `Error (${model}): ${sanitizedErr}`;
     }
@@ -651,45 +679,17 @@ CRITICAL RULES:
 3. Respect the student's actual project stage as specified above.
 4. Do NOT include markdown code fences or conversational text outside the JSON object.`;
 
-  let availableModels: string[] = [];
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData && Array.isArray(listData.models)) {
-        availableModels = listData.models
-          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m: any) => m.name.replace(/^models\//, ""));
-      }
-    }
-  } catch {}
-
-  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
-  const candidateModels = [
-    ...new Set([
-      ...priorityModels,
-      ...availableModels.filter(
-        (m) =>
-          m.startsWith("gemini-") &&
-          !m.includes("embedding") &&
-          !m.includes("image") &&
-          !m.includes("tts") &&
-          !m.includes("transcribe")
-      ),
-    ]),
-  ];
+  // Discover working models
+  const candidateModels = await getCandidateModels(apiKey);
   let lastError = "";
 
   for (const model of candidateModels) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
-
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           contents: [{ parts: [{ text: promptText }] }],
           generationConfig: {
@@ -698,8 +698,6 @@ CRITICAL RULES:
           },
         }),
       });
-
-      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -726,6 +724,7 @@ CRITICAL RULES:
               mentorTip: w.mentorTip ? String(w.mentorTip).trim() : undefined,
             }));
 
+            recordWorkingModel(model);
             return {
               success: true,
               durationWeeks: duration,
@@ -735,12 +734,14 @@ CRITICAL RULES:
           }
         }
       } else {
+        recordModelFailure(model, res.status);
         const errBody = await res.text();
         const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
         lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
       }
     } catch (e: any) {
-      const msg = e?.name === "AbortError" ? "Request timed out after 60s" : e?.message || String(e);
+      recordModelFailure(model, 500);
+      const msg = e?.name === "AbortError" ? "Request timed out after 15s" : e?.message || String(e);
       const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
       lastError = `Error (${model}): ${sanitizedErr}`;
     }
@@ -1046,35 +1047,8 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
 - Section Title: "${sTitle}"
 - Existing Content: ${existingContent ? `"${existingContent}"` : "(Section is currently empty. Generate the initial text.)"}`;
 
-  let availableModels: string[] = [];
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData && Array.isArray(listData.models)) {
-        availableModels = listData.models
-          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m: any) => m.name.replace(/^models\//, ""));
-      }
-    }
-  } catch {}
-
-  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
-  const candidateModels = [
-    ...new Set([
-      ...priorityModels,
-      ...availableModels.filter(
-        (m) =>
-          m.startsWith("gemini-") &&
-          !m.includes("embedding") &&
-          !m.includes("image") &&
-          !m.includes("tts") &&
-          !m.includes("transcribe")
-      ),
-    ]),
-  ];
+  // Discover working models
+  const candidateModels = await getCandidateModels(apiKey);
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1098,21 +1072,30 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
         const data = await res.json();
         rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       } else {
-        // Fallback without systemInstruction
-        const fallbackRes = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(12000),
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `${systemInstructions}\n\n${userPrompt}` }] }],
-            generationConfig: { temperature: 0.1 },
-          }),
-        });
+        // Only fallback without systemInstruction if 400 parameter error
+        if (res.status === 400) {
+          const fallbackRes = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `${systemInstructions}\n\n${userPrompt}` }] }],
+              generationConfig: { temperature: 0.1 },
+            }),
+          });
 
-        if (fallbackRes.ok) {
-          const fallbackData = await fallbackRes.json();
-          rawText = fallbackData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (fallbackRes.ok) {
+            const fallbackData = await fallbackRes.json();
+            rawText = fallbackData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          } else {
+            recordModelFailure(model, res.status);
+            const errBody = await res.text();
+            const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
+            lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
+            continue;
+          }
         } else {
+          recordModelFailure(model, res.status);
           const errBody = await res.text();
           const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
           lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
@@ -1210,6 +1193,7 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
           text = text.replace(/\n{3,}/g, "\n\n");
         }
 
+        recordWorkingModel(model);
         return {
           success: true,
           suggestion: text.trim(),
@@ -1217,6 +1201,7 @@ ${literatureStr}SELECTED SECTION TO ASSIST:
         };
       }
     } catch (e: any) {
+      recordModelFailure(model, 500);
       const msg = e?.message || String(e);
       const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
       lastError = `Error (${model}): ${sanitizedErr}`;
@@ -1469,36 +1454,34 @@ STRICT GROUNDING & CONTEXT RULES:
     parts: [{ text: options.userQuestion }],
   });
 
-  // Inject system prompt into first item or systemInstruction parameter
-  let availableModels: string[] = [];
-  try {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData && Array.isArray(listData.models)) {
-        availableModels = listData.models
-          .filter((m: any) => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m: any) => m.name.replace(/^models\//, ""));
-      }
-    }
-  } catch {}
+  // Instant Greeting Fast-Path
+  const qTrim = (options.userQuestion || "").trim();
+  const isGreeting =
+    /^(hi|hello|hey|greetings|howdy|good\s*(morning|afternoon|evening)|yo|sup|help|who are you|what can you do)[\s!.]*$/i.test(qTrim) &&
+    (!options.mentionedPapers || options.mentionedPapers.length === 0);
 
-  const priorityModels = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"];
-  const candidateModels = [
-    ...new Set([
-      ...priorityModels,
-      ...availableModels.filter(
-        (m) =>
-          m.startsWith("gemini-") &&
-          !m.includes("embedding") &&
-          !m.includes("image") &&
-          !m.includes("tts") &&
-          !m.includes("transcribe")
-      ),
-    ]),
-  ];
+  if (isGreeting) {
+    const projTitle = pCtx?.title || "your research project";
+    const greetingText = `Hello! I am your research assistant for **${projTitle}**.
+
+I can assist you with your project in several ways:
+
+- **Drafting & Refining Sections**: Expand or polish your Literature Review, Methodology, Discussion, or Results.
+- **Literature Analysis & Comparison**: Summarize, critique, or compare specific reference papers from your library.
+- **Methodology & Architecture Advice**: Discuss model architectures (e.g., standard CNNs vs. U-Net segmentation vs. Object Detection), dataset preprocessing, or handling class imbalance.
+- **Addressing Research Gaps**: Identify limitations in existing literature to strengthen your project's novel contribution.
+
+How can I help you with your draft or research today?`;
+
+    return {
+      success: true,
+      response: greetingText,
+      modelUsed: "instant-assistant",
+    };
+  }
+
+  // Inject system prompt into first item or systemInstruction parameter
+  const candidateModels = await getCandidateModels(apiKey);
   let lastError = "";
 
   for (const model of candidateModels) {
@@ -1525,6 +1508,7 @@ STRICT GROUNDING & CONTEXT RULES:
         const text = textParts?.map((p: any) => p.text).filter(Boolean).join("\n") || parts?.[0]?.text;
 
         if (text) {
+          recordWorkingModel(model);
           return {
             success: true,
             response: cleanAssistantResponse(text),
@@ -1532,40 +1516,45 @@ STRICT GROUNDING & CONTEXT RULES:
           };
         }
       } else {
-        // Fallback without systemInstruction field if model doesn't support systemInstruction
-        const fallbackContents = [
-          { role: "user", parts: [{ text: `${systemInstructions}\n\nUser Question: ${options.userQuestion}` }] },
-        ];
-        const resFallback = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(12000),
-          body: JSON.stringify({
-            contents: fallbackContents,
-            generationConfig: { temperature: 0.3 },
-          }),
-        });
+        if (res.status === 400) {
+          // Fallback without systemInstruction field if model doesn't support systemInstruction
+          const fallbackContents = [
+            { role: "user", parts: [{ text: `${systemInstructions}\n\nUser Question: ${options.userQuestion}` }] },
+          ];
+          const resFallback = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({
+              contents: fallbackContents,
+              generationConfig: { temperature: 0.3 },
+            }),
+          });
 
-        if (resFallback.ok) {
-          const data = await resFallback.json();
-          const candidate = data.candidates?.[0];
-          const parts = candidate?.content?.parts;
-          const textParts = parts?.filter((p: any) => !p.thought);
-          const text = textParts?.map((p: any) => p.text).filter(Boolean).join("\n") || parts?.[0]?.text;
-          if (text) {
-            return {
-              success: true,
-              response: cleanAssistantResponse(text),
-              modelUsed: model,
-            };
+          if (resFallback.ok) {
+            const data = await resFallback.json();
+            const candidate = data.candidates?.[0];
+            const parts = candidate?.content?.parts;
+            const textParts = parts?.filter((p: any) => !p.thought);
+            const text = textParts?.map((p: any) => p.text).filter(Boolean).join("\n") || parts?.[0]?.text;
+            if (text) {
+              recordWorkingModel(model);
+              return {
+                success: true,
+                response: cleanAssistantResponse(text),
+                modelUsed: model,
+              };
+            }
           }
         }
 
+        recordModelFailure(model, res.status);
         const errBody = await res.text();
         const sanitizedErr = errBody.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
         lastError = `HTTP ${res.status} (${model}): ${sanitizedErr}`;
       }
     } catch (e: any) {
+      recordModelFailure(model, 500);
       const msg = e?.message || String(e);
       const sanitizedErr = msg.replace(new RegExp(apiKey, "g"), "[REDACTED_API_KEY]");
       lastError = `Error (${model}): ${sanitizedErr}`;
