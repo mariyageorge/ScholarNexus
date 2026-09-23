@@ -2738,6 +2738,34 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       });
     }
 
+    // 3. Rename Conversation (PATCH)
+    if (request.method === "PATCH") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+      const targetId = body.id || queryId;
+      const newTitle = (body.title || "").trim();
+
+      if (!targetId || !newTitle) {
+        return new Response(JSON.stringify({ error: "id and title are required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      let cObjId: any = targetId;
+      if (ObjectId.isValid(targetId)) cObjId = new ObjectId(targetId);
+
+      await convCol.updateOne(
+        { $or: [{ _id: cObjId }, { id: String(targetId) }] },
+        { $set: { title: newTitle, updatedAt: new Date().toISOString() } }
+      );
+
+      return new Response(JSON.stringify({ success: true, id: String(targetId), title: newTitle }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (request.method === "POST") {
       let body: any = {};
       try { body = await request.json(); } catch {}
@@ -2751,8 +2779,19 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
       if (!title && messages.length > 0) {
         const firstUserMsg = messages.find((m: any) => m.role === "user");
         if (firstUserMsg && firstUserMsg.content) {
-          const cleanPrompt = firstUserMsg.content.replace(/^@\S+\s*/, "").trim();
-          title = cleanPrompt.length > 40 ? cleanPrompt.slice(0, 40) + "..." : cleanPrompt;
+          const raw = firstUserMsg.content.trim();
+          // Smart extraction of question intent or stripped paper title
+          const questionMatch = raw.match(/(?:What|How|Why|Can|Explain|Compare|Summarize|Discuss|Evaluate|Is|Are|Analyze)\b[^?]*\??/i);
+          if (questionMatch && questionMatch[0].length >= 8) {
+            let q = questionMatch[0].trim();
+            if (q.length > 45) q = q.slice(0, 45) + "...";
+            title = q.charAt(0).toUpperCase() + q.slice(1);
+          } else {
+            // Strip leading @paper mentions
+            const stripped = raw.replace(/^@.+?\s+(?=[A-Z0-9])/i, "").replace(/^@\S+\s*/, "").trim();
+            const chosen = stripped || raw.replace(/^@/, "").trim();
+            title = chosen.length > 45 ? chosen.slice(0, 45) + "..." : chosen;
+          }
         }
       }
 
@@ -2775,7 +2814,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
             { _id: existing._id },
             {
               $set: {
-                title,
+                title: existing.title || title,
                 messages,
                 updatedAt: now,
                 ...(projectId ? { projectId } : {}),
@@ -2791,7 +2830,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
                 id: existing._id.toString(),
                 projectId: existing.projectId || projectId,
                 userEmail: existing.userEmail || userEmail,
-                title,
+                title: existing.title || title,
                 messages,
                 createdAt: existing.createdAt,
                 updatedAt: now,

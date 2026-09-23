@@ -17,6 +17,8 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -181,6 +183,47 @@ function AssistantPage() {
     chatMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, isSendingChatMessage]);
 
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingConvTitle, setEditingConvTitle] = useState("");
+
+  const handleStartRename = (e: React.MouseEvent, conv: { id: string; title: string }) => {
+    e.stopPropagation();
+    setEditingConvId(conv.id);
+    setEditingConvTitle(conv.title);
+  };
+
+  const handleSaveRename = async (convId: string) => {
+    const trimmed = editingConvTitle.trim();
+    if (!trimmed) {
+      setEditingConvId(null);
+      return;
+    }
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: convId, title: trimmed }),
+      });
+      if (res.ok) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, title: trimmed } : c))
+        );
+        toast.success("Chat renamed.");
+      } else {
+        toast.error("Failed to rename conversation.");
+      }
+    } catch {
+      toast.error("Error updating conversation title.");
+    } finally {
+      setEditingConvId(null);
+    }
+  };
+
+  const handleCancelRename = () => {
+    setEditingConvId(null);
+    setEditingConvTitle("");
+  };
+
   const handleSelectConversation = async (convId: string) => {
     if (activeConversationId === convId) return;
     try {
@@ -190,7 +233,6 @@ function AssistantPage() {
         const data = await res.json();
         setActiveConversationId(data.id || convId);
         setChatMessages(Array.isArray(data.messages) ? data.messages : []);
-        setShowHistorySidebar(false);
       }
     } catch (err) {
       toast.error("Failed to load conversation messages.");
@@ -204,7 +246,6 @@ function AssistantPage() {
     setChatMessages([]);
     setChatInput("");
     setSelectedMentionedPapers([]);
-    setShowHistorySidebar(false);
   };
 
   const handleDeleteConversation = async (e: React.MouseEvent, convId: string) => {
@@ -474,10 +515,12 @@ function AssistantPage() {
                         <div className="space-y-1">
                           {items.map((conv) => {
                             const isActive = activeConversationId === conv.id;
+                            const isEditing = editingConvId === conv.id;
+
                             return (
                               <div
                                 key={conv.id}
-                                onClick={() => handleSelectConversation(conv.id)}
+                                onClick={() => !isEditing && handleSelectConversation(conv.id)}
                                 className={`group relative flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-all ${
                                   isActive
                                     ? "bg-primary/15 text-primary font-medium border border-primary/25 shadow-xs"
@@ -485,20 +528,64 @@ function AssistantPage() {
                                 }`}
                                 title={conv.title}
                               >
-                                <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
-                                  <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-                                  <span className="truncate text-xs">
-                                    {conv.title || "Untitled Conversation"}
-                                  </span>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleDeleteConversation(e, conv.id)}
-                                  className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-opacity rounded shrink-0"
-                                  title="Delete chat"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1.5 w-full" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      value={editingConvTitle}
+                                      onChange={(e) => setEditingConvTitle(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") handleSaveRename(conv.id);
+                                        if (e.key === "Escape") handleCancelRename();
+                                      }}
+                                      autoFocus
+                                      className="w-full bg-background text-foreground text-xs px-2 py-0.5 rounded border border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveRename(conv.id)}
+                                      className="p-1 text-primary hover:text-primary/80 transition-colors shrink-0"
+                                      title="Save rename"
+                                    >
+                                      <Check className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleCancelRename}
+                                      className="p-1 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                      title="Cancel"
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                                      <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                                      <span className="truncate text-xs">
+                                        {conv.title || "Untitled Conversation"}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleStartRename(e, conv)}
+                                        className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-all rounded"
+                                        title="Rename chat"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleDeleteConversation(e, conv.id)}
+                                        className="p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded"
+                                        title="Delete chat"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             );
                           })}
