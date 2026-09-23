@@ -431,7 +431,7 @@ function ProjectWorkspacePage() {
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [generatingAi, setGeneratingAi] = useState(false);
 
-  // AI Research Assistant Chat & @ Paper Mentions State
+  // AI Research Assistant Chat & Conversation History State
   const [chatMessages, setChatMessages] = useState<
     {
       id: string;
@@ -446,6 +446,21 @@ function ProjectWorkspacePage() {
   const [showMentionDropdown, setShowMentionDropdown] = useState(false);
   const [mentionSearchQuery, setMentionSearchQuery] = useState("");
   const [selectedMentionedPapers, setSelectedMentionedPapers] = useState<ProjectPaper[]>([]);
+  const [conversations, setConversations] = useState<
+    {
+      id: string;
+      projectId?: string;
+      title: string;
+      messageCount: number;
+      lastMessageSnippet: string;
+      createdAt: string;
+      updatedAt: string;
+    }[]
+  >([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingActiveConversation, setLoadingActiveConversation] = useState(false);
   const chatMessagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToBottomChat = () => {
@@ -455,6 +470,101 @@ function ProjectWorkspacePage() {
   useEffect(() => {
     scrollToBottomChat();
   }, [chatMessages, isSendingChatMessage]);
+
+  const loadProjectConversations = async () => {
+    const pId = project?.id || project?._id || projectId;
+    if (!pId) return;
+    try {
+      setLoadingConversations(true);
+      const res = await fetch(`/api/conversations?projectId=${encodeURIComponent(String(pId))}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setConversations(data);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch project conversations:", err);
+    } finally {
+      setLoadingConversations(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProjectConversations();
+  }, [project?.id, project?._id, projectId]);
+
+  const handleSelectConversation = async (convId: string) => {
+    if (activeConversationId === convId) return;
+    try {
+      setLoadingActiveConversation(true);
+      const res = await fetch(`/api/conversations?id=${encodeURIComponent(convId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setActiveConversationId(data.id || convId);
+        setChatMessages(Array.isArray(data.messages) ? data.messages : []);
+        setShowHistorySidebar(false);
+      }
+    } catch (err) {
+      toast.error("Failed to load conversation messages.");
+    } finally {
+      setLoadingActiveConversation(false);
+    }
+  };
+
+  const handleNewChat = () => {
+    setActiveConversationId(null);
+    setChatMessages([]);
+    setChatInput("");
+    setSelectedMentionedPapers([]);
+    setShowHistorySidebar(false);
+  };
+
+  const handleDeleteConversation = async (e: React.MouseEvent, convId: string) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/conversations?id=${encodeURIComponent(convId)}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setConversations((prev) => prev.filter((c) => c.id !== convId));
+        if (activeConversationId === convId) {
+          handleNewChat();
+        }
+        toast.success("Conversation deleted.");
+      }
+    } catch {
+      toast.error("Failed to delete conversation.");
+    }
+  };
+
+  const syncConversationToDb = async (updatedMsgs: typeof chatMessages, currentConvId: string | null) => {
+    const pId = project?.id || project?._id || projectId;
+    if (!pId) return;
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: currentConvId || undefined,
+          projectId: String(pId),
+          userEmail: user?.email || undefined,
+          messages: updatedMsgs,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.conversation?.id) {
+          if (!currentConvId) {
+            setActiveConversationId(data.conversation.id);
+          }
+          loadProjectConversations();
+        }
+      }
+    } catch (e) {
+      console.error("Failed to sync conversation:", e);
+    }
+  };
 
   const handleSendChatMessage = async (overridePrompt?: string, overrideMentionedPapers?: ProjectPaper[]) => {
     const rawText = (overridePrompt !== undefined ? overridePrompt : chatInput).trim();
@@ -473,7 +583,8 @@ function ProjectWorkspacePage() {
       mentionedPapers: activeMentions.map((p) => ({ id: p.id || String(p._id), title: p.title })),
     };
 
-    setChatMessages((prev) => [...prev, userMessage]);
+    const newChatList = [...chatMessages, userMessage];
+    setChatMessages(newChatList);
     setChatInput("");
     setSelectedMentionedPapers([]);
     setShowMentionDropdown(false);
@@ -506,7 +617,9 @@ function ProjectWorkspacePage() {
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             mentionedPapers: data.mentionedPapers,
           };
-          setChatMessages((prev) => [...prev, aiMessage]);
+          const finalList = [...newChatList, aiMessage];
+          setChatMessages(finalList);
+          syncConversationToDb(finalList, activeConversationId);
         } else if (data.error) {
           toast.error(data.error);
         }
@@ -4314,7 +4427,7 @@ ${s.keyTakeaway}
           <TabsContent value="assistant">
             <Card className="surface-elevated overflow-hidden rounded-2xl border-border bg-card flex flex-col min-h-[580px] shadow-sm">
               {/* Header */}
-              <div className="border-b border-border bg-muted/40 p-4 flex items-center justify-between">
+              <div className="border-b border-border bg-muted/40 p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/15 text-primary shadow-xs">
                     <Bot className="h-5 w-5" />
@@ -4325,14 +4438,47 @@ ${s.keyTakeaway}
                       <Badge variant="outline" className="rounded-full text-[0.65rem] border-primary/30 text-primary bg-primary/10">
                         <Sparkles className="h-3 w-3 mr-1" /> Project Grounded
                       </Badge>
+                      {activeConversationId && (
+                        <Badge variant="secondary" className="rounded-full text-[0.65rem] font-normal text-muted-foreground bg-muted">
+                          <Clock className="h-3 w-3 mr-1 text-primary" /> Active Session
+                        </Badge>
+                      )}
                     </h3>
                     <p className="text-[0.7rem] text-muted-foreground">Context: {project.title}</p>
                   </div>
                 </div>
+
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="rounded-full text-[0.65rem] border-border text-foreground font-semibold px-2.5 py-1">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleNewChat}
+                    className="h-7 text-[0.725rem] font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg gap-1 shadow-xs"
+                    title="Start a fresh conversation"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Chat
+                  </Button>
+
+                  <Button
+                    variant={showHistorySidebar ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setShowHistorySidebar(!showHistorySidebar)}
+                    className="h-7 text-[0.725rem] font-medium rounded-lg gap-1.5 border-border"
+                    title="View past conversation sessions"
+                  >
+                    <History className="h-3.5 w-3.5 text-primary" />
+                    <span>Past Chats</span>
+                    {conversations.length > 0 && (
+                      <span className="rounded-full bg-primary/15 text-primary text-[0.65rem] px-1.5 py-0.2 font-bold">
+                        {conversations.length}
+                      </span>
+                    )}
+                  </Button>
+
+                  <Badge variant="outline" className="hidden sm:inline-flex rounded-full text-[0.65rem] border-border text-foreground font-semibold px-2.5 py-1">
                     {papers.length} Paper{papers.length === 1 ? "" : "s"} Indexed
                   </Badge>
+
                   {chatMessages.length > 0 && (
                     <Button
                       variant="ghost"
@@ -4340,15 +4486,111 @@ ${s.keyTakeaway}
                       onClick={() => setChatMessages([])}
                       className="h-7 text-[0.7rem] text-muted-foreground hover:text-foreground"
                     >
-                      Clear Chat
+                      Clear View
                     </Button>
                   )}
                 </div>
               </div>
 
-              {/* Chat Area */}
-              <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4 max-h-[480px]">
-                {chatMessages.length === 0 ? (
+              {/* Main Workspace: History Drawer + Chat View */}
+              <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative min-h-[480px]">
+                {/* Past Conversations Drawer / Sidebar */}
+                {showHistorySidebar && (
+                  <div className="w-full md:w-72 border-b md:border-b-0 md:border-r border-border bg-muted/20 flex flex-col shrink-0 max-h-[350px] md:max-h-[550px] overflow-hidden animate-in fade-in slide-in-from-left-2 duration-200">
+                    <div className="p-3 border-b border-border bg-muted/30 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                        <History className="h-3.5 w-3.5 text-primary" />
+                        <span>Past Conversations</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowHistorySidebar(false)}
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="p-2 overflow-y-auto flex-1 space-y-1">
+                      {loadingConversations ? (
+                        <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
+                          <Loader2 className="h-4 w-4 animate-spin mx-auto text-primary" />
+                          <p>Loading history...</p>
+                        </div>
+                      ) : conversations.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-muted-foreground space-y-2">
+                          <MessageSquare className="h-6 w-6 mx-auto text-muted-foreground/50" />
+                          <p className="font-medium text-foreground">No Past Chats Yet</p>
+                          <p className="text-[0.7rem] leading-relaxed">
+                            Start asking research questions and your conversation threads will be saved here.
+                          </p>
+                        </div>
+                      ) : (
+                        conversations.map((conv) => {
+                          const isActive = activeConversationId === conv.id;
+                          const dateObj = new Date(conv.updatedAt || conv.createdAt);
+                          const formattedDate = dateObj.toLocaleDateString([], {
+                            month: "short",
+                            day: "numeric",
+                          });
+
+                          return (
+                            <div
+                              key={conv.id}
+                              onClick={() => handleSelectConversation(conv.id)}
+                              className={`group relative flex flex-col p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                                isActive
+                                  ? "bg-primary/10 border-primary/40 text-foreground shadow-xs"
+                                  : "bg-card border-border/70 hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-1.5">
+                                <span className={`font-semibold line-clamp-1 text-[0.775rem] ${isActive ? "text-primary" : "text-foreground"}`}>
+                                  {conv.title}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteConversation(e, conv.id)}
+                                  className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-opacity rounded"
+                                  title="Delete conversation"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+
+                              {conv.lastMessageSnippet && (
+                                <p className="text-[0.675rem] text-muted-foreground line-clamp-1 mt-0.5">
+                                  {conv.lastMessageSnippet}
+                                </p>
+                              )}
+
+                              <div className="flex items-center justify-between mt-1.5 text-[0.65rem] text-muted-foreground/70">
+                                <span>{formattedDate}</span>
+                                <span className="bg-muted px-1.5 py-0.2 rounded-full font-medium">
+                                  {conv.messageCount} msg{conv.messageCount === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Chat Area */}
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {loadingActiveConversation ? (
+                    <div className="flex-1 flex items-center justify-center p-12 text-center text-xs text-muted-foreground">
+                      <div className="space-y-2">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+                        <p>Loading conversation transcript...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4 max-h-[480px]">
+                      {chatMessages.length === 0 ? (
                   <div className="space-y-6 max-w-2xl mx-auto py-6">
                     <div className="flex gap-3">
                       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
@@ -4507,6 +4749,7 @@ ${s.keyTakeaway}
                 )}
                 <div ref={chatMessagesEndRef} />
               </div>
+            )}
 
               {/* Mentioned Paper Badges Bar */}
               {selectedMentionedPapers.length > 0 && (
@@ -4628,6 +4871,8 @@ ${s.keyTakeaway}
                     {isSendingChatMessage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>
                 </form>
+              </div>
+                </div>
               </div>
             </Card>
           </TabsContent>

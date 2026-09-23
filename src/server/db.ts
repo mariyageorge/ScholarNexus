@@ -131,6 +131,25 @@ export interface ProjectRecord {
   updatedAt: string;
 }
 
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  mentionedPapers?: { id: string; title: string }[];
+}
+
+export interface ConversationSessionRecord {
+  _id?: string | ObjectId;
+  id?: string;
+  projectId?: string;
+  userEmail?: string;
+  title: string;
+  messages: ConversationMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 /* ── OTP In-Memory Store ── */
 const otpStore = new Map<string, { otp: string; expiresAt: number }>();
 
@@ -2640,6 +2659,198 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
+    }
+  }
+
+  // ── AI Conversation Sessions & History API ──
+  if (url.pathname === "/api/conversations" || url.pathname.startsWith("/api/conversations/")) {
+    const convCol = await getCollection<Document>("conversations");
+
+    // Extract ID from path if present (e.g. /api/conversations/123)
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const pathId = pathParts.length > 2 ? pathParts[2] : null;
+    const queryId = url.searchParams.get("id") || pathId;
+
+    if (request.method === "GET") {
+      // 1. Fetch Single Conversation Thread
+      if (queryId) {
+        let qObjId: any = queryId;
+        if (ObjectId.isValid(queryId)) qObjId = new ObjectId(queryId);
+
+        const convDoc = await convCol.findOne({
+          $or: [{ _id: qObjId }, { id: String(queryId) }],
+        });
+
+        if (!convDoc) {
+          return new Response(JSON.stringify({ error: "Conversation not found." }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: convDoc._id.toString(),
+            projectId: convDoc.projectId,
+            userEmail: convDoc.userEmail,
+            title: convDoc.title || "Research Conversation",
+            messages: convDoc.messages || [],
+            createdAt: convDoc.createdAt,
+            updatedAt: convDoc.updatedAt,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      // 2. Fetch Conversation Summaries (Filtered by Project or User)
+      const projectId = url.searchParams.get("projectId")?.trim();
+      const userEmail = url.searchParams.get("userEmail")?.trim().toLowerCase();
+
+      const query: any = {};
+      if (projectId) {
+        query.$or = [{ projectId: String(projectId) }, { projectId }];
+      } else if (userEmail) {
+        query.userEmail = userEmail;
+      }
+
+      const docs = await convCol.find(query).sort({ updatedAt: -1, createdAt: -1 }).toArray();
+
+      const summaries = docs.map((d) => {
+        const msgs = Array.isArray(d.messages) ? d.messages : [];
+        const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        const snippet = lastMsg?.content ? (lastMsg.content.length > 80 ? lastMsg.content.slice(0, 80) + "..." : lastMsg.content) : "";
+
+        return {
+          id: d._id.toString(),
+          projectId: d.projectId,
+          userEmail: d.userEmail,
+          title: d.title || (msgs[0]?.content ? msgs[0].content.slice(0, 40) + "..." : "New Chat"),
+          messageCount: msgs.length,
+          lastMessageSnippet: snippet,
+          createdAt: d.createdAt || new Date().toISOString(),
+          updatedAt: d.updatedAt || d.createdAt || new Date().toISOString(),
+        };
+      });
+
+      return new Response(JSON.stringify(summaries), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "POST") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+
+      const convId = body.id || queryId;
+      const projectId = body.projectId ? String(body.projectId) : undefined;
+      const userEmail = body.userEmail ? String(body.userEmail).trim().toLowerCase() : undefined;
+      const messages = Array.isArray(body.messages) ? body.messages : [];
+      let title = (body.title || "").trim();
+
+      if (!title && messages.length > 0) {
+        const firstUserMsg = messages.find((m: any) => m.role === "user");
+        if (firstUserMsg && firstUserMsg.content) {
+          const cleanPrompt = firstUserMsg.content.replace(/^@\S+\s*/, "").trim();
+          title = cleanPrompt.length > 40 ? cleanPrompt.slice(0, 40) + "..." : cleanPrompt;
+        }
+      }
+
+      if (!title) {
+        title = "Research Conversation";
+      }
+
+      const now = new Date().toISOString();
+
+      if (convId) {
+        let cObjId: any = convId;
+        if (ObjectId.isValid(convId)) cObjId = new ObjectId(convId);
+
+        const existing = await convCol.findOne({
+          $or: [{ _id: cObjId }, { id: String(convId) }],
+        });
+
+        if (existing) {
+          await convCol.updateOne(
+            { _id: existing._id },
+            {
+              $set: {
+                title,
+                messages,
+                updatedAt: now,
+                ...(projectId ? { projectId } : {}),
+                ...(userEmail ? { userEmail } : {}),
+              },
+            }
+          );
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              conversation: {
+                id: existing._id.toString(),
+                projectId: existing.projectId || projectId,
+                userEmail: existing.userEmail || userEmail,
+                title,
+                messages,
+                createdAt: existing.createdAt,
+                updatedAt: now,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+      }
+
+      // Insert new conversation
+      const newDoc: any = {
+        projectId,
+        userEmail,
+        title,
+        messages,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const insertResult = await convCol.insertOne(newDoc);
+      const insertedId = insertResult.insertedId.toString();
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          conversation: {
+            id: insertedId,
+            ...newDoc,
+            idStr: insertedId,
+          },
+        }),
+        { status: 201, headers: { "content-type": "application/json" } }
+      );
+    }
+
+    if (request.method === "DELETE") {
+      let body: any = {};
+      try { body = await request.json(); } catch {}
+      const targetId = body.id || queryId;
+
+      if (!targetId) {
+        return new Response(JSON.stringify({ error: "Conversation ID is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      let dObjId: any = targetId;
+      if (ObjectId.isValid(targetId)) dObjId = new ObjectId(targetId);
+
+      await convCol.deleteOne({
+        $or: [{ _id: dObjId }, { id: String(targetId) }],
+      });
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
   }
 
