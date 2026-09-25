@@ -14,6 +14,13 @@ export type UserSession = {
   photoURL?: string;
   updatedAt?: string;
 
+  /* Premium Subscription Fields */
+  isPremium?: boolean;
+  premiumPlan?: string;
+  premiumSince?: string;
+  razorpayPaymentId?: string;
+  razorpayOrderId?: string;
+
   /* Faculty Fields */
   status?: string;
   approvalStatus?: string;
@@ -24,6 +31,13 @@ export type UserSession = {
   areasOfExpertise?: string | string[];
   orcid?: string;
 };
+
+export function isUserPremium(user: UserSession | null): boolean {
+  if (!user) return false;
+  // Admins always have full access
+  if (user.role === "admin" || user.email === "scholarnexusadmin@gmail.com") return true;
+  return Boolean(user.isPremium);
+}
 
 const STORAGE_KEY = "scholarnexusUser";
 

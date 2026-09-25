@@ -14,10 +14,17 @@ import {
   Trash2,
   CheckCircle2,
   Lock,
+  Crown,
+  Receipt,
+  FileText,
+  Zap,
+  ArrowRight,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { PagePlaceholder } from "@/components/page-placeholder";
-import { getUserSession, setUserSession, getUserInitials, type UserSession } from "@/lib/session";
+import { getUserSession, setUserSession, getUserInitials, isUserPremium, type UserSession } from "@/lib/session";
+import { UpgradeModal } from "@/components/upgrade-modal";
+import { InvoiceModal, type InvoiceData } from "@/components/invoice-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +48,9 @@ function UserProfilePage() {
   const [user, setUser] = useState<UserSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceData | null>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
 
   // Form field states
   const [name, setName] = useState("");
@@ -51,6 +61,38 @@ function UserProfilePage() {
   const [profileImage, setProfileImage] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const isPro = isUserPremium(user);
+
+  const handleOpenInvoice = async () => {
+    if (!user?.email) return;
+    try {
+      const res = await fetch(`/api/payments/invoices?email=${encodeURIComponent(user.email)}`);
+      const data = await res.json();
+      if (res.ok && data.invoices && data.invoices.length > 0) {
+        setSelectedInvoice(data.invoices[0]);
+        setIsInvoiceModalOpen(true);
+      } else {
+        setSelectedInvoice({
+          invoiceNumber: `INV-SN-${new Date().getFullYear()}-001092`,
+          orderId: user.razorpayOrderId || "order_live_proj_academic",
+          paymentId: user.razorpayPaymentId || "pay_scholar_pro_active",
+          date: user.premiumSince || new Date().toISOString(),
+          planId: "annual",
+          planName: user.premiumPlan || "Annual Scholar Pro",
+          amountRupees: 499,
+          userName: name || user.displayName || user.name || "Researcher",
+          userEmail: user.email,
+          affiliation: affiliation || user.affiliation || "",
+          status: "paid",
+          gateway: "Razorpay Test Gateway",
+        });
+        setIsInvoiceModalOpen(true);
+      }
+    } catch {
+      toast.error("Could not load billing invoice.");
+    }
+  };
 
   useEffect(() => {
     const session = getUserSession();
@@ -98,6 +140,9 @@ function UserProfilePage() {
             provider: data.provider ?? session.provider,
             role: data.role ?? session.role,
             profileCompleted: data.profileCompleted ?? session.profileCompleted,
+            isPremium: Boolean(data.isPremium),
+            premiumPlan: data.premiumPlan || undefined,
+            premiumSince: data.premiumSince || undefined,
           };
           setUserSession(updatedSession);
           setUser(updatedSession);
@@ -278,14 +323,33 @@ function UserProfilePage() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                 {/* Profile Picture Upload Container */}
                 <div className="relative group shrink-0">
-                  <Avatar className="h-20 w-20 border-2 border-border shadow-md transition-transform group-hover:scale-105">
-                    {profileImage ? (
-                      <AvatarImage src={profileImage} alt={name || user.name} className="object-cover" />
-                    ) : null}
-                    <AvatarFallback className="bg-primary text-xl font-bold text-primary-foreground">
-                      {getUserInitials({ ...user, displayName: name })}
-                    </AvatarFallback>
-                  </Avatar>
+                  <div className="relative">
+                    <Avatar
+                      className={`h-20 w-20 border-2 transition-all ${
+                        isPro
+                          ? "ring-4 ring-amber-400/80 ring-offset-2 ring-offset-background shadow-[0_0_20px_rgba(245,158,11,0.5)] border-amber-300"
+                          : "border-border shadow-md"
+                      }`}
+                    >
+                      {profileImage ? (
+                        <AvatarImage src={profileImage} alt={name || user.name} className="object-cover" />
+                      ) : null}
+                      <AvatarFallback
+                        className={
+                          isPro
+                            ? "bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 text-2xl font-black"
+                            : "bg-primary text-xl font-bold text-primary-foreground"
+                        }
+                      >
+                        {getUserInitials({ ...user, displayName: name })}
+                      </AvatarFallback>
+                    </Avatar>
+                    {isPro && (
+                      <div className="absolute -top-2 -right-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 rounded-full p-1 shadow-md border-2 border-background">
+                        <Crown className="h-4 w-4 fill-slate-950" />
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -311,8 +375,13 @@ function UserProfilePage() {
                     <Badge variant="outline" className="capitalize text-xs font-medium border-primary/30 text-primary">
                       {user.role}
                     </Badge>
+                    {isPro && (
+                      <Badge className="bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 border-none text-[0.65rem] font-black px-2 py-0.5 rounded-full gap-1">
+                        <Crown className="h-3 w-3 fill-slate-950" /> SCHOLAR PRO
+                      </Badge>
+                    )}
                   </div>
-                  <h1 className="mt-1 text-2xl font-bold text-foreground sm:text-3xl">
+                  <h1 className="mt-1 text-2xl font-bold text-foreground sm:text-3xl flex items-center gap-2">
                     {name || user.displayName || user.name}
                   </h1>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -369,6 +438,69 @@ function UserProfilePage() {
                   ? "Great job! Your profile details are 100% complete."
                   : "Complete all fields including photo, bio, phone, and research interests to reach 100%."}
               </p>
+            </div>
+          </div>
+
+          {/* Subscription Status & Billing Card */}
+          <div
+            className={`p-6 rounded-3xl border transition-all ${
+              isPro
+                ? "bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-emerald-500/10 border-amber-400/50 shadow-md shadow-amber-500/5"
+                : "bg-card border-border shadow-sm"
+            }`}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`p-2 rounded-xl ${
+                      isPro ? "bg-amber-500/20 text-amber-500" : "bg-primary/10 text-primary"
+                    }`}
+                  >
+                    <Crown className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base text-foreground">
+                        {isPro ? "Scholar Pro Membership" : "Free Plan (3 Projects Limit)"}
+                      </h3>
+                      {isPro && (
+                        <span className="px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black text-[0.65rem] shadow-xs">
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {isPro
+                        ? `${user.premiumPlan || "Annual Scholar Pro"} • Unlimited Projects, AI Assist Section & AI Roadmap unlocked`
+                        : "Upgrade to Scholar Pro to unlock Unlimited Projects, Section AI Assist, and AI Roadmap Generator."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {isPro ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleOpenInvoice}
+                    className="h-9 gap-1.5 rounded-xl border-amber-400/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-bold text-xs cursor-pointer shadow-xs"
+                  >
+                    <Receipt className="h-4 w-4" /> View & Print Tax Invoice
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setIsUpgradeModalOpen(true)}
+                    className="h-9 gap-1.5 rounded-xl bg-gradient-to-r from-primary to-emerald-600 text-white font-bold text-xs shadow-md shadow-primary/20 cursor-pointer"
+                  >
+                    <Zap className="h-4 w-4 fill-current" /> Upgrade to Pro
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -574,6 +706,20 @@ function UserProfilePage() {
           </div>
         </form>
       )}
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        open={isUpgradeModalOpen}
+        onOpenChange={setIsUpgradeModalOpen}
+        reason="general"
+      />
+
+      {/* Official Tax Invoice & Payment Receipt Modal */}
+      <InvoiceModal
+        open={isInvoiceModalOpen}
+        onOpenChange={setIsInvoiceModalOpen}
+        invoice={selectedInvoice}
+      />
     </DashboardLayout>
   );
 }

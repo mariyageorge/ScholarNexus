@@ -1,5 +1,5 @@
 import { MongoClient, ObjectId, ServerApiVersion, type Document, type OptionalUnlessRequiredId } from "mongodb";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import nodemailer from "nodemailer";
 import {
   extractPaperMetadataWithGemini,
@@ -8,6 +8,15 @@ import {
   generateWritingAssistWithGemini,
   generateAssistantChatWithGemini,
 } from "./services/ai";
+
+import dns from "node:dns";
+
+// Fix Windows SRV DNS resolution failures for MongoDB Atlas (ECONNREFUSED querySrv)
+try {
+  dns.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
+} catch {
+  // Ignore in environments where custom DNS servers cannot be set
+}
 
 const uri = process.env.MONGODB_URI ?? import.meta?.env?.VITE_MONGODB_URI ?? "";
 
@@ -22,15 +31,26 @@ const globalWithMongo = globalThis as typeof globalThis & {
   _summarizationInFlight?: Set<string>;
 };
 
-const clientPromise =
-  globalWithMongo._mongoClientPromise ??
-  (globalWithMongo._mongoClientPromise = new MongoClient(uri, {
-    serverApi: {
-      version: ServerApiVersion.v1,
-      strict: true,
-      deprecationErrors: true,
-    },
-  }).connect());
+export function getClientPromise(): Promise<MongoClient> {
+  if (!globalWithMongo._mongoClientPromise) {
+    globalWithMongo._mongoClientPromise = new MongoClient(uri, {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+    })
+      .connect()
+      .catch((err) => {
+        // Reset cached promise so next request can retry
+        globalWithMongo._mongoClientPromise = undefined;
+        throw err;
+      });
+  }
+  return globalWithMongo._mongoClientPromise;
+}
+
+const clientPromise = getClientPromise();
 
 export type MongoRecord = { [key: string]: unknown };
 
@@ -65,6 +85,13 @@ export interface UserRecord {
   lastLogin?: string;
   deletedAt?: string;
   updatedAt?: string;
+
+  /* Premium Subscription Fields */
+  isPremium?: boolean;
+  premiumPlan?: string;
+  premiumSince?: string;
+  razorpayPaymentId?: string;
+  razorpayOrderId?: string;
 
   /* Faculty Specific Fields */
   institution?: string;
@@ -427,7 +454,7 @@ async function sendOtpEmail(email: string, otp: string) {
 }
 
 async function getDatabase(dbName = "scholarnexus") {
-  const client = await clientPromise;
+  const client = await getClientPromise();
   return client.db(dbName);
 }
 
@@ -959,6 +986,415 @@ export async function ensureAdminSeedData() {
 }
 
 export async function handleApiRequest(request: Request, url: URL): Promise<Response> {
+  const sanitizeKey = (val?: string) => (val || "").trim().replace(/^["']|["']$/g, "").trim();
+  const razorpayKeyId = sanitizeKey(process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID) || "rzp_test_Tg8m1evDvdAwd93";
+  const razorpayKeySecret = sanitizeKey(process.env.RAZORPAY_KEY_SECRET) || "CeyzIqLbKC3bgAmDVcUMQ7V";
+
+  // ── Razorpay Payment Gateway: Reset Plan (to Free) Endpoint ──
+  if (url.pathname === "/api/payments/reset-plan") {
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "Method not allowed." }), {
+        status: 405,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    try {
+      const body = await request.json();
+      const email = (body.email || "").trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify({ success: false, error: "Email is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const usersCol = await getCollection<UserRecord>("users");
+      await usersCol.updateOne(
+        {
+          $or: [
+            { email },
+            { email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
+        },
+        {
+          $set: {
+            isPremium: false,
+            updatedAt: new Date().toISOString(),
+          },
+          $unset: {
+            premiumPlan: "",
+            premiumSince: "",
+            razorpayPaymentId: "",
+            razorpayOrderId: "",
+          },
+        } as any
+      );
+
+      return new Response(
+        JSON.stringify({ success: true, message: "Account switched back to Free tier successfully." }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message || "Failed to reset plan." }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
+  // ── Razorpay Payment Gateway: Check Subscription Status ──
+  if (url.pathname === "/api/payments/status") {
+    try {
+      const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify({ isPremium: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const user = await findUserByEmail(email);
+      return new Response(
+        JSON.stringify({
+          isPremium: Boolean(user?.isPremium),
+          premiumPlan: user?.premiumPlan || null,
+          premiumSince: user?.premiumSince || null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    } catch {
+      return new Response(JSON.stringify({ isPremium: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
+  // ── Razorpay Payment Gateway: Create Order Endpoint ──
+  if (url.pathname === "/api/payments/razorpay/create-order") {
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "Method not allowed." }), {
+        status: 405,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    try {
+      const body = await request.json();
+      const email = (body.email || "").trim().toLowerCase();
+      const planId = body.planId || "annual";
+      const planName = body.planName || (planId === "monthly" ? "Monthly Pro" : "Annual Scholar Pro");
+      const amountInRupees = Number(body.amountInRupees) || (planId === "monthly" ? 199 : 499);
+      const amountPaise = Math.round(amountInRupees * 100);
+
+      if (!email) {
+        return new Response(JSON.stringify({ success: false, error: "User email is required." }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (!razorpayKeyId || !razorpayKeySecret) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Razorpay credentials not found in server environment.",
+          }),
+          { status: 500, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      // Create order on Razorpay API with Base64 Basic Auth
+      const rawCredentials = `${razorpayKeyId}:${razorpayKeySecret}`;
+      const base64Auth = typeof Buffer !== "undefined"
+        ? Buffer.from(rawCredentials).toString("base64")
+        : btoa(rawCredentials);
+      const authHeader = `Basic ${base64Auth}`;
+
+      const rzpRes = await fetch("https://api.razorpay.com/v1/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": authHeader,
+        },
+        body: JSON.stringify({
+          amount: amountPaise,
+          currency: "INR",
+          receipt: `rcpt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          notes: {
+            userEmail: email,
+            planId,
+            planName,
+            platform: "ScholarNexus",
+          },
+        }),
+      });
+
+      let rzpData: any = null;
+      try {
+        rzpData = await rzpRes.json();
+      } catch {
+        rzpData = null;
+      }
+
+      if (!rzpRes.ok || !rzpData?.id) {
+        const errDesc = rzpData?.error?.description || rzpData?.error?.code || "Authentication failed on Razorpay";
+        console.error("Razorpay order creation failed:", rzpData || rzpRes.statusText);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Razorpay Order Error: ${errDesc}. Please check RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET in .env.local.`,
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const orderId = rzpData.id;
+
+      // Record initial transaction attempt
+      try {
+        const transCol = await getCollection<Document>("transactions");
+        await transCol.insertOne({
+          orderId: orderId,
+          userEmail: email,
+          planId,
+          planName,
+          amountPaise: rzpData.amount || amountPaise,
+          amountRupees: amountInRupees,
+          currency: rzpData.currency || "INR",
+          status: "created",
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error("Failed to record order transaction:", err);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          orderId: orderId,
+          amount: rzpData.amount || amountPaise,
+          currency: rzpData.currency || "INR",
+          keyId: razorpayKeyId,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    } catch (err: any) {
+      console.error("Error in /api/payments/razorpay/create-order:", err);
+      return new Response(
+        JSON.stringify({ success: false, error: err.message || "Failed to initiate payment." }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
+  // ── Razorpay Payment Gateway: Verify Payment Endpoint ──
+  if (url.pathname === "/api/payments/razorpay/verify-payment") {
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "Method not allowed." }), {
+        status: 405,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    try {
+      const body = await request.json();
+      const {
+        email,
+        planId,
+        planName,
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+      } = body;
+
+      const normalizedEmail = (email || "").trim().toLowerCase();
+
+      if (!normalizedEmail || !razorpay_payment_id) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Missing required payment verification details." }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      // Verify Razorpay HMAC SHA256 signature
+      if (razorpay_order_id && razorpay_signature) {
+        const expectedSignature = createHmac("sha256", razorpayKeySecret)
+          .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+          .digest("hex");
+
+        if (expectedSignature !== razorpay_signature) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "Invalid payment signature verification. Transaction rejected.",
+            }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          );
+        }
+      }
+
+      const now = new Date().toISOString();
+      const finalPlanName = planName || (planId === "monthly" ? "Monthly Pro" : "Annual Scholar Pro");
+
+      // Update User Document in MongoDB
+      const usersCol = await getCollection<UserRecord>("users");
+      await usersCol.updateOne(
+        {
+          $or: [
+            { email: normalizedEmail },
+            { email: { $regex: `^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
+        },
+        {
+          $set: {
+            isPremium: true,
+            premiumPlan: finalPlanName,
+            premiumSince: now,
+            razorpayPaymentId: razorpay_payment_id,
+            razorpayOrderId: razorpay_order_id,
+            updatedAt: now,
+          },
+        }
+      );
+
+      const invoiceNumber = `INV-SN-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+      const amountRupees = planId === "monthly" ? 199 : 499;
+
+      const user = await findUserByEmail(normalizedEmail);
+      const userName = user?.name || user?.displayName || normalizedEmail.split("@")[0];
+      const userAffiliation = user?.affiliation || user?.institution || "";
+
+      const invoiceData = {
+        invoiceNumber,
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id,
+        date: now,
+        planId: planId || "annual",
+        planName: finalPlanName,
+        amountRupees,
+        userName,
+        userEmail: normalizedEmail,
+        affiliation: userAffiliation,
+        status: "paid" as const,
+        gateway: "Razorpay Test Gateway",
+      };
+
+      // Record Successful Payment & Invoice in Transactions
+      try {
+        const transCol = await getCollection<Document>("transactions");
+        await transCol.updateOne(
+          { orderId: razorpay_order_id },
+          {
+            $set: {
+              status: "paid",
+              paymentId: razorpay_payment_id,
+              signature: razorpay_signature,
+              invoiceNumber,
+              invoice: invoiceData,
+              userEmail: normalizedEmail,
+              planId: planId || "annual",
+              planName: finalPlanName,
+              amountRupees,
+              verifiedAt: now,
+              updatedAt: now,
+            },
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("Failed to update transaction status:", err);
+      }
+
+      // Log activity
+      await recordUserActivity(
+        normalizedEmail,
+        normalizedEmail.split("@")[0],
+        "UPGRADE_PREMIUM",
+        "Subscribed to Scholar Pro",
+        `Successfully activated ${finalPlanName} via Razorpay (Payment ID: ${razorpay_payment_id}, Invoice: ${invoiceNumber}).`,
+        "Profile"
+      );
+
+      const updatedUser = await findUserByEmail(normalizedEmail);
+      let sanitizedUser: any = null;
+      if (updatedUser) {
+        const { password: _, verificationDocument: _v, ...rest } = updatedUser as any;
+        sanitizedUser = rest;
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: "Payment verified successfully. Scholar Pro unlocked!",
+          user: sanitizedUser,
+          invoice: invoiceData,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    } catch (err: any) {
+      console.error("Error in /api/payments/razorpay/verify-payment:", err);
+      return new Response(
+        JSON.stringify({ success: false, error: err.message || "Failed to verify payment." }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
+  // ── Razorpay Payment Gateway: Get User Invoices Endpoint ──
+  if (url.pathname === "/api/payments/invoices") {
+    try {
+      const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+      if (!email) {
+        return new Response(JSON.stringify({ success: true, invoices: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const transCol = await getCollection<Document>("transactions");
+      const transactions = await transCol
+        .find({
+          $or: [
+            { userEmail: email },
+            { userEmail: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          ],
+          status: "paid",
+        })
+        .sort({ verifiedAt: -1, createdAt: -1 })
+        .toArray();
+
+      const invoices = transactions.map((t: any) => {
+        if (t.invoice) return t.invoice;
+        return {
+          invoiceNumber: t.invoiceNumber || `INV-SN-2026-${String(t._id || "").slice(-6).toUpperCase()}`,
+          orderId: t.orderId || "",
+          paymentId: t.paymentId || "",
+          date: t.verifiedAt || t.createdAt || new Date().toISOString(),
+          planId: t.planId || "annual",
+          planName: t.planName || "Annual Scholar Pro",
+          amountRupees: t.amountRupees || 499,
+          userName: t.userName || email.split("@")[0],
+          userEmail: email,
+          affiliation: t.affiliation || "",
+          status: "paid",
+          gateway: "Razorpay Test Gateway",
+        };
+      });
+
+      return new Response(JSON.stringify({ success: true, invoices }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, error: err.message || "Failed to load invoices." }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
   // ── Public Announcements API ──
   if (url.pathname === "/api/announcements") {
     if (request.method === "GET") {
@@ -2492,7 +2928,25 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         domain,
         projectAbstract,
         projectId,
+        userEmail,
       } = body;
+
+      // Scholar Pro Gate: AI Section Assist
+      const callerEmail = userEmail || request.headers.get("x-user-email");
+      if (callerEmail) {
+        const userRecord = await findUserByEmail(callerEmail);
+        const isUserPro = Boolean(userRecord?.isPremium) || userRecord?.role === "admin" || callerEmail === "scholarnexusadmin@gmail.com";
+        if (!isUserPro) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "AI Section Assist is exclusively available for Scholar Pro members.",
+              requiresUpgrade: true,
+            }),
+            { status: 403, headers: { "content-type": "application/json" } }
+          );
+        }
+      }
 
       let literatureContext: string[] = [];
       if (projectId) {
@@ -3845,6 +4299,23 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         });
       }
 
+      // Free Tier Limit: Max 3 Research Projects
+      const userRecord = await findUserByEmail(email);
+      const isUserPro = Boolean(userRecord?.isPremium) || userRecord?.role === "admin" || email === "scholarnexusadmin@gmail.com";
+      if (!isUserPro) {
+        const existingProjects = await findProjectsByUser(email);
+        if (existingProjects && existingProjects.length >= 3) {
+          return new Response(
+            JSON.stringify({
+              error: "You have reached the free tier limit of 3 research projects. Upgrade to Scholar Pro for unlimited projects.",
+              limitReached: true,
+              requiresUpgrade: true,
+            }),
+            { status: 403, headers: { "content-type": "application/json" } }
+          );
+        }
+      }
+
       const now = new Date().toISOString();
       const newProject = {
         userEmail: email,
@@ -4696,6 +5167,22 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           status: 404,
           headers: { "content-type": "application/json" },
         });
+      }
+
+      // Scholar Pro Gate: AI Research Roadmap Generator
+      const projectUserEmail = projectDoc.userEmail || request.headers.get("x-user-email");
+      if (projectUserEmail) {
+        const userRecord = await findUserByEmail(projectUserEmail);
+        const isUserPro = Boolean(userRecord?.isPremium) || userRecord?.role === "admin" || projectUserEmail === "scholarnexusadmin@gmail.com";
+        if (!isUserPro) {
+          return new Response(
+            JSON.stringify({
+              error: "AI Research Roadmap Generator is exclusively available for Scholar Pro members.",
+              requiresUpgrade: true,
+            }),
+            { status: 403, headers: { "content-type": "application/json" } }
+          );
+        }
       }
 
       if (projectDoc.status === "Completed" || projectDoc.status === "Approved") {

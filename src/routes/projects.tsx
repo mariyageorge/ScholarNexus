@@ -19,9 +19,13 @@ import {
   Trash2,
   TrendingUp,
   X,
+  Crown,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { getUserSession, UserSession } from "@/lib/session";
+import { getUserSession, setUserSession, UserSession, isUserPremium } from "@/lib/session";
+import { UpgradeModal } from "@/components/upgrade-modal";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -188,6 +192,7 @@ function ResearchProjectsPage() {
 
   // Modal States
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const [detailProject, setDetailProject] = useState<Project | null>(null);
@@ -223,6 +228,22 @@ function ResearchProjectsPage() {
     setUser(session);
     fetchProjects(session.email);
     fetchFacultyList();
+
+    // Sync subscription status with MongoDB
+    fetch(`/api/payments/status?email=${encodeURIComponent(session.email)}`)
+      .then((res) => res.json())
+      .then((statusData) => {
+        if (typeof statusData?.isPremium === "boolean" && statusData.isPremium !== session.isPremium) {
+          const updated: UserSession = {
+            ...session,
+            isPremium: statusData.isPremium,
+            premiumPlan: statusData.premiumPlan || undefined,
+          };
+          setUserSession(updated);
+          setUser(updated);
+        }
+      })
+      .catch(() => {});
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("action") === "create" || params.get("create") === "true") {
@@ -401,7 +422,14 @@ function ResearchProjectsPage() {
     return { total, inProgress, underReview, completed, avgProgress };
   }, [projects]);
 
+  const isPro = isUserPremium(user);
+
   const openCreateModal = () => {
+    if (projects.length >= 3 && !isPro) {
+      setIsUpgradeModalOpen(true);
+      toast.info("Free plan allows up to 3 research projects. Upgrade to Scholar Pro for unlimited projects.");
+      return;
+    }
     setEditingProject(null);
     setTouched({});
     const start = getTodayString();
@@ -514,6 +542,10 @@ function ResearchProjectsPage() {
           setIsFormModalOpen(false);
         } else {
           const err = await res.json();
+          if (err.requiresUpgrade || err.limitReached) {
+            setIsFormModalOpen(false);
+            setIsUpgradeModalOpen(true);
+          }
           toast.error(err.error || "Failed to create project.");
         }
       }
@@ -631,24 +663,53 @@ function ResearchProjectsPage() {
           />
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/15 text-primary">
                   <FolderKanban className="h-5 w-5" />
                 </div>
                 <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl">
                   Research Projects
                 </h1>
+                {isPro ? (
+                  <Badge className="bg-gradient-to-r from-primary/20 via-emerald-500/20 to-teal-500/20 text-primary border-primary/40 font-bold text-[0.7rem] px-2.5 py-0.5 rounded-full shadow-sm gap-1">
+                    <Crown className="h-3 w-3 text-primary animate-pulse" /> Scholar Pro • Unlimited
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    onClick={() => setIsUpgradeModalOpen(true)}
+                    className="cursor-pointer border-primary/30 hover:border-primary/60 bg-primary/5 hover:bg-primary/10 text-foreground font-semibold text-[0.68rem] px-2.5 py-0.5 rounded-full transition-all gap-1.5"
+                  >
+                    <span className={projects.length >= 3 ? "text-amber-500 font-bold" : "text-primary font-bold"}>
+                      {projects.length}/3 Free Projects
+                    </span>
+                    <span className="text-primary font-bold flex items-center gap-0.5">
+                      Upgrade <Sparkles className="h-2.5 w-2.5" />
+                    </span>
+                  </Badge>
+                )}
               </div>
               <p className="text-sm text-muted-foreground">
                 Manage, organize, and track your academic research projects from proposal to publication.
               </p>
             </div>
-            <Button
-              onClick={openCreateModal}
-              className="gap-2 rounded-xl bg-primary px-5 py-2.5 font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
-            >
-              <Plus className="h-4 w-4" /> Create Project
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              {!isPro && (
+                <Button
+                  variant="outline"
+                  onClick={() => setIsUpgradeModalOpen(true)}
+                  className="gap-1.5 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-semibold text-xs px-3.5 py-2.5 shadow-sm"
+                >
+                  <Crown className="h-3.5 w-3.5" /> Upgrade to Pro
+                </Button>
+              )}
+              <Button
+                onClick={openCreateModal}
+                className="gap-2 rounded-xl bg-primary px-5 py-2.5 font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow"
+              >
+                <Plus className="h-4 w-4" /> Create Project
+              </Button>
+            </div>
           </div>
 
           {/* Quick Metrics Bar */}
@@ -1253,6 +1314,18 @@ function ResearchProjectsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Upgrade to Scholar Pro Modal */}
+      <UpgradeModal
+        open={isUpgradeModalOpen}
+        onOpenChange={setIsUpgradeModalOpen}
+        reason="projects"
+        onSuccess={() => {
+          if (user?.email) {
+            fetchProjects(user.email);
+          }
+        }}
+      />
     </DashboardLayout>
   );
 }

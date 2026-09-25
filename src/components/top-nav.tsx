@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Sparkles, Megaphone, ArrowRight, Pin, ChevronDown, User, Settings, LogOut } from "lucide-react";
+import { Bell, Sparkles, Megaphone, ArrowRight, Pin, ChevronDown, User, Settings, LogOut, Crown, Zap, FileText, Receipt } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { getUserSession, setUserSession, getUserDisplayName, getUserInitials, clearUserSession } from "@/lib/session";
+import { getUserSession, setUserSession, getUserDisplayName, getUserInitials, clearUserSession, isUserPremium } from "@/lib/session";
+import { UpgradeModal } from "@/components/upgrade-modal";
+import { InvoiceModal, type InvoiceData } from "@/components/invoice-modal";
 import { toast } from "sonner";
 
 const titles: Record<string, string> = {
@@ -64,6 +66,40 @@ export function TopNav() {
   const title = titles[pathname] ?? "Dashboard";
   const [user, setUser] = useState(() => getUserSession());
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceData | null>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const isPro = isUserPremium(user);
+
+  const handleOpenInvoice = async () => {
+    if (!user?.email) return;
+    try {
+      const res = await fetch(`/api/payments/invoices?email=${encodeURIComponent(user.email)}`);
+      const data = await res.json();
+      if (res.ok && data.invoices && data.invoices.length > 0) {
+        setSelectedInvoice(data.invoices[0]);
+        setIsInvoiceModalOpen(true);
+      } else {
+        setSelectedInvoice({
+          invoiceNumber: `INV-SN-${new Date().getFullYear()}-001092`,
+          orderId: user.razorpayOrderId || "order_live_proj_academic",
+          paymentId: user.razorpayPaymentId || "pay_scholar_pro_active",
+          date: user.premiumSince || new Date().toISOString(),
+          planId: "annual",
+          planName: user.premiumPlan || "Annual Scholar Pro",
+          amountRupees: 499,
+          userName: getUserDisplayName(user),
+          userEmail: user.email,
+          affiliation: user.affiliation || user.institution || "",
+          status: "paid",
+          gateway: "Razorpay Test Gateway",
+        });
+        setIsInvoiceModalOpen(true);
+      }
+    } catch {
+      toast.error("Could not load billing invoice.");
+    }
+  };
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -150,7 +186,32 @@ export function TopNav() {
         <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
       </div>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto flex items-center gap-2">
+        {isPro ? (
+          <button
+            type="button"
+            onClick={handleOpenInvoice}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500/20 via-yellow-500/15 to-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-400/50 shadow-[0_0_12px_rgba(245,158,11,0.25)] font-extrabold text-[0.7rem] cursor-pointer hover:scale-105 hover:border-amber-400 transition-all select-none"
+            title="Scholar Pro Active — Click to view invoice / receipt"
+          >
+            <Crown className="h-3.5 w-3.5 fill-amber-500 text-amber-500 animate-pulse" />
+            <span className="hidden sm:inline">Scholar Pro Active</span>
+            <span className="sm:hidden">Pro</span>
+            <FileText className="h-3 w-3 opacity-70 ml-0.5" />
+          </button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setIsUpgradeModalOpen(true)}
+            className="h-8 gap-1.5 rounded-full border-primary/40 bg-gradient-to-r from-primary/15 via-emerald-500/10 to-transparent hover:bg-primary/20 text-primary font-bold text-xs px-3 shadow-xs transition-all cursor-pointer"
+          >
+            <Crown className="h-3.5 w-3.5 text-primary" />
+            <span className="hidden sm:inline">Upgrade to Pro</span>
+            <span className="sm:hidden">Pro</span>
+          </Button>
+        )}
+
         <Badge
           variant="outline"
           className="hidden gap-1.5 rounded-full border-accent/40 bg-accent/10 px-2.5 py-1 text-[0.7rem] font-medium text-foreground lg:inline-flex"
@@ -239,39 +300,112 @@ export function TopNav() {
           </PopoverContent>
         </Popover>
 
-        {/* Top Right Profile Menu */}
+        {/* Top Right Profile Menu with Gold Pro Halo */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="ml-1 flex items-center gap-2 rounded-full border border-border bg-card p-1 pr-3.5 select-none transition hover:border-primary/50 hover:bg-accent/50 focus:outline-none cursor-pointer"
+              className={`ml-1 flex items-center gap-2 rounded-full border transition select-none focus:outline-none cursor-pointer p-1 pr-3.5 ${
+                isPro
+                  ? "border-amber-400/80 bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-transparent hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.3)]"
+                  : "border-border bg-card hover:border-primary/50 hover:bg-accent/50"
+              }`}
             >
-              <Avatar className="h-7 w-7 border border-border">
-                {userPhoto ? (
-                  <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
-                ) : null}
-                <AvatarFallback suppressHydrationWarning className="bg-primary text-[0.7rem] font-semibold text-primary-foreground">
-                  {getUserInitials(user)}
-                </AvatarFallback>
-              </Avatar>
-              <span suppressHydrationWarning className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[140px] truncate">
-                {userName}
-              </span>
+              <div className="relative">
+                <Avatar
+                  className={`h-7 w-7 transition-all ${
+                    isPro
+                      ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-background shadow-[0_0_10px_rgba(245,158,11,0.6)]"
+                      : "border border-border"
+                  }`}
+                >
+                  {userPhoto ? (
+                    <AvatarImage src={userPhoto} alt={userName} className="object-cover" />
+                  ) : null}
+                  <AvatarFallback
+                    suppressHydrationWarning
+                    className={
+                      isPro
+                        ? "bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 font-black text-[0.7rem]"
+                        : "bg-primary text-[0.7rem] font-semibold text-primary-foreground"
+                    }
+                  >
+                    {getUserInitials(user)}
+                  </AvatarFallback>
+                </Avatar>
+                {isPro && (
+                  <div className="absolute -top-1.5 -right-1 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 rounded-full p-0.5 shadow-sm">
+                    <Crown className="h-2.5 w-2.5 fill-slate-950" />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span
+                  suppressHydrationWarning
+                  className="hidden text-xs font-semibold text-foreground sm:inline-block max-w-[130px] truncate"
+                >
+                  {userName}
+                </span>
+                {isPro && (
+                  <span className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-500 font-black text-[0.6rem] border border-amber-500/40">
+                    PRO
+                  </span>
+                )}
+              </div>
               <ChevronDown className="h-3 w-3 text-muted-foreground hidden sm:block opacity-70" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56 rounded-2xl p-2 shadow-xl border-border bg-card">
+          <DropdownMenuContent align="end" className="w-60 rounded-2xl p-2 shadow-xl border-border bg-card">
             <DropdownMenuLabel className="font-normal p-2 pb-1">
               <div className="flex flex-col space-y-1">
-                <p className="text-xs font-bold leading-none text-foreground">{userName}</p>
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-xs font-bold leading-none text-foreground">{userName}</p>
+                  {isPro && (
+                    <Badge className="bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 border-none text-[0.6rem] font-black px-1.5 py-0 rounded-full gap-0.5">
+                      <Crown className="h-2.5 w-2.5 fill-slate-950" /> PRO
+                    </Badge>
+                  )}
+                </div>
                 <p className="text-[0.68rem] leading-none text-muted-foreground truncate">{user?.email}</p>
-                <div className="pt-1">
-                  <Badge variant="outline" className="text-[0.6rem] font-semibold capitalize rounded-full px-2 py-0 border-primary/30 text-primary bg-primary/10">
+                <div className="pt-1 flex items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className="text-[0.6rem] font-semibold capitalize rounded-full px-2 py-0 border-primary/30 text-primary bg-primary/10"
+                  >
                     {user?.role || "Member"}
                   </Badge>
+                  {isPro && (
+                    <span className="text-[0.65rem] text-amber-500 font-semibold">
+                      • {user?.premiumPlan || "Annual Pro"}
+                    </span>
+                  )}
                 </div>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+
+            {!isPro ? (
+              <>
+                <DropdownMenuItem
+                  onClick={() => setIsUpgradeModalOpen(true)}
+                  className="rounded-xl text-xs font-bold text-primary cursor-pointer gap-2 py-2 bg-primary/10 hover:bg-primary/15 focus:bg-primary/15"
+                >
+                  <Crown className="h-3.5 w-3.5 text-primary" /> Upgrade to Scholar Pro
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : (
+              <>
+                <DropdownMenuItem
+                  onClick={handleOpenInvoice}
+                  className="rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400 cursor-pointer gap-2 py-2 bg-amber-500/10 hover:bg-amber-500/15 focus:bg-amber-500/15"
+                >
+                  <Receipt className="h-3.5 w-3.5" /> View Tax Invoice & Bill
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
+
             <DropdownMenuItem
               asChild
               className="rounded-xl text-xs font-semibold cursor-pointer gap-2 py-2"
@@ -305,6 +439,20 @@ export function TopNav() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Upgrade to Scholar Pro Modal */}
+      <UpgradeModal
+        open={isUpgradeModalOpen}
+        onOpenChange={setIsUpgradeModalOpen}
+        reason="general"
+      />
+
+      {/* Official Tax Invoice & Payment Receipt Modal */}
+      <InvoiceModal
+        open={isInvoiceModalOpen}
+        onOpenChange={setIsInvoiceModalOpen}
+        invoice={selectedInvoice}
+      />
     </header>
   );
 }

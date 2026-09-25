@@ -65,6 +65,7 @@ import {
   Lock,
   Edit3,
   AlertTriangle,
+  Crown,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -78,7 +79,8 @@ function AutoCollapseWorkspaceSidebar() {
   }, [setOpen, isMobile]);
   return null;
 }
-import { getUserSession, UserSession } from "@/lib/session";
+import { getUserSession, setUserSession, UserSession, isUserPremium } from "@/lib/session";
+import { UpgradeModal, UpgradeReason } from "@/components/upgrade-modal";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -431,6 +433,11 @@ function ProjectWorkspacePage() {
   const [aiAssistAction, setAiAssistAction] = useState<string>("improve_writing");
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [generatingAi, setGeneratingAi] = useState(false);
+
+  // Upgrade to Scholar Pro State
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<UpgradeReason>("general");
+  const isPro = isUserPremium(user);
 
   // AI Research Assistant Chat & Conversation History State
   const [chatMessages, setChatMessages] = useState<
@@ -855,6 +862,13 @@ function ProjectWorkspacePage() {
   }, [project?.progress]);
 
   const handleGenerateRoadmap = async () => {
+    if (!isPro) {
+      setIsGenerateRoadmapModalOpen(false);
+      setUpgradeReason("roadmap");
+      setIsUpgradeModalOpen(true);
+      toast.info("AI Research Roadmap Generator is a Scholar Pro feature.");
+      return;
+    }
     if (!project) return;
     if (!selectedRoadmapWorkId) {
       toast.error("Please select a research work first.");
@@ -869,7 +883,10 @@ function ProjectWorkspacePage() {
     try {
       const res = await fetch("/api/projects/roadmap", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": user?.email || "",
+        },
         body: JSON.stringify({
           projectId: project.id || project._id || projectId,
           researchWorkId: selectedRoadmapWorkId,
@@ -1104,6 +1121,22 @@ ${s.keyTakeaway}
     loadProjectPapers(projectId);
     fetchProjectReviews(projectId);
     loadResearchWork(projectId);
+
+    // Sync subscription status with MongoDB
+    fetch(`/api/payments/status?email=${encodeURIComponent(session.email)}`)
+      .then((res) => res.json())
+      .then((statusData) => {
+        if (typeof statusData?.isPremium === "boolean" && statusData.isPremium !== session.isPremium) {
+          const updated: UserSession = {
+            ...session,
+            isPremium: statusData.isPremium,
+            premiumPlan: statusData.premiumPlan || undefined,
+          };
+          setUserSession(updated);
+          setUser(updated);
+        }
+      })
+      .catch(() => {});
   }, [projectId]);
 
   // Helper to construct a content snapshot string for change detection
@@ -1693,6 +1726,12 @@ ${s.keyTakeaway}
   };
 
   const handleOpenAiAssistForSection = (sectionId: string) => {
+    if (!isPro) {
+      setUpgradeReason("ai-assist");
+      setIsUpgradeModalOpen(true);
+      toast.info("AI Section Assist is a Scholar Pro feature. Upgrade to unlock!");
+      return;
+    }
     if (!activeWorkDoc) return;
     const docType = activeWorkDoc.templateType || activeWorkDoc.documentType || "Research Paper";
     let title = "Section";
@@ -1728,6 +1767,14 @@ ${s.keyTakeaway}
   }, [aiAssistSectionId, activeWorkDoc]);
 
   const handleGenerateAiAssist = async () => {
+    if (!isPro) {
+      setAiAssistSectionId(null);
+      setUpgradeReason("ai-assist");
+      setIsUpgradeModalOpen(true);
+      toast.info("AI Section Assist is a Scholar Pro feature.");
+      return;
+    }
+
     if (!aiAssistSectionId || !activeWorkDoc) return;
     setGeneratingAi(true);
     setAiSuggestion(null);
@@ -1767,6 +1814,7 @@ ${s.keyTakeaway}
           domain: project?.domain,
           projectAbstract: project?.abstract || project?.description,
           projectId: project?.id || project?._id || projectId,
+          userEmail: user?.email,
         }),
       });
 
@@ -1779,6 +1827,11 @@ ${s.keyTakeaway}
         }
       } else {
         const data = await res.json().catch(() => ({}));
+        if (data.requiresUpgrade) {
+          setAiAssistSectionId(null);
+          setUpgradeReason("ai-assist");
+          setIsUpgradeModalOpen(true);
+        }
         toast.error(data.error || "Failed to generate AI suggestion.");
       }
     } catch (err) {
@@ -3795,9 +3848,14 @@ ${s.keyTakeaway}
                             size="sm"
                             variant="ghost"
                             onClick={() => handleOpenAiAssistForSection("abstract")}
-                            className="h-7 px-2.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded-xl gap-1"
+                            className="h-7 px-2.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded-xl gap-1.5"
                           >
                             <Sparkles className="h-3.5 w-3.5" /> AI Assist
+                            {!isPro && (
+                              <span className="inline-flex items-center rounded-sm bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 text-[0.58rem] font-black px-1.5 py-0.2 tracking-wider shadow-xs">
+                                PRO
+                              </span>
+                            )}
                           </Button>
                         )}
                       </div>
@@ -3980,9 +4038,14 @@ ${s.keyTakeaway}
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => handleOpenAiAssistForSection(sec.id)}
-                                className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1 font-semibold"
+                                className="h-6 px-2 text-[0.7rem] text-primary hover:bg-primary/10 rounded-lg gap-1.5 font-semibold"
                               >
                                 <Sparkles className="h-3 w-3" /> AI Assist Section
+                                {!isPro && (
+                                  <span className="inline-flex items-center rounded-sm bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 text-[0.56rem] font-black px-1 py-0.2 tracking-wider shadow-xs">
+                                    PRO
+                                  </span>
+                                )}
                               </Button>
                             )}
                           </div>
@@ -4285,6 +4348,11 @@ ${s.keyTakeaway}
                     ) : (
                       <Button
                         onClick={() => {
+                          if (!isPro) {
+                            setUpgradeReason("roadmap");
+                            setIsUpgradeModalOpen(true);
+                            return;
+                          }
                           if (!selectedRoadmapWorkId) {
                             toast.error("Please select a research work first.");
                             return;
@@ -4300,6 +4368,11 @@ ${s.keyTakeaway}
                         {selectedRoadmapWork && Array.isArray(selectedRoadmapWork.roadmap) && selectedRoadmapWork.roadmap.length > 0
                           ? "Regenerate Plan"
                           : "Generate Roadmap"}
+                        {!isPro && (
+                          <span className="inline-flex items-center rounded-sm bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 text-[0.58rem] font-black px-1.5 py-0.2 tracking-wider shadow-xs">
+                            PRO
+                          </span>
+                        )}
                       </Button>
                     )}
 
@@ -4482,10 +4555,22 @@ ${s.keyTakeaway}
                   </div>
 
                   <Button
-                    onClick={() => setIsGenerateRoadmapModalOpen(true)}
+                    onClick={() => {
+                      if (!isPro) {
+                        setUpgradeReason("roadmap");
+                        setIsUpgradeModalOpen(true);
+                        return;
+                      }
+                      setIsGenerateRoadmapModalOpen(true);
+                    }}
                     className="gap-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-md hover:bg-primary/90 px-6 py-2.5"
                   >
                     <Sparkles className="h-4 w-4" /> Generate AI Research Roadmap
+                    {!isPro && (
+                      <span className="inline-flex items-center rounded-sm bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-500 dark:text-amber-400 border border-amber-500/30 text-[0.58rem] font-black px-1.5 py-0.2 tracking-wider shadow-xs">
+                        PRO
+                      </span>
+                    )}
                   </Button>
                 </div>
               )}
@@ -6853,6 +6938,19 @@ ${s.keyTakeaway}
           </div>
         </div>
       )}
+
+      {/* Upgrade to Scholar Pro Modal */}
+      <UpgradeModal
+        open={isUpgradeModalOpen}
+        onOpenChange={setIsUpgradeModalOpen}
+        reason={upgradeReason}
+        onSuccess={() => {
+          if (user?.email && projectId) {
+            fetchProject(user.email, projectId);
+            loadResearchWork(projectId);
+          }
+        }}
+      />
     </DashboardLayout>
   );
 }
