@@ -1240,7 +1240,7 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
 
       // Update User Document in MongoDB
       const usersCol = await getCollection<UserRecord>("users");
-      await usersCol.updateOne(
+      const updateResult = await usersCol.updateOne(
         {
           $or: [
             { email: normalizedEmail },
@@ -1258,6 +1258,23 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
           },
         }
       );
+
+      if (updateResult.matchedCount === 0) {
+        await usersCol.insertOne({
+          email: normalizedEmail,
+          name: normalizedEmail.split("@")[0],
+          password: "",
+          role: "student",
+          createdAt: now,
+          profileCompleted: false,
+          isPremium: true,
+          premiumPlan: finalPlanName,
+          premiumSince: now,
+          razorpayPaymentId: razorpay_payment_id,
+          razorpayOrderId: razorpay_order_id,
+          updatedAt: now,
+        });
+      }
 
       const invoiceNumber = `INV-SN-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
       const amountRupees = planId === "monthly" ? 199 : 499;
@@ -6357,6 +6374,16 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         researchInterests: user.researchInterests,
         areasOfExpertise: user.areasOfExpertise,
         orcid: user.orcid,
+        displayName: user.displayName || user.name,
+        affiliation: user.affiliation || user.institution,
+        bio: user.bio,
+        photoURL: user.photoURL,
+        profileImage: user.profileImage || user.photoURL,
+        isPremium: Boolean(user.isPremium),
+        premiumPlan: user.premiumPlan || null,
+        premiumSince: user.premiumSince || null,
+        razorpayPaymentId: user.razorpayPaymentId || null,
+        razorpayOrderId: user.razorpayOrderId || null,
       }),
       {
         status: 200,
@@ -6435,6 +6462,26 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
         name: user.name,
         role: user.role,
         profileCompleted: user.profileCompleted,
+        displayName: user.displayName || user.name,
+        affiliation: user.affiliation || user.institution,
+        bio: user.bio,
+        photoURL: user.photoURL,
+        profileImage: user.profileImage || user.photoURL,
+        status: user.status || "Active",
+        approvalStatus: user.approvalStatus || (user.status === "Pending" ? "Pending" : "Approved"),
+        institution: user.institution || user.affiliation,
+        department: user.department,
+        designation: user.designation,
+        facultyId: user.facultyId,
+        phone: user.phone,
+        researchInterests: user.researchInterests,
+        areasOfExpertise: user.areasOfExpertise,
+        orcid: user.orcid,
+        isPremium: Boolean(user.isPremium),
+        premiumPlan: user.premiumPlan || null,
+        premiumSince: user.premiumSince || null,
+        razorpayPaymentId: user.razorpayPaymentId || null,
+        razorpayOrderId: user.razorpayOrderId || null,
       }),
       {
         status: 200,

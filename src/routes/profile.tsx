@@ -276,6 +276,11 @@ function UserProfilePage() {
         profileImage: updatedUserRecord?.profileImage ?? profileImage,
         photoURL: updatedUserRecord?.photoURL ?? profileImage,
         profileCompleted: true,
+        isPremium: updatedUserRecord?.isPremium !== undefined ? Boolean(updatedUserRecord.isPremium) : user.isPremium,
+        premiumPlan: updatedUserRecord?.premiumPlan || user.premiumPlan,
+        premiumSince: updatedUserRecord?.premiumSince || user.premiumSince,
+        razorpayPaymentId: updatedUserRecord?.razorpayPaymentId || user.razorpayPaymentId,
+        razorpayOrderId: updatedUserRecord?.razorpayOrderId || user.razorpayOrderId,
       };
 
       setUserSession(newSession);

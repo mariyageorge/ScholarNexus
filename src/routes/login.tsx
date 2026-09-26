@@ -67,6 +67,7 @@ function LoginPage() {
         provider: data.provider,
         providerId: data.providerId,
         photoURL: data.photoURL,
+        profileImage: data.profileImage || data.photoURL,
         status: data.status,
         approvalStatus: data.approvalStatus,
         institution: data.institution,
@@ -76,6 +77,11 @@ function LoginPage() {
         researchInterests: data.researchInterests,
         areasOfExpertise: data.areasOfExpertise,
         orcid: data.orcid,
+        isPremium: Boolean(data.isPremium),
+        premiumPlan: data.premiumPlan || undefined,
+        premiumSince: data.premiumSince || undefined,
+        razorpayPaymentId: data.razorpayPaymentId || undefined,
+        razorpayOrderId: data.razorpayOrderId || undefined,
       };
       setUserSession(userPayload);
       if (remember) {
@@ -133,6 +139,21 @@ function LoginPage() {
         provider: data.provider,
         providerId: data.providerId,
         photoURL: data.photoURL,
+        profileImage: data.profileImage || data.photoURL,
+        status: data.status,
+        approvalStatus: data.approvalStatus,
+        institution: data.institution,
+        department: data.department,
+        designation: data.designation,
+        facultyId: data.facultyId,
+        researchInterests: data.researchInterests,
+        areasOfExpertise: data.areasOfExpertise,
+        orcid: data.orcid,
+        isPremium: Boolean(data.isPremium),
+        premiumPlan: data.premiumPlan || undefined,
+        premiumSince: data.premiumSince || undefined,
+        razorpayPaymentId: data.razorpayPaymentId || undefined,
+        razorpayOrderId: data.razorpayOrderId || undefined,
       };
       setUserSession(userPayload);
       localStorage.removeItem("scholarnexusRemember");

@@ -238,6 +238,7 @@ function ResearchProjectsPage() {
             ...session,
             isPremium: statusData.isPremium,
             premiumPlan: statusData.premiumPlan || undefined,
+            premiumSince: statusData.premiumSince || undefined,
           };
           setUserSession(updated);
           setUser(updated);

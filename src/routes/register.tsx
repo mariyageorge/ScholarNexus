@@ -363,8 +363,14 @@ function RegisterPage() {
         provider: data.provider,
         providerId: data.providerId,
         photoURL: data.photoURL,
+        profileImage: data.profileImage || data.photoURL,
         status: data.status,
         approvalStatus: data.approvalStatus,
+        isPremium: Boolean(data.isPremium),
+        premiumPlan: data.premiumPlan || undefined,
+        premiumSince: data.premiumSince || undefined,
+        razorpayPaymentId: data.razorpayPaymentId || undefined,
+        razorpayOrderId: data.razorpayOrderId || undefined,
       };
       setUserSession(userPayload);
       localStorage.removeItem("scholarnexusRemember");
