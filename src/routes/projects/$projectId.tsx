@@ -302,6 +302,7 @@ function ProjectWorkspacePage() {
   const [supervisionRequest, setSupervisionRequest] = useState<any | null>(null);
   const [supervisionHistory, setSupervisionHistory] = useState<any[]>([]);
   const [isRequestSupervisorModalOpen, setIsRequestSupervisorModalOpen] = useState(false);
+  const [selectedWorkForSupervision, setSelectedWorkForSupervision] = useState<any | null>(null);
   const [facultySearchQuery, setFacultySearchQuery] = useState("");
   const [selectedFaculty, setSelectedFaculty] = useState<any | null>(null);
   const [requestMessage, setRequestMessage] = useState("I would like you to supervise my research project.");
@@ -1338,18 +1339,25 @@ ${s.keyTakeaway}
     return currentSnapshot !== initialSnapshot;
   }, [activeWorkDoc]);
 
+  const isWorkDocSupervised = (doc: any) => {
+    if (!doc) return false;
+    const status = doc.supervisionStatus;
+    const hasFaculty = Boolean(doc.assignedFacultyId || doc.assignedFacultyEmail || doc.facultyEmail || doc.facultyId);
+    return (status === "Under Supervision" || status === "Approved") && hasFaculty;
+  };
+
   const canRequestReview = useMemo(() => {
     if (!activeWorkDoc) return false;
-    if (currentSupervisionState !== "Approved") return false;
+    if (!isWorkDocSupervised(activeWorkDoc)) return false;
     const status = activeWorkDoc.reviewStatus || "Draft";
     if (status === "Pending Review") return false;
     if (status === "Draft") return true;
     return hasContentChangedSinceReview;
-  }, [activeWorkDoc, currentSupervisionState, hasContentChangedSinceReview]);
+  }, [activeWorkDoc, hasContentChangedSinceReview]);
 
   const canRequestReviewForDoc = (doc: any) => {
     if (!doc) return false;
-    if (currentSupervisionState !== "Approved") return false;
+    if (!isWorkDocSupervised(doc)) return false;
     const status = doc.reviewStatus || "Draft";
     if (status === "Pending Review") return false;
     if (status === "Draft") return true;
@@ -1413,8 +1421,8 @@ ${s.keyTakeaway}
     if (!workDoc) return;
     const docId = workDoc.id || workDoc._id;
 
-    if (currentSupervisionState !== "Approved") {
-      toast.error("Faculty supervision required. Request and receive approval from a faculty supervisor before submitting your Research Work for faculty review.");
+    if (!isWorkDocSupervised(workDoc)) {
+      toast.error("Faculty supervision required for this Research Work. Request and receive approval from a faculty supervisor before submitting for review.");
       return;
     }
 
@@ -2067,41 +2075,57 @@ ${s.keyTakeaway}
       toast.error("Please select a faculty member to send a request.");
       return;
     }
-    if (currentSupervisionState === "Pending") {
-      toast.error("An active supervision request is already pending faculty approval.");
+
+    const targetWork = selectedWorkForSupervision || (researchWorkList.length === 1 ? researchWorkList[0] : null);
+    if (!targetWork) {
+      toast.error("Please select the Research Work you wish to request supervision for.");
       return;
     }
-    if (currentSupervisionState === "Approved") {
-      toast.error("This project already has an approved faculty supervisor.");
+
+    const targetWorkId = targetWork.id || targetWork._id;
+
+    if (targetWork.supervisionStatus === "Pending Approval" || targetWork.supervisionStatus === "Pending") {
+      toast.error("An active supervision request is already pending for this Research Work.");
       return;
     }
+    if ((targetWork.supervisionStatus === "Under Supervision" || targetWork.supervisionStatus === "Approved") && (targetWork.assignedFacultyId || targetWork.facultyEmail || targetWork.facultyId)) {
+      toast.error("This Research Work already has an approved faculty supervisor.");
+      return;
+    }
+
     setSendingRequest(true);
     try {
       const res = await fetch("/api/supervision-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          researchWorkId: String(targetWorkId),
+          workId: String(targetWorkId),
+          workTitle: targetWork.title || targetWork.templateType || "Research Work",
+          templateType: targetWork.templateType || "Research Paper",
           projectId: project._id || project.id || projectId,
           studentId: user.email,
           studentEmail: user.email,
           studentName: user.name || user.displayName || "Student Scholar",
-          facultyId: selectedFaculty.id || selectedFaculty._id,
+          facultyId: selectedFaculty.id || selectedFaculty._id || selectedFaculty.email,
           facultyEmail: selectedFaculty.email,
           facultyName: selectedFaculty.name,
-          message: requestMessage.trim() || "I would like you to supervise my research project.",
+          message: requestMessage.trim() || `I would like you to supervise my research work: "${targetWork.title || "Research Work"}".`,
           projectTitle: project.title,
           domain: project.domain,
-          abstract: project.description || project.abstract || "",
+          abstract: targetWork.abstract || project.description || project.abstract || "",
         }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        toast.success(`Supervision request sent to ${selectedFaculty.name}!`);
+        toast.success(`Supervision request sent to ${selectedFaculty.name} for "${targetWork.title || "Research Work"}"!`);
         setIsRequestSupervisorModalOpen(false);
         setSelectedFaculty(null);
+        setSelectedWorkForSupervision(null);
         fetchProject(user.email, projectId);
         fetchSupervisionRequest(projectId);
+        loadResearchWork(projectId);
       } else {
         toast.error(data.error || "Failed to send supervision request.");
       }
@@ -3107,134 +3131,92 @@ ${s.keyTakeaway}
                 <Card className="surface-elevated rounded-2xl border-border bg-card p-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                      <GraduationCap className="h-4 w-4 text-primary" /> Supervisor
+                      <GraduationCap className="h-4 w-4 text-primary" /> Faculty Supervision
                     </h3>
-                    <Badge
-                      variant="outline"
-                      className={
-                        currentSupervisionState === "Approved"
-                          ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.7rem] font-bold"
-                          : currentSupervisionState === "Pending"
-                          ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.7rem] font-bold"
-                          : currentSupervisionState === "Rejected"
-                          ? "border-destructive/30 text-destructive bg-destructive/10 text-[0.7rem] font-bold"
-                          : "border-muted-foreground/30 text-muted-foreground bg-muted/40 text-[0.7rem] font-semibold"
-                      }
-                    >
-                      {currentSupervisionState === "Approved"
-                        ? "Under Supervision"
-                        : currentSupervisionState === "Pending"
-                        ? "Pending Approval"
-                        : currentSupervisionState === "Rejected"
-                        ? "Request Rejected"
-                        : "No Faculty Assigned"}
+                    <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.7rem] font-semibold">
+                      Research-Work Scoped
                     </Badge>
                   </div>
 
-                  {/* STATE 1: Pending Approval */}
-                  {currentSupervisionState === "Pending" && (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-500/10 text-amber-500 font-bold shrink-0">
-                          <Clock className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <h4 className="font-bold text-xs text-foreground">
-                            {supervisionRequest?.facultyName || project?.requestedFacultyName || "Faculty Advisor"}
-                          </h4>
-                          <p className="text-[0.7rem] text-muted-foreground">
-                            Requested on {supervisionRequest?.submittedAt ? new Date(supervisionRequest.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : (supervisionRequest?.submittedDate || "Recently")}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg bg-background/80 border border-amber-500/20 p-2.5 text-[0.725rem] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-2">
-                        <Clock className="h-3.5 w-3.5 shrink-0" />
-                        <span>Waiting for faculty approval.</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* STATE 2: Approved - Under Supervision */}
-                  {currentSupervisionState === "Approved" && (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
-                      <div className="flex items-center gap-3">
-                        {assignedFacultyDetails?.photoURL ? (
-                          <img src={assignedFacultyDetails.photoURL} alt={project?.faculty || ""} className="h-10 w-10 rounded-xl object-cover border border-emerald-500/30" />
-                        ) : (
-                          <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 font-bold text-sm">
-                            {(project?.faculty || supervisionRequest?.facultyName || "F").charAt(0)}
-                          </div>
-                        )}
-                        <div>
-                          <h4 className="font-bold text-xs text-foreground">{project?.faculty || supervisionRequest?.facultyName}</h4>
-                          <p className="text-[0.7rem] text-muted-foreground">
-                            {assignedFacultyDetails?.designation || assignedFacultyDetails?.title || "Faculty Supervisor"} • {assignedFacultyDetails?.department || "Academic Department"}
-                          </p>
-                          <p className="text-[0.68rem] text-muted-foreground mt-0.5">
-                            Approved on {supervisionRequest?.respondedAt ? new Date(supervisionRequest.respondedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : (project?.updatedAt ? new Date(project.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently")}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* STATE 3: Request Rejected */}
-                  {currentSupervisionState === "Rejected" && (
-                    <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
-                      <div className="flex items-start gap-2.5">
-                        <div className="grid h-8 w-8 place-items-center rounded-lg bg-destructive/10 text-destructive font-bold shrink-0 mt-0.5">
-                          <X className="h-4 w-4" />
-                        </div>
-                        <div className="space-y-1.5 flex-1">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-bold text-xs text-foreground">
-                              {supervisionRequest?.facultyName || "Faculty Advisor"}
-                            </h4>
-                            <span className="text-[0.68rem] text-muted-foreground">
-                              Rejected on {supervisionRequest?.respondedAt ? new Date(supervisionRequest.respondedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently"}
-                            </span>
-                          </div>
-                          <div className="rounded-lg bg-background/80 border border-destructive/20 p-2.5 text-[0.725rem]">
-                            <p className="font-semibold text-foreground mb-0.5">Rejection Reason:</p>
-                            <p className="text-muted-foreground italic">"{supervisionRequest?.facultyRemarks || project?.lastRejectionReason || "No reason provided."}"</p>
-                          </div>
-                        </div>
-                      </div>
+                  {researchWorkList.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border p-4 text-center space-y-2 bg-muted/20">
+                      <h4 className="font-bold text-xs text-foreground">No Research Work Yet</h4>
+                      <p className="text-[0.7rem] text-muted-foreground">
+                        Create an academic paper or report to request faculty supervision.
+                      </p>
                       <Button
-                        onClick={() => {
-                          setSelectedFaculty(null);
-                          setRequestMessage("I would like you to supervise my research project.");
-                          setIsRequestSupervisorModalOpen(true);
-                        }}
                         size="sm"
-                        className="w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground gap-1.5 shadow-sm"
+                        variant="outline"
+                        onClick={handleOpenCreateWorkModal}
+                        className="rounded-xl text-xs font-semibold gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
                       >
-                        <RefreshCcw className="h-3.5 w-3.5" /> Request Again
+                        <Plus className="h-3.5 w-3.5" /> + Add Research Work
                       </Button>
                     </div>
-                  )}
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        {researchWorkList.map((work) => {
+                          const isSupervised = (work.supervisionStatus === "Under Supervision" || work.supervisionStatus === "Approved") && Boolean(work.assignedFacultyId || work.facultyEmail || work.facultyId);
+                          const isPending = work.supervisionStatus === "Pending Approval" || work.supervisionStatus === "Pending";
+                          const isRejected = work.supervisionStatus === "Rejected";
+                          const facultyName = work.assignedFacultyName || work.facultyName || work.requestedFacultyName || "Faculty Supervisor";
 
-                  {/* STATE 4: No Faculty Assigned */}
-                  {currentSupervisionState === "No Faculty" && (
-                    <div className="rounded-xl border border-dashed border-border p-4 text-center space-y-3 bg-muted/20">
-                      <div>
-                        <h4 className="font-bold text-xs text-foreground">No Faculty Assigned</h4>
-                        <p className="text-[0.7rem] text-muted-foreground mt-1">
-                          Choose a faculty member to request supervision.
-                        </p>
+                          return (
+                            <div key={work.id || work._id} className="rounded-xl border border-border/80 bg-background/60 p-3 text-xs space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="space-y-0.5 min-w-0">
+                                  <p className="font-bold text-foreground truncate text-xs" title={work.title}>
+                                    {work.title}
+                                  </p>
+                                  <span className="text-[0.65rem] text-muted-foreground block">
+                                    {work.templateType || "Research Paper"}
+                                  </span>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    isSupervised
+                                      ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 text-[0.65rem] font-bold shrink-0"
+                                      : isPending
+                                      ? "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[0.65rem] font-bold shrink-0"
+                                      : isRejected
+                                      ? "border-destructive/30 text-destructive bg-destructive/10 text-[0.65rem] font-bold shrink-0"
+                                      : "border-muted text-muted-foreground bg-muted/40 text-[0.65rem] shrink-0"
+                                  }
+                                >
+                                  {isSupervised ? "Supervised" : isPending ? "Pending" : isRejected ? "Rejected" : "Not Assigned"}
+                                </Badge>
+                              </div>
+
+                              <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground pt-1 border-t border-border/40">
+                                <span className="truncate">
+                                  {isSupervised
+                                    ? `Advisor: Dr. ${facultyName}`
+                                    : isPending
+                                    ? `Requested: Dr. ${facultyName}`
+                                    : isRejected
+                                    ? `Rejected by Dr. ${facultyName}`
+                                    : "No faculty supervisor assigned"}
+                                </span>
+                                {(!isSupervised && !isPending) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedWorkForSupervision(work);
+                                      setSelectedFaculty(null);
+                                      setIsRequestSupervisorModalOpen(true);
+                                    }}
+                                    className="text-primary font-bold hover:underline shrink-0 ml-2"
+                                  >
+                                    Request
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <Button
-                        onClick={() => {
-                          setSelectedFaculty(null);
-                          setRequestMessage("I would like you to supervise my research project.");
-                          setIsRequestSupervisorModalOpen(true);
-                        }}
-                        size="sm"
-                        className="w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground gap-1.5 shadow-sm"
-                      >
-                        <UserCheck className="h-3.5 w-3.5" /> Request Supervision
-                      </Button>
                     </div>
                   )}
 
@@ -3242,13 +3224,13 @@ ${s.keyTakeaway}
                   {supervisionHistory.length > 0 && (
                     <div className="pt-3 border-t border-border/60 space-y-2">
                       <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Request History
+                        <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Supervision Requests Log
                       </h4>
                       <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                         {supervisionHistory.map((item: any, idx: number) => (
                           <div key={item.id || item._id || idx} className="rounded-xl border border-border bg-background/60 p-2.5 text-xs space-y-1">
                             <div className="flex items-center justify-between">
-                              <span className="font-semibold text-foreground">{item.facultyName || "Faculty Supervisor"}</span>
+                              <span className="font-semibold text-foreground truncate max-w-[140px]">{item.researchWorkTitle || item.facultyName || "Supervision"}</span>
                               <Badge
                                 variant="outline"
                                 className={
@@ -3263,6 +3245,7 @@ ${s.keyTakeaway}
                               </Badge>
                             </div>
                             <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
+                              <span>Dr. {item.facultyName || "Faculty"}</span>
                               <span>
                                 {item.submittedAt
                                   ? new Date(item.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
@@ -3483,10 +3466,46 @@ ${s.keyTakeaway}
                           {activeWorkDoc.reviewStatus === "Changes Requested" && <AlertCircle className="h-3 w-3 text-amber-500" />}
                           {activeWorkDoc.reviewStatus || "Draft"}
                         </Badge>
-                        {currentSupervisionState === "Approved" && (
-                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-xs font-semibold rounded-full px-3">
-                            <GraduationCap className="h-3 w-3 mr-1" /> Under Supervision
+                        {/* Active Research Work Supervision Status & Action */}
+                        {(activeWorkDoc.supervisionStatus === "Under Supervision" || activeWorkDoc.supervisionStatus === "Approved") && (activeWorkDoc.assignedFacultyName || activeWorkDoc.facultyName || activeWorkDoc.assignedFacultyId || activeWorkDoc.facultyEmail) ? (
+                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 text-xs font-semibold rounded-full px-3">
+                            <GraduationCap className="h-3 w-3 mr-1" /> Supervisor: Dr. {activeWorkDoc.assignedFacultyName || activeWorkDoc.facultyName || "Faculty"}
                           </Badge>
+                        ) : activeWorkDoc.supervisionStatus === "Pending Approval" || activeWorkDoc.supervisionStatus === "Pending" ? (
+                          <Badge variant="outline" className="border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-xs font-semibold rounded-full px-3">
+                            <Clock className="h-3 w-3 mr-1" /> Pending Supervisor: Dr. {activeWorkDoc.requestedFacultyName || "Faculty"}
+                          </Badge>
+                        ) : activeWorkDoc.supervisionStatus === "Rejected" ? (
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="border-destructive/30 text-destructive bg-destructive/10 text-xs font-semibold rounded-full px-3">
+                              <AlertCircle className="h-3 w-3 mr-1" /> Supervision Rejected
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedWorkForSupervision(activeWorkDoc);
+                                setSelectedFaculty(null);
+                                setIsRequestSupervisorModalOpen(true);
+                              }}
+                              className="h-6 px-2.5 rounded-full text-[0.7rem] font-bold border-primary/40 text-primary hover:bg-primary/10"
+                            >
+                              Request Again
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedWorkForSupervision(activeWorkDoc);
+                              setSelectedFaculty(null);
+                              setIsRequestSupervisorModalOpen(true);
+                            }}
+                            className="h-6 px-2.5 rounded-full text-[0.7rem] font-bold border-primary/40 text-primary hover:bg-primary/10 gap-1"
+                          >
+                            <UserCheck className="h-3 w-3" /> Request Faculty Supervisor
+                          </Button>
                         )}
                       </div>
 
@@ -3583,8 +3602,8 @@ ${s.keyTakeaway}
                             <TooltipContent className="max-w-xs text-xs">
                               {activeWorkDoc.reviewStatus === "Approved"
                                 ? "This document has been approved by your faculty supervisor and is permanently read-only."
-                                : currentSupervisionState !== "Approved"
-                                ? "Faculty supervision required before submitting review requests."
+                                : !(activeWorkDoc.supervisionStatus === "Under Supervision" || activeWorkDoc.supervisionStatus === "Approved")
+                                ? "Faculty supervision required for this Research Work before submitting review requests."
                                 : activeWorkDoc.reviewStatus === "Pending Review"
                                 ? "An active review request is already pending with your supervisor."
                                 : "Make meaningful edits to your research document to enable requesting another review."}
@@ -3625,12 +3644,12 @@ ${s.keyTakeaway}
                   </div>
 
                   {/* Supervision Notice if not approved */}
-                  {currentSupervisionState !== "Approved" && (
+                  {!((activeWorkDoc.supervisionStatus === "Under Supervision" || activeWorkDoc.supervisionStatus === "Approved") && Boolean(activeWorkDoc.assignedFacultyId || activeWorkDoc.facultyEmail || activeWorkDoc.facultyId)) && (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-3 text-xs">
                       <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                      <p className="text-amber-800 dark:text-amber-300 text-[0.725rem] leading-relaxed">
-                        <span className="font-bold">Faculty supervision required:</span> Request and receive approval from a faculty supervisor before submitting your Research Work for review.
-                      </p>
+                      <div className="flex-1 text-[0.725rem] leading-relaxed text-amber-800 dark:text-amber-300">
+                        <span className="font-bold">Faculty supervision required for this Research Work:</span> Request and receive approval from a faculty supervisor before submitting for review.
+                      </div>
                     </div>
                   )}
 
@@ -4119,153 +4138,206 @@ ${s.keyTakeaway}
                 ) : (
                   /* ALL RESEARCH WORKS CARDS GRID */
                   <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-2">
-                    {researchWorkList.map((doc) => (
-                      <Card key={doc.id || doc._id} className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs hover:border-primary/40 transition-all flex flex-col justify-between">
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
-                            <div className="space-y-1 min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.68rem] font-semibold rounded-full px-2.5">
-                                  {doc.templateType || "Research Paper"}
-                                </Badge>
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    doc.reviewStatus === "Pending Review"
-                                      ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
-                                      : doc.reviewStatus === "Reviewed" || doc.reviewStatus === "Changes Requested"
-                                      ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
-                                      : "text-muted-foreground text-[0.68rem] border-border/80 bg-muted/40 rounded-full px-2.5"
-                                  }
-                                >
-                                  {doc.reviewStatus || "Draft"}
-                                </Badge>
+                    {researchWorkList.map((doc) => {
+                      const isSupervised = (doc.supervisionStatus === "Under Supervision" || doc.supervisionStatus === "Approved") && Boolean(doc.assignedFacultyId || doc.facultyEmail || doc.facultyId);
+                      const isPendingSup = doc.supervisionStatus === "Pending Approval" || doc.supervisionStatus === "Pending";
+                      const isRejectedSup = doc.supervisionStatus === "Rejected";
+                      const facName = doc.assignedFacultyName || doc.facultyName || doc.requestedFacultyName;
+
+                      return (
+                        <Card key={doc.id || doc._id} className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-xs hover:border-primary/40 transition-all flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3">
+                              <div className="space-y-1.5 min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <Badge variant="outline" className="border-primary/30 text-primary bg-primary/10 text-[0.68rem] font-semibold rounded-full px-2.5">
+                                    {doc.templateType || "Research Paper"}
+                                  </Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      doc.reviewStatus === "Pending Review"
+                                        ? "border-amber-500/30 text-amber-500 bg-amber-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
+                                        : doc.reviewStatus === "Reviewed" || doc.reviewStatus === "Changes Requested"
+                                        ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10 text-[0.68rem] font-semibold rounded-full px-2.5"
+                                        : "text-muted-foreground text-[0.68rem] border-border/80 bg-muted/40 rounded-full px-2.5"
+                                    }
+                                  >
+                                    {doc.reviewStatus || "Draft"}
+                                  </Badge>
+
+                                  {/* Supervisor Badge */}
+                                  {isSupervised ? (
+                                    <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 text-[0.68rem] font-bold rounded-full px-2.5 flex items-center gap-1">
+                                      <GraduationCap className="h-3 w-3" /> Dr. {facName || "Faculty"}
+                                    </Badge>
+                                  ) : isPendingSup ? (
+                                    <Badge variant="outline" className="border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[0.68rem] font-bold rounded-full px-2.5 flex items-center gap-1">
+                                      <Clock className="h-3 w-3" /> Pending: Dr. {facName || "Faculty"}
+                                    </Badge>
+                                  ) : isRejectedSup ? (
+                                    <Badge variant="outline" className="border-destructive/30 text-destructive bg-destructive/10 text-[0.68rem] font-bold rounded-full px-2.5 flex items-center gap-1">
+                                      <AlertCircle className="h-3 w-3" /> Rejected
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="border-muted text-muted-foreground bg-muted/40 text-[0.68rem] rounded-full px-2.5">
+                                      No Supervisor
+                                    </Badge>
+                                  )}
+                                </div>
+                                <h3 className="font-extrabold text-foreground text-base leading-snug truncate pt-1" title={doc.title}>
+                                  {doc.title}
+                                </h3>
+                                <p className="text-[0.68rem] text-muted-foreground flex items-center gap-1">
+                                  <FolderKanban className="h-3 w-3 text-muted-foreground shrink-0" />
+                                  <span className="truncate">{project.title}</span>
+                                </p>
                               </div>
-                              <h3 className="font-extrabold text-foreground text-base leading-snug truncate pt-1" title={doc.title}>
-                                {doc.title}
-                              </h3>
-                              <p className="text-[0.68rem] text-muted-foreground flex items-center gap-1">
-                                <FolderKanban className="h-3 w-3 text-muted-foreground shrink-0" />
-                                <span className="truncate">{project.title}</span>
-                              </p>
-                            </div>
 
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground shrink-0">
-                                  <MoreVertical className="h-3.5 w-3.5" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48 rounded-xl text-xs">
-                                <DropdownMenuItem onClick={() => setActiveWorkDoc(doc)} className="gap-2 cursor-pointer font-medium">
-                                  <FileEdit className="h-3.5 w-3.5 text-primary" /> Open Editor
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={!canRequestReviewForDoc(doc)}
-                                  onClick={() => handleRequestWorkReview(doc)}
-                                  className="gap-2 cursor-pointer font-medium disabled:opacity-50"
-                                >
-                                  <Send className="h-3.5 w-3.5 text-muted-foreground" /> Request Review
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setWorkToDelete(doc);
-                                    setIsDeleteWorkModalOpen(true);
-                                  }}
-                                  className="gap-2 cursor-pointer text-destructive focus:text-destructive font-semibold"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" /> Delete Research Work
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-
-                          {/* Abstract Preview */}
-                          {doc.abstract ? (
-                            <p className="text-xs text-muted-foreground line-clamp-2 italic leading-relaxed bg-muted/20 p-2.5 rounded-xl border border-border/40">
-                              "{doc.abstract}"
-                            </p>
-                          ) : (
-                            <p className="text-[0.7rem] text-muted-foreground italic bg-muted/10 p-2.5 rounded-xl border border-dashed border-border/40">
-                              No abstract written yet. Click Open Editor to write abstract.
-                            </p>
-                          )}
-
-                          {/* Latest Faculty Supervisor Feedback */}
-                          {doc.feedback && (
-                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[0.7rem] text-foreground italic space-y-0.5">
-                              <span className="font-bold text-emerald-600 dark:text-emerald-400 block not-italic flex items-center gap-1">
-                                <CheckCircle2 className="h-3 w-3" /> Faculty Supervisor Feedback:
-                              </span>
-                              <p className="line-clamp-2">"{doc.feedback}"</p>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="space-y-3 pt-3 border-t border-border/60">
-                          <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
-                            <span>
-                              {doc.sections?.length || 0} Sections • {doc.sections ? doc.sections.reduce((acc: number, s: any) => acc + (s.content ? s.content.trim().split(/\s+/).filter(Boolean).length : 0), 0) : 0} Words
-                            </span>
-                            <span>
-                              {doc.lastSaved ? `Saved ${new Date(doc.lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "Recently saved"}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => setActiveWorkDoc(doc)}
-                              className="rounded-xl text-xs font-semibold flex-1 h-8 bg-primary text-primary-foreground shadow-xs"
-                            >
-                              <FileEdit className="h-3.5 w-3.5 mr-1" /> Open Editor
-                            </Button>
-
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={!canRequestReviewForDoc(doc)}
-                                      onClick={() => handleRequestWorkReview(doc)}
-                                      className="rounded-xl text-xs font-semibold h-8 border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground shrink-0">
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48 rounded-xl text-xs">
+                                  <DropdownMenuItem onClick={() => setActiveWorkDoc(doc)} className="gap-2 cursor-pointer font-medium">
+                                    <FileEdit className="h-3.5 w-3.5 text-primary" /> Open Editor
+                                  </DropdownMenuItem>
+                                  {!isSupervised && !isPendingSup && (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setSelectedWorkForSupervision(doc);
+                                        setSelectedFaculty(null);
+                                        setIsRequestSupervisorModalOpen(true);
+                                      }}
+                                      className="gap-2 cursor-pointer font-medium"
                                     >
-                                      <Send className="h-3.5 w-3.5 mr-1" />
-                                      {doc.reviewStatus === "Pending Review" ? "Pending" : "Review"}
-                                    </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                {!canRequestReviewForDoc(doc) && (
-                                  <TooltipContent className="max-w-xs text-xs">
-                                    {currentSupervisionState !== "Approved"
-                                      ? "Faculty supervision required before submitting review requests."
-                                      : doc.reviewStatus === "Pending Review"
-                                      ? "An active review request is already pending with your supervisor."
-                                      : "Make meaningful edits to your research document to enable requesting another review."}
-                                  </TooltipContent>
-                                )}
-                              </Tooltip>
-                            </TooltipProvider>
+                                      <UserCheck className="h-3.5 w-3.5 text-primary" /> Request Faculty
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem
+                                    disabled={!canRequestReviewForDoc(doc)}
+                                    onClick={() => handleRequestWorkReview(doc)}
+                                    className="gap-2 cursor-pointer font-medium disabled:opacity-50"
+                                  >
+                                    <Send className="h-3.5 w-3.5 text-muted-foreground" /> Request Review
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setWorkToDelete(doc);
+                                      setIsDeleteWorkModalOpen(true);
+                                    }}
+                                    className="gap-2 cursor-pointer text-destructive focus:text-destructive font-semibold"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" /> Delete Research Work
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
 
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setWorkToDelete(doc);
-                                setIsDeleteWorkModalOpen(true);
-                              }}
-                              className="rounded-xl text-xs h-8 px-2.5 border-destructive/30 text-destructive hover:bg-destructive/10 shrink-0"
-                              title="Delete Research Work"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            {/* Abstract Preview */}
+                            {doc.abstract ? (
+                              <p className="text-xs text-muted-foreground line-clamp-2 italic leading-relaxed bg-muted/20 p-2.5 rounded-xl border border-border/40">
+                                "{doc.abstract}"
+                              </p>
+                            ) : (
+                              <p className="text-[0.7rem] text-muted-foreground italic bg-muted/10 p-2.5 rounded-xl border border-dashed border-border/40">
+                                No abstract written yet. Click Open Editor to write abstract.
+                              </p>
+                            )}
+
+                            {/* Latest Faculty Supervisor Feedback */}
+                            {doc.feedback && (
+                              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-[0.7rem] text-foreground italic space-y-0.5">
+                                <span className="font-bold text-emerald-600 dark:text-emerald-400 block not-italic flex items-center gap-1">
+                                  <CheckCircle2 className="h-3 w-3" /> Faculty Supervisor Feedback:
+                                </span>
+                                <p className="line-clamp-2">"{doc.feedback}"</p>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      </Card>
-                    ))}
+
+                          <div className="space-y-3 pt-3 border-t border-border/60">
+                            <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground">
+                              <span>
+                                {doc.sections?.length || 0} Sections • {doc.sections ? doc.sections.reduce((acc: number, s: any) => acc + (s.content ? s.content.trim().split(/\s+/).filter(Boolean).length : 0), 0) : 0} Words
+                              </span>
+                              <span>
+                                {doc.lastSaved ? `Saved ${new Date(doc.lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "Recently saved"}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => setActiveWorkDoc(doc)}
+                                className="rounded-xl text-xs font-semibold flex-1 h-8 bg-primary text-primary-foreground shadow-xs"
+                              >
+                                <FileEdit className="h-3.5 w-3.5 mr-1" /> Open Editor
+                              </Button>
+
+                              {!isSupervised && !isPendingSup && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSelectedWorkForSupervision(doc);
+                                    setSelectedFaculty(null);
+                                    setIsRequestSupervisorModalOpen(true);
+                                  }}
+                                  className="rounded-xl text-xs font-semibold h-8 border-primary/40 text-primary hover:bg-primary/10 gap-1"
+                                >
+                                  <UserCheck className="h-3.5 w-3.5" /> Request Faculty
+                                </Button>
+                              )}
+
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!canRequestReviewForDoc(doc)}
+                                        onClick={() => handleRequestWorkReview(doc)}
+                                        className="rounded-xl text-xs font-semibold h-8 border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
+                                      >
+                                        <Send className="h-3.5 w-3.5 mr-1" />
+                                        {doc.reviewStatus === "Pending Review" ? "Pending" : "Review"}
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  {!canRequestReviewForDoc(doc) && (
+                                    <TooltipContent className="max-w-xs text-xs">
+                                      {!isSupervised
+                                        ? "Faculty supervision required for this Research Work before submitting review requests."
+                                        : doc.reviewStatus === "Pending Review"
+                                        ? "An active review request is already pending with your supervisor."
+                                        : "Make meaningful edits to your research document to enable requesting another review."}
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
+                              </TooltipProvider>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setWorkToDelete(doc);
+                                  setIsDeleteWorkModalOpen(true);
+                                }}
+                                className="rounded-xl text-xs h-8 px-2.5 border-destructive/30 text-destructive hover:bg-destructive/10 shrink-0"
+                                title="Delete Research Work"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -5928,6 +6000,41 @@ ${s.keyTakeaway}
           </DialogHeader>
 
           <div className="space-y-4 py-2 overflow-y-auto flex-1 pr-1">
+            {/* Target Research Work Selector / Badge */}
+            {(() => {
+              const currentTarget = selectedWorkForSupervision || activeWorkDoc || researchWorkList[0];
+              return (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-primary uppercase tracking-wider">Target Research Work</span>
+                    <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary font-medium">
+                      {currentTarget?.paperType || "Research Document"}
+                    </Badge>
+                  </div>
+                  {researchWorkList.length > 1 ? (
+                    <select
+                      value={currentTarget?.id || currentTarget?._id || ""}
+                      onChange={(e) => {
+                        const found = researchWorkList.find((w: any) => (w.id || w._id) === e.target.value);
+                        if (found) setSelectedWorkForSupervision(found);
+                      }}
+                      className="w-full text-xs font-semibold bg-background border border-border rounded-lg px-2.5 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {researchWorkList.map((w: any) => (
+                        <option key={w.id || w._id} value={w.id || w._id}>
+                          {w.title || "Untitled Research Work"} ({w.paperType || "Research Paper"})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-xs font-bold text-foreground truncate">
+                      {currentTarget?.title || "Untitled Research Work"}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Search Input */}
             <div className="relative">
               <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-3" />

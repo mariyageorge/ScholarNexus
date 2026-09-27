@@ -33,6 +33,8 @@ interface RequestItem {
   id: string;
   _id?: string;
   projectId: string;
+  researchWorkId?: string;
+  researchWorkTitle?: string;
   studentName: string;
   studentEmail: string;
   email: string;
@@ -289,7 +291,16 @@ function SupervisionRequestsPage() {
                   {/* Details Container */}
                   <div className="rounded-2xl border border-border/80 bg-background p-4 space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="font-bold text-foreground text-xs sm:text-sm">{req.projectTitle}</h4>
+                      <div>
+                        <h4 className="font-bold text-foreground text-xs sm:text-sm">{req.projectTitle}</h4>
+                        {req.researchWorkTitle && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary bg-primary/5 font-semibold py-0">
+                              Target Work: {req.researchWorkTitle}
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
                       <span className="text-[0.68rem] text-muted-foreground">
                         Requested on {req.submittedAt}
                       </span>

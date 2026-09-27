@@ -113,7 +113,11 @@ function FacultyReviewsPage() {
     if (rev.documentId) {
       setLoadingWorkDoc(true);
       try {
-        const res = await fetch(`/api/research-work?id=${encodeURIComponent(rev.documentId)}`);
+        const res = await fetch(`/api/research-work?id=${encodeURIComponent(rev.documentId)}&userEmail=${encodeURIComponent(session?.email || "")}`, {
+          headers: {
+            "x-user-email": session?.email || "",
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && data.title) {
@@ -138,10 +142,14 @@ function FacultyReviewsPage() {
     try {
       const res = await fetch("/api/reviews", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": session?.email || "",
+        },
         body: JSON.stringify({
           id: selectedReview.id,
           feedback: feedbackInput.trim(),
+          reviewerEmail: session?.email || "",
         }),
       });
 

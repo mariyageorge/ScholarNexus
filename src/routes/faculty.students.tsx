@@ -316,7 +316,10 @@ function FacultyStudentsPage() {
 
       const res = await fetch("/api/reviews", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": session?.email || "",
+        },
         body: JSON.stringify({
           reviewId: activeReviewId,
           documentId: targetDocId,
@@ -324,6 +327,7 @@ function FacultyStudentsPage() {
           studentEmail: workspaceData?.student?.email,
           studentName: workspaceData?.student?.name,
           facultyEmail: session?.email,
+          reviewerEmail: session?.email,
           facultyName: session?.name,
           feedback: feedbackText.trim(),
           decisionStatus: decision,
