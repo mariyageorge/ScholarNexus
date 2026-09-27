@@ -22,6 +22,7 @@ import {
   UserCheck,
   Megaphone,
   BarChart3,
+  CreditCard,
 } from "lucide-react";
 import {
   Sidebar,
@@ -77,6 +78,7 @@ const adminMenu: SidebarMenuItemType[] = [
   { title: "Dashboard", url: "/admin", hash: "#dashboard", icon: LayoutDashboard },
   { title: "User Management", url: "/admin", hash: "#users", icon: Users },
   { title: "Faculty Approvals", url: "/admin", hash: "#approvals", icon: UserCheck },
+  { title: "Subscriptions & Billing", url: "/admin", hash: "#billing", icon: CreditCard },
   { title: "Research Projects", url: "/admin", hash: "#projects", icon: FolderKanban },
   { title: "Research Papers", url: "/admin", hash: "#papers", icon: FileText },
   { title: "Announcements", url: "/admin", hash: "#announcements", icon: Megaphone },

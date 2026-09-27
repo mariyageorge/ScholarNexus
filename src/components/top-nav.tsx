@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Sparkles, Megaphone, ArrowRight, Pin, ChevronDown, User, Settings, LogOut, Crown, Zap, FileText, Receipt } from "lucide-react";
+import { Bell, Sparkles, Megaphone, ArrowRight, Pin, ChevronDown, User, Settings, LogOut, Crown, Zap, FileText, Receipt, Shield } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -69,7 +69,9 @@ export function TopNav() {
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceData | null>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const isPro = isUserPremium(user);
+
+  const isAdmin = user?.role === "admin" || user?.email === "scholarnexusadmin@gmail.com";
+  const isStudentPro = !isAdmin && Boolean(user?.isPremium);
 
   const handleOpenInvoice = async () => {
     if (!user?.email) return;
@@ -187,7 +189,16 @@ export function TopNav() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        {isPro ? (
+        {isAdmin ? (
+          <div
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/25 font-bold text-[0.7rem] select-none shadow-xs"
+            title="ScholarNexus System Administrator"
+          >
+            <Shield className="h-3.5 w-3.5 text-primary" />
+            <span className="hidden sm:inline">Admin Console</span>
+            <span className="sm:hidden">Admin</span>
+          </div>
+        ) : isStudentPro ? (
           <button
             type="button"
             onClick={handleOpenInvoice}
@@ -300,21 +311,25 @@ export function TopNav() {
           </PopoverContent>
         </Popover>
 
-        {/* Top Right Profile Menu with Gold Pro Halo */}
+        {/* Top Right Profile Menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               className={`ml-1 flex items-center gap-2 rounded-full border transition select-none focus:outline-none cursor-pointer p-1 pr-3.5 ${
-                isPro
+                isStudentPro
                   ? "border-amber-400/80 bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-transparent hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.3)]"
+                  : isAdmin
+                  ? "border-primary/40 bg-primary/5 hover:border-primary/60 hover:bg-primary/10"
                   : "border-border bg-card hover:border-primary/50 hover:bg-accent/50"
               }`}
             >
               <div className="relative">
                 <Avatar
                   className={`h-7 w-7 transition-all ${
-                    isPro
+                    isStudentPro
                       ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-background shadow-[0_0_10px_rgba(245,158,11,0.6)]"
+                      : isAdmin
+                      ? "ring-1 ring-primary/40 border border-primary/30"
                       : "border border-border"
                   }`}
                 >
@@ -324,7 +339,7 @@ export function TopNav() {
                   <AvatarFallback
                     suppressHydrationWarning
                     className={
-                      isPro
+                      isStudentPro
                         ? "bg-gradient-to-br from-amber-500 to-yellow-600 text-slate-950 font-black text-[0.7rem]"
                         : "bg-primary text-[0.7rem] font-semibold text-primary-foreground"
                     }
@@ -332,7 +347,7 @@ export function TopNav() {
                     {getUserInitials(user)}
                   </AvatarFallback>
                 </Avatar>
-                {isPro && (
+                {isStudentPro && (
                   <div className="absolute -top-1.5 -right-1 bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 rounded-full p-0.5 shadow-sm">
                     <Crown className="h-2.5 w-2.5 fill-slate-950" />
                   </div>
@@ -346,11 +361,15 @@ export function TopNav() {
                 >
                   {userName}
                 </span>
-                {isPro && (
+                {isAdmin ? (
+                  <span className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-primary/15 text-primary font-black text-[0.6rem] border border-primary/30">
+                    ADMIN
+                  </span>
+                ) : isStudentPro ? (
                   <span className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-500 font-black text-[0.6rem] border border-amber-500/40">
                     PRO
                   </span>
-                )}
+                ) : null}
               </div>
               <ChevronDown className="h-3 w-3 text-muted-foreground hidden sm:block opacity-70" />
             </button>
@@ -360,11 +379,15 @@ export function TopNav() {
               <div className="flex flex-col space-y-1">
                 <div className="flex items-center justify-between gap-1">
                   <p className="text-xs font-bold leading-none text-foreground">{userName}</p>
-                  {isPro && (
+                  {isAdmin ? (
+                    <Badge className="bg-primary/15 text-primary border border-primary/30 text-[0.6rem] font-bold px-1.5 py-0 rounded-full gap-0.5">
+                      <Shield className="h-2.5 w-2.5 text-primary" /> ADMIN
+                    </Badge>
+                  ) : isStudentPro ? (
                     <Badge className="bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 border-none text-[0.6rem] font-black px-1.5 py-0 rounded-full gap-0.5">
                       <Crown className="h-2.5 w-2.5 fill-slate-950" /> PRO
                     </Badge>
-                  )}
+                  ) : null}
                 </div>
                 <p className="text-[0.68rem] leading-none text-muted-foreground truncate">{user?.email}</p>
                 <div className="pt-1 flex items-center gap-1.5">
@@ -374,7 +397,7 @@ export function TopNav() {
                   >
                     {user?.role || "Member"}
                   </Badge>
-                  {isPro && (
+                  {isStudentPro && (
                     <span className="text-[0.65rem] text-amber-500 font-semibold">
                       • {user?.premiumPlan || "Annual Pro"}
                     </span>
@@ -384,23 +407,35 @@ export function TopNav() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
 
-            {!isPro ? (
+            {isAdmin ? (
               <>
                 <DropdownMenuItem
-                  onClick={() => setIsUpgradeModalOpen(true)}
+                  asChild
                   className="rounded-xl text-xs font-bold text-primary cursor-pointer gap-2 py-2 bg-primary/10 hover:bg-primary/15 focus:bg-primary/15"
                 >
-                  <Crown className="h-3.5 w-3.5 text-primary" /> Upgrade to Scholar Pro
+                  <Link to="/admin" hash="dashboard">
+                    <Shield className="h-3.5 w-3.5 text-primary" /> Admin Management Portal
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
-            ) : (
+            ) : isStudentPro ? (
               <>
                 <DropdownMenuItem
                   onClick={handleOpenInvoice}
                   className="rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400 cursor-pointer gap-2 py-2 bg-amber-500/10 hover:bg-amber-500/15 focus:bg-amber-500/15"
                 >
                   <Receipt className="h-3.5 w-3.5" /> View Tax Invoice & Bill
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : (
+              <>
+                <DropdownMenuItem
+                  onClick={() => setIsUpgradeModalOpen(true)}
+                  className="rounded-xl text-xs font-bold text-primary cursor-pointer gap-2 py-2 bg-primary/10 hover:bg-primary/15 focus:bg-primary/15"
+                >
+                  <Crown className="h-3.5 w-3.5 text-primary" /> Upgrade to Scholar Pro
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>

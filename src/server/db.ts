@@ -1578,6 +1578,216 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     }
   }
 
+  // ── Admin Subscriptions & Billing API ──
+  if (url.pathname === "/api/admin/billing") {
+    if (request.method === "GET") {
+      try {
+        const usersCol = await getCollection<UserRecord>("users");
+        const transCol = await getCollection<Document>("transactions");
+
+        // Paid transactions from Razorpay
+        const transactions = await transCol
+          .find({ status: "paid" })
+          .sort({ verifiedAt: -1, createdAt: -1 })
+          .toArray();
+
+        // Active premium scholars (excluding admin)
+        const premiumUsers = await usersCol
+          .find({ isPremium: true, role: { $ne: "admin" } })
+          .sort({ premiumSince: -1, updatedAt: -1 })
+          .toArray();
+
+        const formattedTransactions = transactions.map((t: any) => {
+          const inv = t.invoice || {};
+          const amount = t.amountRupees || inv.amountRupees || (t.planId === "monthly" ? 199 : 499);
+          return {
+            id: t._id.toString(),
+            _id: t._id.toString(),
+            invoiceNumber: t.invoiceNumber || inv.invoiceNumber || `INV-SN-2026-${String(t._id || "").slice(-6).toUpperCase()}`,
+            orderId: t.orderId || inv.orderId || "",
+            paymentId: t.paymentId || inv.paymentId || "",
+            userEmail: t.userEmail || inv.userEmail || "",
+            userName: t.userName || inv.userName || t.userEmail?.split("@")[0] || "Scholar",
+            affiliation: t.affiliation || inv.affiliation || "",
+            planId: t.planId || inv.planId || "annual",
+            planName: t.planName || inv.planName || (t.planId === "monthly" ? "Monthly Pro" : "Annual Scholar Pro"),
+            amountRupees: amount,
+            date: t.verifiedAt || t.createdAt || inv.date || new Date().toISOString(),
+            status: t.status || "paid",
+            gateway: t.gateway || inv.gateway || "Razorpay Test Gateway",
+            invoice: {
+              invoiceNumber: t.invoiceNumber || inv.invoiceNumber || `INV-SN-2026-${String(t._id || "").slice(-6).toUpperCase()}`,
+              orderId: t.orderId || inv.orderId || "",
+              paymentId: t.paymentId || inv.paymentId || "",
+              date: t.verifiedAt || t.createdAt || inv.date || new Date().toISOString(),
+              planId: t.planId || inv.planId || "annual",
+              planName: t.planName || inv.planName || (t.planId === "monthly" ? "Monthly Pro" : "Annual Scholar Pro"),
+              amountRupees: amount,
+              userName: t.userName || inv.userName || t.userEmail?.split("@")[0] || "Scholar",
+              userEmail: t.userEmail || inv.userEmail || "",
+              affiliation: t.affiliation || inv.affiliation || "",
+              status: "paid",
+              gateway: t.gateway || inv.gateway || "Razorpay Test Gateway",
+            },
+          };
+        });
+
+        const formattedPremiumUsers = premiumUsers.map((u: any) => ({
+          id: u._id.toString(),
+          _id: u._id.toString(),
+          name: u.name || u.displayName || u.email?.split("@")[0] || "Scholar",
+          email: u.email,
+          role: u.role || "student",
+          isPremium: true,
+          premiumPlan: u.premiumPlan || "Annual Scholar Pro",
+          premiumSince: u.premiumSince || u.createdAt || "",
+          razorpayPaymentId: u.razorpayPaymentId || "",
+          razorpayOrderId: u.razorpayOrderId || "",
+          affiliation: u.affiliation || u.institution || "",
+          createdAt: u.createdAt || "",
+        }));
+
+        const totalRevenue = formattedTransactions.reduce((acc, t) => acc + (Number(t.amountRupees) || 0), 0);
+        const annualCount = formattedPremiumUsers.filter((u) => (u.premiumPlan || "").toLowerCase().includes("annual")).length;
+        const monthlyCount = formattedPremiumUsers.filter((u) => (u.premiumPlan || "").toLowerCase().includes("monthly")).length;
+
+        return new Response(
+          JSON.stringify({
+            stats: {
+              totalRevenue,
+              activeSubscribers: formattedPremiumUsers.length,
+              annualCount,
+              monthlyCount,
+              totalTransactions: formattedTransactions.length,
+            },
+            transactions: formattedTransactions,
+            premiumUsers: formattedPremiumUsers,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ error: err.message || "Failed to fetch billing data." }),
+          { status: 500, headers: { "content-type": "application/json" } }
+        );
+      }
+    }
+  }
+
+  // ── Admin Subscriptions: Manual Grant / Revoke Pro API ──
+  if (url.pathname === "/api/admin/billing/toggle-premium") {
+    if (request.method === "POST") {
+      try {
+        const body = await request.json();
+        const targetEmail = (body.email || "").trim().toLowerCase();
+        const enable = Boolean(body.enable);
+        const planName = body.planName || "Annual Scholar Pro";
+
+        if (!targetEmail) {
+          return new Response(JSON.stringify({ error: "Target email required." }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        const usersCol = await getCollection<UserRecord>("users");
+        const now = new Date().toISOString();
+
+        if (enable) {
+          const generatedPayId = `pay_admin_grant_${Date.now()}`;
+          const generatedOrderId = `order_admin_grant_${Date.now()}`;
+          const invoiceNumber = `INV-SN-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+
+          await usersCol.updateOne(
+            { email: targetEmail },
+            {
+              $set: {
+                isPremium: true,
+                premiumPlan: planName,
+                premiumSince: now,
+                razorpayPaymentId: generatedPayId,
+                razorpayOrderId: generatedOrderId,
+                updatedAt: now,
+              },
+            }
+          );
+
+          // Add a transaction record
+          const transCol = await getCollection<Document>("transactions");
+          const targetUser = await usersCol.findOne({ email: targetEmail });
+          const userName = targetUser?.name || targetUser?.displayName || targetEmail.split("@")[0];
+
+          await transCol.insertOne({
+            orderId: generatedOrderId,
+            paymentId: generatedPayId,
+            status: "paid",
+            userEmail: targetEmail,
+            userName,
+            planId: planName.toLowerCase().includes("monthly") ? "monthly" : "annual",
+            planName,
+            amountRupees: planName.toLowerCase().includes("monthly") ? 199 : 499,
+            invoiceNumber,
+            invoice: {
+              invoiceNumber,
+              orderId: generatedOrderId,
+              paymentId: generatedPayId,
+              date: now,
+              planId: planName.toLowerCase().includes("monthly") ? "monthly" : "annual",
+              planName,
+              amountRupees: planName.toLowerCase().includes("monthly") ? 199 : 499,
+              userName,
+              userEmail: targetEmail,
+              affiliation: targetUser?.affiliation || "",
+              status: "paid",
+              gateway: "Admin Direct Grant",
+            },
+            verifiedAt: now,
+            createdAt: now,
+            grantedByAdmin: true,
+          });
+
+          await recordUserActivity(
+            "scholarnexusadmin@gmail.com",
+            "ScholarNexus Admin",
+            "ADMIN_GRANT_PREMIUM",
+            "Granted Scholar Pro Membership",
+            `Admin granted ${planName} to user ${targetEmail}.`,
+            "System"
+          );
+        } else {
+          await usersCol.updateOne(
+            { email: targetEmail },
+            {
+              $set: {
+                isPremium: false,
+                updatedAt: now,
+              },
+            }
+          );
+
+          await recordUserActivity(
+            "scholarnexusadmin@gmail.com",
+            "ScholarNexus Admin",
+            "ADMIN_REVOKE_PREMIUM",
+            "Revoked Scholar Pro Membership",
+            `Admin revoked Scholar Pro membership from user ${targetEmail}.`,
+            "System"
+          );
+        }
+
+        return new Response(JSON.stringify({ success: true, isPremium: enable }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message || "Failed to update premium status." }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+  }
+
   // ── Admin User Management API ──
   if (url.pathname === "/api/admin/users") {
     const col = await getCollection<UserRecord>("users");

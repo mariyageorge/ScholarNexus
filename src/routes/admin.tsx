@@ -61,6 +61,11 @@ import {
   BookOpen,
   HelpCircle,
   Award,
+  CreditCard,
+  Receipt,
+  IndianRupee,
+  Crown,
+  Zap,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -96,6 +101,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { InvoiceModal, type InvoiceData } from "@/components/invoice-modal";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -119,6 +125,47 @@ interface AdminStats {
   projectStatus: { name: string; value: number }[];
   researchDomains: { domain: string; count: number }[];
   monthlyPapers: { month: string; papers: number }[];
+}
+
+interface BillingTransaction {
+  id: string;
+  _id?: string;
+  invoiceNumber: string;
+  orderId: string;
+  paymentId: string;
+  userEmail: string;
+  userName: string;
+  affiliation?: string;
+  planId: string;
+  planName: string;
+  amountRupees: number;
+  date: string;
+  status: "paid" | "completed";
+  gateway?: string;
+  invoice?: InvoiceData;
+}
+
+interface PremiumScholar {
+  id: string;
+  _id?: string;
+  name: string;
+  email: string;
+  role: string;
+  isPremium: boolean;
+  premiumPlan?: string;
+  premiumSince?: string;
+  razorpayPaymentId?: string;
+  razorpayOrderId?: string;
+  affiliation?: string;
+  createdAt?: string;
+}
+
+interface BillingStats {
+  totalRevenue: number;
+  activeSubscribers: number;
+  annualCount: number;
+  monthlyCount: number;
+  totalTransactions: number;
 }
 
 interface UserItem {
@@ -231,7 +278,7 @@ function AdminPage() {
   // Determine active tab from URL hash
   const activeTab = useMemo(() => {
     const cleanHash = hash ? hash.replace("#", "") : "dashboard";
-    const validTabs = ["dashboard", "users", "approvals", "projects", "papers", "announcements", "reports", "activity", "settings"];
+    const validTabs = ["dashboard", "users", "approvals", "billing", "projects", "papers", "announcements", "reports", "activity", "settings"];
     return validTabs.includes(cleanHash) ? cleanHash : "dashboard";
   }, [hash]);
 
@@ -243,7 +290,11 @@ function AdminPage() {
   const [papers, setPapers] = useState<PaperItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
+  const [billingStats, setBillingStats] = useState<BillingStats | null>(null);
+  const [billingTransactions, setBillingTransactions] = useState<BillingTransaction[]>([]);
+  const [premiumScholars, setPremiumScholars] = useState<PremiumScholar[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingBilling, setLoadingBilling] = useState<boolean>(false);
 
   // Filters & Pagination States
   const [userSearch, setUserSearch] = useState("");
@@ -264,6 +315,17 @@ function AdminPage() {
 
   const [logSearch, setLogSearch] = useState("");
   const [logActionFilter, setLogActionFilter] = useState("All");
+
+  // ── Billing View States ──
+  const [billingViewMode, setBillingViewMode] = useState<"transactions" | "scholars">("transactions");
+  const [billingSearch, setBillingSearch] = useState("");
+  const [billingPlanFilter, setBillingPlanFilter] = useState("All");
+  const [selectedInvoiceModal, setSelectedInvoiceModal] = useState<InvoiceData | null>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [manualGrantModalOpen, setManualGrantModalOpen] = useState(false);
+  const [manualGrantEmail, setManualGrantEmail] = useState("");
+  const [manualGrantPlan, setManualGrantPlan] = useState("Annual Scholar Pro");
+  const [grantingStatus, setGrantingStatus] = useState(false);
 
   // Dialog & Modal States
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null);
@@ -438,7 +500,7 @@ function AdminPage() {
     else if (!isSilent && users.length === 0) setLoading(true);
 
     try {
-      const [statsRes, usersRes, approvalsRes, projectsRes, papersRes, annRes, logsRes] = await Promise.all([
+      const [statsRes, usersRes, approvalsRes, projectsRes, papersRes, annRes, logsRes, billingRes] = await Promise.all([
         fetch("/api/admin/stats"),
         fetch("/api/admin/users"),
         fetch("/api/admin/faculty/approval?status=All"),
@@ -446,6 +508,7 @@ function AdminPage() {
         fetch("/api/admin/papers"),
         fetch("/api/admin/announcements"),
         fetch("/api/admin/activity-logs"),
+        fetch("/api/admin/billing"),
       ]);
 
       if (statsRes.ok) setStats(await statsRes.json());
@@ -455,12 +518,18 @@ function AdminPage() {
       if (papersRes.ok) setPapers(await papersRes.json());
       if (annRes.ok) setAnnouncements(await annRes.json());
       if (logsRes.ok) setActivityLogs(await logsRes.json());
+      if (billingRes.ok) {
+        const bData = await billingRes.json();
+        setBillingStats(bData.stats || null);
+        setBillingTransactions(bData.transactions || []);
+        setPremiumScholars(bData.premiumUsers || []);
+      }
 
       const now = new Date();
       setLastUpdatedTime(now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
 
       if (isManualRefresh) {
-        toast.success("User directory and summary counts refreshed.");
+        toast.success("Admin portal data & billing ledger refreshed.");
       }
     } catch (err) {
       console.error("Failed to load admin data:", err);
@@ -476,6 +545,106 @@ function AdminPage() {
       fetchAdminData();
     }
   }, [session]);
+
+  /* ── Subscriptions & Billing Handlers ── */
+  const handleOpenBill = (tx: BillingTransaction) => {
+    const invData: InvoiceData = tx.invoice || {
+      invoiceNumber: tx.invoiceNumber || `INV-SN-2026-${tx.id.slice(-6).toUpperCase()}`,
+      orderId: tx.orderId || "",
+      paymentId: tx.paymentId || "",
+      date: tx.date || new Date().toISOString(),
+      planId: tx.planId || "annual",
+      planName: tx.planName || "Annual Scholar Pro",
+      amountRupees: tx.amountRupees || 499,
+      userName: tx.userName || tx.userEmail.split("@")[0],
+      userEmail: tx.userEmail,
+      affiliation: tx.affiliation || "",
+      status: "paid",
+      gateway: tx.gateway || "Razorpay Test Gateway",
+    };
+    setSelectedInvoiceModal(invData);
+    setIsInvoiceModalOpen(true);
+  };
+
+  const handleTogglePremium = async (email: string, enable: boolean, planName = "Annual Scholar Pro") => {
+    try {
+      const res = await fetch("/api/admin/billing/toggle-premium", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, enable, planName }),
+      });
+      if (res.ok) {
+        toast.success(enable ? `Granted Scholar Pro to ${email}.` : `Revoked Scholar Pro from ${email}.`);
+        fetchAdminData(false, true);
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Failed to update subscription.");
+      }
+    } catch {
+      toast.error("Network error modifying subscription.");
+    }
+  };
+
+  const handleExecuteManualGrant = async () => {
+    if (!manualGrantEmail.trim()) {
+      toast.error("Please enter a valid scholar email address.");
+      return;
+    }
+    setGrantingStatus(true);
+    try {
+      const res = await fetch("/api/admin/billing/toggle-premium", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: manualGrantEmail.trim(), enable: true, planName: manualGrantPlan }),
+      });
+      if (res.ok) {
+        toast.success(`Successfully activated ${manualGrantPlan} for ${manualGrantEmail.trim()}.`);
+        setManualGrantModalOpen(false);
+        setManualGrantEmail("");
+        fetchAdminData(false, true);
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Failed to grant membership.");
+      }
+    } catch {
+      toast.error("Network error granting membership.");
+    } finally {
+      setGrantingStatus(false);
+    }
+  };
+
+  const handleExportBillingExcel = () => {
+    try {
+      const wb = XLSX.utils.book_new();
+      const transactionsSheetData = [
+        ["SCHOLARNEXUS SUBSCRIPTIONS & BILLING REPORT"],
+        ["Generated Date", new Date().toLocaleString()],
+        ["Total Platform Revenue (INR)", `₹${billingStats?.totalRevenue ?? 0}`],
+        ["Total Paid Transactions", billingTransactions.length],
+        ["Active Premium Scholars", billingStats?.activeSubscribers ?? 0],
+        [""],
+        ["Invoice Number", "Order ID", "Payment ID", "Scholar Name", "Scholar Email", "Plan Name", "Amount (INR)", "Payment Gateway", "Verified Date", "Status"],
+        ...billingTransactions.map((t) => [
+          t.invoiceNumber,
+          t.orderId,
+          t.paymentId,
+          t.userName,
+          t.userEmail,
+          t.planName,
+          t.amountRupees,
+          t.gateway || "Razorpay Test Gateway",
+          new Date(t.date).toISOString().split("T")[0],
+          t.status,
+        ]),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(transactionsSheetData);
+      XLSX.utils.book_append_sheet(wb, ws, "Transactions & Billing");
+      XLSX.writeFile(wb, `ScholarNexus_Billing_Ledger_${new Date().toISOString().split("T")[0]}.xlsx`);
+      toast.success("Billing ledger exported successfully.");
+    } catch (err: any) {
+      toast.error(`Export error: ${err?.message || "Failed to generate file"}`);
+    }
+  };
 
   // Demo Switch Handler for testing
   const handleEnableDemoAdmin = () => {
@@ -3504,7 +3673,414 @@ function AdminPage() {
           </div>
         )}
 
-        {/* Section 8: Activity Logs View */}
+        {/* Section: Subscriptions & Billing View */}
+        {activeTab === "billing" && (
+          <div className="space-y-6">
+            {/* Header & Quick Action Bar */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold text-foreground">Scholar Pro Subscriptions & Revenue</h2>
+                  <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[0.65rem] font-black">
+                    <Crown className="h-2.5 w-2.5 fill-amber-500" /> Premium Ledger
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Manage student Scholar Pro subscriptions, Razorpay transactions, and view verified tax invoices.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fetchAdminData(true)}
+                  disabled={isRefreshing}
+                  className="gap-2 rounded-xl text-xs font-semibold"
+                >
+                  <RotateCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                  Refresh Ledger
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportBillingExcel}
+                  className="gap-2 rounded-xl text-xs font-semibold border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-500" />
+                  Export Excel
+                </Button>
+
+                <Button
+                  size="sm"
+                  onClick={() => setManualGrantModalOpen(true)}
+                  className="gap-2 rounded-xl text-xs font-bold gradient-brand text-primary-foreground shadow-md"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Grant Pro Access
+                </Button>
+              </div>
+            </div>
+
+            {/* Top 4 Metric Cards */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="rounded-2xl border-border bg-card p-5 shadow-xs transition-all hover:border-amber-500/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Total Revenue Collected</span>
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-500 shadow-inner">
+                    <IndianRupee className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold tracking-tight text-foreground">
+                    ₹{(billingStats?.totalRevenue ?? 0).toLocaleString()}
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5 text-[0.7rem] font-medium text-emerald-600 dark:text-emerald-400">
+                    <TrendingUp className="h-3 w-3" />
+                    <span>Gross platform subscription earnings</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-5 shadow-xs transition-all hover:border-primary/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Active Pro Subscribers</span>
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary shadow-inner">
+                    <Crown className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold tracking-tight text-foreground">
+                    {billingStats?.activeSubscribers ?? 0}
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5 text-[0.7rem] font-medium text-muted-foreground">
+                    <Users className="h-3 w-3 text-primary" />
+                    <span>Active student scholars unlocked</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-5 shadow-xs transition-all hover:border-blue-500/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Annual Pro (₹499/yr)</span>
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/10 text-blue-500 shadow-inner">
+                    <Zap className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold tracking-tight text-foreground">
+                    {billingStats?.annualCount ?? 0}
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5 text-[0.7rem] font-medium text-muted-foreground">
+                    <CheckCircle2 className="h-3 w-3 text-blue-500" />
+                    <span>Full 12-Month Academic Access</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border-border bg-card p-5 shadow-xs transition-all hover:border-purple-500/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Monthly Pro (₹199/mo)</span>
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-purple-500/10 text-purple-500 shadow-inner">
+                    <Calendar className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold tracking-tight text-foreground">
+                    {billingStats?.monthlyCount ?? 0}
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5 text-[0.7rem] font-medium text-muted-foreground">
+                    <Clock className="h-3 w-3 text-purple-500" />
+                    <span>Monthly recurring scholars</span>
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* Sub-view Switcher & Filters */}
+            <Card className="rounded-3xl border-border bg-card p-6 shadow-sm space-y-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-4">
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant={billingViewMode === "transactions" ? "default" : "outline"}
+                    onClick={() => setBillingViewMode("transactions")}
+                    className={`gap-2 rounded-xl text-xs font-semibold ${
+                      billingViewMode === "transactions" ? "gradient-brand text-primary-foreground shadow-sm" : ""
+                    }`}
+                  >
+                    <Receipt className="h-3.5 w-3.5" />
+                    Payment Invoices & Transactions ({billingTransactions.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={billingViewMode === "scholars" ? "default" : "outline"}
+                    onClick={() => setBillingViewMode("scholars")}
+                    className={`gap-2 rounded-xl text-xs font-semibold ${
+                      billingViewMode === "scholars" ? "gradient-brand text-primary-foreground shadow-sm" : ""
+                    }`}
+                  >
+                    <Crown className="h-3.5 w-3.5" />
+                    Active Premium Scholars ({premiumScholars.length})
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search scholar, order ID, payment ID…"
+                      value={billingSearch}
+                      onChange={(e) => setBillingSearch(e.target.value)}
+                      className="pl-9 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <Select value={billingPlanFilter} onValueChange={setBillingPlanFilter}>
+                    <SelectTrigger className="w-44 rounded-xl text-xs">
+                      <SelectValue placeholder="Plan Tier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="All">All Plans</SelectItem>
+                      <SelectItem value="Annual">Annual Scholar Pro</SelectItem>
+                      <SelectItem value="Monthly">Monthly Pro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* View 1: Transactions & Invoices Table */}
+              {billingViewMode === "transactions" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Razorpay Transaction Ledger</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Verified payment settlements, generated tax invoice numbers, and student subscriber receipts.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-2xl border border-border">
+                    <Table>
+                      <TableHeader className="bg-muted/40">
+                        <TableRow>
+                          <TableHead className="text-xs font-semibold">Invoice & Order ID</TableHead>
+                          <TableHead className="text-xs font-semibold">Scholar / Student</TableHead>
+                          <TableHead className="text-xs font-semibold">Plan Tier</TableHead>
+                          <TableHead className="text-xs font-semibold">Amount</TableHead>
+                          <TableHead className="text-xs font-semibold">Gateway & Date</TableHead>
+                          <TableHead className="text-xs font-semibold">Status</TableHead>
+                          <TableHead className="text-xs font-semibold text-right">Bill / Invoice</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {billingTransactions
+                          .filter((t) => {
+                            if (billingPlanFilter !== "All") {
+                              if (billingPlanFilter === "Annual" && !t.planName.toLowerCase().includes("annual")) return false;
+                              if (billingPlanFilter === "Monthly" && !t.planName.toLowerCase().includes("monthly")) return false;
+                            }
+                            if (!billingSearch) return true;
+                            const q = billingSearch.toLowerCase();
+                            return (
+                              t.invoiceNumber.toLowerCase().includes(q) ||
+                              t.orderId.toLowerCase().includes(q) ||
+                              t.paymentId.toLowerCase().includes(q) ||
+                              t.userEmail.toLowerCase().includes(q) ||
+                              t.userName.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((t) => (
+                            <TableRow key={t.id || t._id || t.orderId} className="hover:bg-muted/30 transition-colors">
+                              <TableCell className="font-mono text-xs">
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex items-center gap-1.5 font-bold text-foreground">
+                                    <span>{t.invoiceNumber}</span>
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(t.invoiceNumber);
+                                        toast.success("Invoice number copied.");
+                                      }}
+                                      className="text-muted-foreground hover:text-primary"
+                                      title="Copy Invoice Number"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                  <span className="text-[0.65rem] text-muted-foreground">Order: {t.orderId || "—"}</span>
+                                  <span className="text-[0.65rem] text-muted-foreground">Payment: {t.paymentId || "—"}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2.5">
+                                  <Avatar className="h-8 w-8 border border-primary/20">
+                                    <AvatarFallback className="text-[0.65rem] font-bold bg-primary/10 text-primary">
+                                      {t.userName?.slice(0, 2).toUpperCase() || "SC"}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-semibold text-foreground">{t.userName}</span>
+                                    <span className="text-[0.7rem] text-muted-foreground">{t.userEmail}</span>
+                                  </div>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  className={`text-[0.65rem] font-bold ${
+                                    t.planName.toLowerCase().includes("annual")
+                                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                      : "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                                  }`}
+                                >
+                                  {t.planName}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-xs font-bold text-foreground">₹{t.amountRupees}</span>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-col text-xs">
+                                  <span className="font-medium text-foreground">
+                                    {t.date ? new Date(t.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                                  </span>
+                                  <span className="text-[0.65rem] text-muted-foreground">{t.gateway || "Razorpay Gateway"}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[0.65rem] font-bold gap-1">
+                                  <CheckCircle2 className="h-2.5 w-2.5" /> Paid
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleOpenBill(t)}
+                                  className="gap-1.5 rounded-xl text-xs font-bold border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 shadow-xs cursor-pointer"
+                                >
+                                  <Receipt className="h-3.5 w-3.5" />
+                                  View Bill
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        {billingTransactions.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Receipt className="h-8 w-8 text-muted-foreground/40 stroke-1" />
+                                <span>No subscription transactions recorded yet.</span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+
+              {/* View 2: Active Premium Scholars Table */}
+              {billingViewMode === "scholars" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Active Scholar Pro Accounts</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Students with active Scholar Pro access, unlimited project pipelines, and AI writing assist.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-2xl border border-border">
+                    <Table>
+                      <TableHeader className="bg-muted/40">
+                        <TableRow>
+                          <TableHead className="text-xs font-semibold">Scholar Name & Email</TableHead>
+                          <TableHead className="text-xs font-semibold">Current Plan</TableHead>
+                          <TableHead className="text-xs font-semibold">Subscribed Since</TableHead>
+                          <TableHead className="text-xs font-semibold">Payment ID</TableHead>
+                          <TableHead className="text-xs font-semibold">Access Privileges</TableHead>
+                          <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {premiumScholars
+                          .filter((u) => {
+                            if (billingPlanFilter !== "All") {
+                              if (billingPlanFilter === "Annual" && !(u.premiumPlan || "").toLowerCase().includes("annual")) return false;
+                              if (billingPlanFilter === "Monthly" && !(u.premiumPlan || "").toLowerCase().includes("monthly")) return false;
+                            }
+                            if (!billingSearch) return true;
+                            const q = billingSearch.toLowerCase();
+                            return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+                          })
+                          .map((u) => (
+                            <TableRow key={u.id || u.email} className="hover:bg-muted/30 transition-colors">
+                              <TableCell>
+                                <div className="flex items-center gap-2.5">
+                                  <Avatar className="h-8 w-8 border border-amber-400/40">
+                                    <AvatarFallback className="text-[0.65rem] font-bold bg-amber-500/15 text-amber-500">
+                                      {u.name?.slice(0, 2).toUpperCase() || "PR"}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-bold text-foreground">{u.name}</span>
+                                    <span className="text-[0.7rem] text-muted-foreground">{u.email}</span>
+                                  </div>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge className="bg-gradient-to-r from-amber-500/20 via-yellow-500/15 to-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-400/40 text-[0.65rem] font-black gap-1">
+                                  <Crown className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                                  {u.premiumPlan || "Annual Scholar Pro"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {u.premiumSince ? new Date(u.premiumSince).toLocaleDateString() : "Active"}
+                              </TableCell>
+                              <TableCell className="font-mono text-[0.7rem] text-muted-foreground">
+                                {u.razorpayPaymentId || "pay_scholar_pro_active"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 text-[0.65rem]">
+                                  Unlimited Projects & AI Unlocked
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleTogglePremium(u.email, false)}
+                                  className="rounded-xl text-xs font-bold text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                                >
+                                  Revoke Pro
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        {premiumScholars.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-12 text-xs text-muted-foreground">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Crown className="h-8 w-8 text-muted-foreground/40 stroke-1" />
+                                <span>No active Scholar Pro members found.</span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {/* Section 9: Activity Logs View */}
         {activeTab === "activity" && (
           <div className="space-y-6">
             <Card className="rounded-3xl border-border bg-card p-6 shadow-sm">
@@ -4513,6 +5089,87 @@ function AdminPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Manual Grant Scholar Pro Modal */}
+      <Dialog open={manualGrantModalOpen} onOpenChange={setManualGrantModalOpen}>
+        <DialogContent className="rounded-3xl max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <Crown className="h-5 w-5 text-amber-500 fill-amber-500" /> Grant Scholar Pro Privileges
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Directly activate Scholar Pro membership for a student researcher without requiring payment verification.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Student / Scholar Email *</Label>
+              <Input
+                placeholder="e.g. scholar@university.edu"
+                value={manualGrantEmail}
+                onChange={(e) => setManualGrantEmail(e.target.value)}
+                className="rounded-xl text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Select Subscription Plan</Label>
+              <Select value={manualGrantPlan} onValueChange={setManualGrantPlan}>
+                <SelectTrigger className="rounded-xl text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Annual Scholar Pro">Annual Scholar Pro (₹499 / Year - Unlimited)</SelectItem>
+                  <SelectItem value="Monthly Pro">Monthly Pro (₹199 / Month)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-3 space-y-1 text-muted-foreground">
+              <p className="font-semibold text-foreground text-xs">Included Scholar Pro Privileges:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-[0.7rem]">
+                <li>Unlimited Research Projects (bypasses 3-project cap)</li>
+                <li>AI Section Assist writing companion unlocked</li>
+                <li>AI Research Roadmap generator enabled</li>
+                <li>Official tax invoice generated and archived</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setManualGrantModalOpen(false)}
+              className="rounded-xl text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!manualGrantEmail.trim() || grantingStatus}
+              onClick={handleExecuteManualGrant}
+              className="rounded-xl gradient-brand text-primary-foreground font-bold text-xs gap-1.5 shadow-sm"
+            >
+              {grantingStatus ? (
+                <>
+                  <RotateCw className="h-3.5 w-3.5 animate-spin" /> Granting…
+                </>
+              ) : (
+                <>
+                  <Crown className="h-3.5 w-3.5 fill-current" /> Activate Scholar Pro
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Official Tax Invoice & Payment Receipt Modal */}
+      <InvoiceModal
+        open={isInvoiceModalOpen}
+        onOpenChange={setIsInvoiceModalOpen}
+        invoice={selectedInvoiceModal}
+      />
     </DashboardLayout>
   );
 }
