@@ -326,6 +326,7 @@ function AdminPage() {
   const [manualGrantEmail, setManualGrantEmail] = useState("");
   const [manualGrantPlan, setManualGrantPlan] = useState("Annual Scholar Pro");
   const [grantingStatus, setGrantingStatus] = useState(false);
+  const [exportingJsonArchive, setExportingJsonArchive] = useState(false);
 
   // Dialog & Modal States
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null);
@@ -1517,6 +1518,99 @@ function AdminPage() {
     } catch (err: any) {
       console.error("Export generation error:", err);
       toast.error(`Failed to export report: ${err?.message || "Unknown error"}`);
+    }
+  };
+
+  /* ── Institutional Data Archive JSON Export Handlers ── */
+  const handleExportFullJsonArchive = async (scope: "system" | "workspace" = "system") => {
+    setExportingJsonArchive(true);
+    const toastId = toast.loading(`Generating full ${scope === "system" ? "institutional" : "workspace"} JSON archive...`);
+    try {
+      const email = session?.email || "scholarnexusadmin@gmail.com";
+      const res = await fetch(`/api/export?scope=${scope}&email=${encodeURIComponent(email)}`);
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      link.href = url;
+      link.download = `scholarnexus-${scope === "system" ? "institutional-full" : "admin-workspace"}-archive-${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      const counts = data.archiveMetadata?.recordCounts || {};
+      const summaryText = `${counts.projects ?? 0} projects, ${counts.literature ?? 0} literature papers, ${counts.notes ?? 0} notes, ${counts.activityTimeline ?? 0} timeline logs`;
+      toast.success(`Data export complete! Downloaded archive containing ${summaryText}.`, { id: toastId });
+    } catch (err: any) {
+      console.error("Export archive error:", err);
+      try {
+        const fallbackData = {
+          archiveMetadata: {
+            title: scope === "system" ? "ScholarNexus Institutional Full Data Archive (Client Snapshot)" : "ScholarNexus Admin Workspace Archive",
+            generatedAt: new Date().toISOString(),
+            exportScope: scope === "system" ? "System Administrator (Full Archive)" : "Workspace Archive",
+            exportedBy: session?.email || "scholarnexusadmin@gmail.com",
+            recordCounts: {
+              projects: projects.length,
+              literature: papers.length,
+              activityTimeline: activityLogs.length,
+              users: users.length,
+            },
+          },
+          researchProjects: scope === "system" ? projects : projects.filter((p) => p.userEmail?.toLowerCase() === session?.email?.toLowerCase()),
+          literature: scope === "system" ? papers : papers.filter((p) => p.uploaderEmail?.toLowerCase() === session?.email?.toLowerCase()),
+          notes: [],
+          activityTimeline: scope === "system" ? activityLogs : activityLogs.filter((l) => l.userEmail?.toLowerCase() === session?.email?.toLowerCase()),
+          users: scope === "system" ? users.map(({ password, ...u }: any) => u) : undefined,
+          announcements: scope === "system" ? announcements : undefined,
+        };
+        const blob = new Blob([JSON.stringify(fallbackData, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const dateStr = new Date().toISOString().split("T")[0];
+        link.href = url;
+        link.download = `scholarnexus-${scope === "system" ? "institutional-full" : "admin-workspace"}-archive-${dateStr}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success(`Downloaded archive snapshot (${projects.length} projects, ${papers.length} literature papers, ${activityLogs.length} timeline logs).`, { id: toastId });
+      } catch (fallbackErr) {
+        toast.error("Failed to generate and download JSON archive.", { id: toastId });
+      }
+    } finally {
+      setExportingJsonArchive(false);
+    }
+  };
+
+  const handleExportUserJsonArchive = async (userEmail: string, userName?: string) => {
+    if (!userEmail) return;
+    const toastId = toast.loading(`Generating research archive for ${userName || userEmail}...`);
+    try {
+      const res = await fetch(`/api/export?scope=workspace&email=${encodeURIComponent(userEmail)}`);
+      if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      const safeEmail = userEmail.replace(/[^a-zA-Z0-9]/g, "_");
+      link.href = url;
+      link.download = `scholarnexus-scholar-${safeEmail}-${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      const counts = data.archiveMetadata?.recordCounts || {};
+      toast.success(`Exported ${userName || userEmail}'s archive (${counts.projects ?? 0} projects, ${counts.literature ?? 0} papers, ${counts.notes ?? 0} notes).`, { id: toastId });
+    } catch (err: any) {
+      toast.error("Failed to export user archive.", { id: toastId });
     }
   };
 
@@ -3138,6 +3232,21 @@ function AdminPage() {
                     <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
                     Export Excel
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleExportFullJsonArchive("system")}
+                    disabled={exportingJsonArchive}
+                    className="gap-2 rounded-xl text-xs h-8 border-primary/30 hover:border-primary/50 text-foreground"
+                    title="Export Full Institutional JSON Archive"
+                  >
+                    {exportingJsonArchive ? (
+                      <RotateCw className="h-3.5 w-3.5 animate-spin text-primary" />
+                    ) : (
+                      <FileCode className="h-3.5 w-3.5 text-primary" />
+                    )}
+                    Export JSON Archive
+                  </Button>
                 </div>
               </div>
 
@@ -4227,6 +4336,137 @@ function AdminPage() {
                   </div>
                 </div>
 
+                {/* Data Export Section */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between border-b border-border pb-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                        <Archive className="h-4 w-4 text-primary" />
+                        Data Export
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Download a full JSON archive of your research projects, literature, notes, and activity timeline.
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-[0.65rem] border-primary/30 text-primary bg-primary/5">
+                      JSON v2.0 Architecture
+                    </Badge>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {/* Full Institutional System Archive */}
+                    <Card className="p-5 rounded-2xl border border-border/80 bg-background/50 hover:border-primary/40 transition-colors space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <Download className="h-3.5 w-3.5 text-emerald-500" />
+                            Full Institutional System Archive
+                          </span>
+                          <p className="text-[0.72rem] text-muted-foreground leading-relaxed">
+                            Complete institutional dump: all research projects, published papers, scholar notes, user registries, and activity logs across the entire database.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2 py-2 border-y border-border/40 text-center">
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">{projects.length}</p>
+                          <p className="text-[0.65rem] text-muted-foreground">Projects</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">{papers.length}</p>
+                          <p className="text-[0.65rem] text-muted-foreground">Literature</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">{activityLogs.length}</p>
+                          <p className="text-[0.65rem] text-muted-foreground">Timeline</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">{users.length}</p>
+                          <p className="text-[0.65rem] text-muted-foreground">Scholars</p>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => handleExportFullJsonArchive("system")}
+                        disabled={exportingJsonArchive}
+                        className="w-full gap-2 rounded-xl text-xs font-medium gradient-brand text-primary-foreground shadow-sm"
+                      >
+                        {exportingJsonArchive ? (
+                          <>
+                            <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                            Generating Institutional Archive...
+                          </>
+                        ) : (
+                          <>
+                            <FileCode className="h-3.5 w-3.5" />
+                            Download Full Institutional Archive (JSON)
+                          </>
+                        )}
+                      </Button>
+                    </Card>
+
+                    {/* Admin Workspace Archive */}
+                    <Card className="p-5 rounded-2xl border border-border/80 bg-background/50 hover:border-primary/40 transition-colors space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <FolderKanban className="h-3.5 w-3.5 text-blue-500" />
+                            Admin Workspace Archive
+                          </span>
+                          <p className="text-[0.72rem] text-muted-foreground leading-relaxed">
+                            Personal archive containing administrator research projects, curated literature, personal research notes, and personal activity timeline.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2 py-2 border-y border-border/40 text-center">
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">
+                            {projects.filter((p) => p.userEmail?.toLowerCase() === (session?.email || "scholarnexusadmin@gmail.com").toLowerCase()).length}
+                          </p>
+                          <p className="text-[0.65rem] text-muted-foreground">My Projects</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">
+                            {papers.filter((p) => p.uploaderEmail?.toLowerCase() === (session?.email || "scholarnexusadmin@gmail.com").toLowerCase()).length}
+                          </p>
+                          <p className="text-[0.65rem] text-muted-foreground">My Papers</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-foreground">
+                            {activityLogs.filter((l) => l.userEmail?.toLowerCase() === (session?.email || "scholarnexusadmin@gmail.com").toLowerCase()).length}
+                          </p>
+                          <p className="text-[0.65rem] text-muted-foreground">My Timeline</p>
+                        </div>
+                        <div className="rounded-lg bg-muted/30 p-2">
+                          <p className="text-xs font-bold text-emerald-500">Active</p>
+                          <p className="text-[0.65rem] text-muted-foreground">Workspace</p>
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        onClick={() => handleExportFullJsonArchive("workspace")}
+                        disabled={exportingJsonArchive}
+                        className="w-full gap-2 rounded-xl text-xs font-medium border-border hover:bg-muted"
+                      >
+                        {exportingJsonArchive ? (
+                          <>
+                            <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                            Packaging Workspace...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5 text-blue-500" />
+                            Download Admin Workspace Archive (JSON)
+                          </>
+                        )}
+                      </Button>
+                    </Card>
+                  </div>
+                </div>
+
                 {/* System Configuration Placeholders */}
                 <div className="space-y-4">
                   <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">Future System Configuration</h3>
@@ -4299,6 +4539,16 @@ function AdminPage() {
                 >
                   {selectedUser?.status || "Active"}
                 </Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => selectedUser?.email && handleExportUserJsonArchive(selectedUser.email, selectedUser.name)}
+                  className="gap-1 rounded-xl text-[0.7rem] h-6 px-2 border-primary/30 hover:border-primary/50 text-foreground"
+                  title="Export Scholar's Research Archive (JSON)"
+                >
+                  <Download className="h-3 w-3 text-blue-500" />
+                  JSON
+                </Button>
               </div>
             </div>
           </SheetHeader>

@@ -82,6 +82,48 @@ function SettingsPage() {
   // Privacy State
   const [visibility, setVisibility] = useState<"Public" | "Advisor Only" | "Private">("Advisor Only");
   const [allowFacultyInvite, setAllowFacultyInvite] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportWorkspaceData = async () => {
+    if (!user?.email) {
+      toast.error("Please login to export your workspace data.");
+      return;
+    }
+
+    setIsExporting(true);
+    const toastId = toast.loading("Generating your JSON research archive...");
+
+    try {
+      const res = await fetch(`/api/export?scope=workspace&email=${encodeURIComponent(user.email)}`);
+      if (!res.ok) {
+        throw new Error(`Failed to generate export package: ${res.statusText}`);
+      }
+      const data = await res.json();
+
+      // Trigger browser download
+      const jsonStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      const safeEmail = user.email.replace(/[^a-zA-Z0-9]/g, "_");
+      link.href = url;
+      link.download = `scholarnexus-workspace-${safeEmail}-${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      const counts = data.archiveMetadata?.recordCounts || {};
+      const summaryMsg = `${counts.projects ?? 0} projects, ${counts.literature ?? 0} literature papers, ${counts.notes ?? 0} notes, ${counts.activityTimeline ?? 0} activity logs`;
+      toast.success(`Export archive downloaded successfully! (${summaryMsg})`, { id: toastId });
+    } catch (err: any) {
+      console.error("Data export error:", err);
+      toast.error(err?.message || "Failed to download export package. Please try again.", { id: toastId });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -499,10 +541,20 @@ function SettingsPage() {
                   </p>
                   <Button
                     variant="outline"
-                    onClick={() => toast.success("Export package generated and downloaded.")}
-                    className="gap-2 rounded-xl text-xs"
+                    onClick={handleExportWorkspaceData}
+                    disabled={isExporting}
+                    className="gap-2 rounded-xl text-xs hover:border-emerald-500/50 hover:bg-emerald-500/10 transition-colors"
                   >
-                    <FileSpreadsheet className="h-4 w-4 text-emerald-500" /> Export Workspace Data
+                    {isExporting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />
+                        Generating Archive...
+                      </>
+                    ) : (
+                      <>
+                        <FileSpreadsheet className="h-4 w-4 text-emerald-500" /> Export Workspace Data (JSON)
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>

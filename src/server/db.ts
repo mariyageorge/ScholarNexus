@@ -4581,6 +4581,165 @@ export async function handleApiRequest(request: Request, url: URL): Promise<Resp
     );
   }
 
+  // ── Data Export API (Workspace & Admin Full Institutional Archive) ──
+  if (url.pathname === "/api/export" || url.pathname === "/api/admin/export") {
+    if (request.method !== "GET") {
+      return new Response(JSON.stringify({ error: "Method not allowed. Use GET." }), {
+        status: 405,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    try {
+      const scopeParam = url.searchParams.get("scope")?.toLowerCase() || (url.pathname === "/api/admin/export" ? "system" : "workspace");
+      const isSystem = scopeParam === "system" || scopeParam === "admin" || scopeParam === "institution";
+      const email = (url.searchParams.get("email") || request.headers.get("x-user-email") || "")?.trim().toLowerCase();
+
+      const projectsCol = await getCollection<Document>("projects");
+      const papersCol = await getCollection<Document>("papers");
+      const notesCol = await getCollection<Document>("notes");
+      const activityCol = await getCollection<Document>("activity_logs");
+      const tasksCol = await getCollection<Document>("tasks");
+
+      let rawProjects: any[] = [];
+      let rawPapers: any[] = [];
+      let rawNotes: any[] = [];
+      let rawActivities: any[] = [];
+      let rawTasks: any[] = [];
+      let rawUsers: any[] = [];
+      let rawAnnouncements: any[] = [];
+
+      if (isSystem) {
+        const usersCol = await getCollection<UserRecord>("users");
+        const announcementsCol = await getCollection<Document>("announcements");
+
+        [rawProjects, rawPapers, rawNotes, rawActivities, rawTasks, rawUsers, rawAnnouncements] = await Promise.all([
+          projectsCol.find({}).sort({ createdAt: -1 }).toArray(),
+          papersCol.find({}).sort({ createdAt: -1 }).toArray(),
+          notesCol.find({}).sort({ updatedAt: -1 }).toArray(),
+          activityCol.find({}).sort({ timestamp: -1 }).limit(1000).toArray(),
+          tasksCol.find({}).sort({ createdAt: -1 }).toArray(),
+          usersCol.find({}, { projection: { password: 0 } }).toArray(),
+          announcementsCol.find({}).sort({ createdAt: -1 }).toArray(),
+        ]);
+      } else {
+        if (!email) {
+          return new Response(JSON.stringify({ error: "Email parameter is required for workspace data export." }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        // Fetch user's projects
+        rawProjects = await projectsCol.find({
+          $or: [{ userEmail: email }, { faculty: email }],
+        }).sort({ createdAt: -1 }).toArray();
+
+        const projectIds = rawProjects
+          .map((p) => p._id?.toString())
+          .concat(rawProjects.map((p) => String(p.id || "")).filter(Boolean));
+
+        // Fetch user's literature manuscripts
+        rawPapers = await papersCol.find({
+          $or: [
+            { userEmail: email },
+            { uploaderEmail: email },
+            { projectId: { $in: projectIds } },
+          ],
+        }).sort({ uploadDate: -1, createdAt: -1 }).toArray();
+
+        // Fetch user's notes
+        rawNotes = await notesCol.find({ userEmail: email }).sort({ pinned: -1, updatedAt: -1 }).toArray();
+
+        // Fetch user's activity timeline
+        rawActivities = await activityCol.find({
+          $or: [{ userEmail: email }, { userName: email }],
+        }).sort({ timestamp: -1 }).limit(500).toArray();
+
+        // Fetch user's tasks
+        rawTasks = await tasksCol.find({
+          $or: [{ userEmail: email }, { projectId: { $in: projectIds } }],
+        }).sort({ createdAt: -1 }).toArray();
+      }
+
+      // Serialize and format documents safely
+      const cleanDoc = (doc: any) => {
+        if (!doc) return doc;
+        const id = doc._id ? doc._id.toString() : (doc.id || "");
+        const { _id, password, ...rest } = doc;
+        return { id, ...rest };
+      };
+
+      const formattedProjects = rawProjects.map(cleanDoc);
+      const formattedLiterature = rawPapers.map(cleanDoc);
+      const formattedNotes = rawNotes.map(cleanDoc);
+      const formattedTimeline = rawActivities.map(cleanDoc);
+      const formattedTasks = rawTasks.map(cleanDoc);
+
+      const now = new Date();
+      const dateStr = now.toISOString().split("T")[0];
+
+      const archivePayload: Record<string, any> = {
+        archiveMetadata: {
+          title: isSystem ? "ScholarNexus Institutional Full Data Archive" : "ScholarNexus Research Workspace Archive",
+          formatVersion: "2.0.0",
+          platform: "ScholarNexus AI Hub",
+          generatedAt: now.toISOString(),
+          exportScope: isSystem ? "System Administrator (Full Database)" : "Personal Workspace",
+          exportedBy: email || (isSystem ? "scholarnexusadmin@gmail.com" : "unknown"),
+          recordCounts: {
+            projects: formattedProjects.length,
+            literature: formattedLiterature.length,
+            notes: formattedNotes.length,
+            activityTimeline: formattedTimeline.length,
+            tasks: formattedTasks.length,
+            ...(isSystem ? { users: rawUsers.length, announcements: rawAnnouncements.length } : {}),
+          },
+        },
+        researchProjects: formattedProjects,
+        literature: formattedLiterature,
+        notes: formattedNotes,
+        activityTimeline: formattedTimeline,
+        tasks: formattedTasks,
+      };
+
+      if (isSystem) {
+        archivePayload.users = rawUsers.map(cleanDoc);
+        archivePayload.announcements = rawAnnouncements.map(cleanDoc);
+      }
+
+      // Record activity in database
+      await logActivity(
+        isSystem ? "System Administrator" : (email ? email.split("@")[0] : "Researcher"),
+        email || "scholarnexusadmin@gmail.com",
+        isSystem ? "admin" : "researcher",
+        "SYSTEM_SETTING",
+        `Exported full JSON archive (${isSystem ? "System scope" : "Workspace scope"})`,
+        `Exported ${formattedProjects.length} projects, ${formattedLiterature.length} literature manuscripts, ${formattedNotes.length} notes, ${formattedTimeline.length} activity timeline events.`
+      );
+
+      const jsonOutput = JSON.stringify(archivePayload, null, 2);
+      const filename = `scholarnexus-${isSystem ? "system-institutional" : "workspace"}-archive-${dateStr}.json`;
+
+      const headers: Record<string, string> = {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store, no-cache, must-revalidate",
+      };
+
+      if (url.searchParams.get("download") === "true") {
+        headers["content-disposition"] = `attachment; filename="${filename}"`;
+      }
+
+      return new Response(jsonOutput, { status: 200, headers });
+    } catch (err: any) {
+      console.error("Data export API error:", err);
+      return new Response(
+        JSON.stringify({ error: "Failed to generate data archive export.", details: err?.message }),
+        { status: 500, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
   if (url.pathname === "/api/projects") {
     const userEmail =
       url.searchParams.get("email") ||
